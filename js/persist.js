@@ -33,7 +33,6 @@ export function save(state) {
       v: VERSION,
       zoom: state.zoom ?? 1.0,
       sidebarCollapsed: !!state.sidebarCollapsed,
-      bookmarks: state.bookmarks || [],
       catalogs:  state.catalogs  || [],
       scripts:   state.scripts   || [],
       selectedScriptId: state.selectedScriptId || null,

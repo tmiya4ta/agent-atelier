@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <flow name="static-asset-flow">
+        <http:listener config-ref="http-listener-config" path="/*" allowedMethods="GET,HEAD,OPTIONS">
+            <http:response statusCode="200">
+                <http:headers><![CDATA[#[vars.responseHeaders default {}]]]></http:headers>
+            </http:response>
+            <http:error-response statusCode="500">
+                <http:body>#[payload]</http:body>
+                <http:headers><![CDATA[#[{ 'Content-Type': 'text/plain; charset=utf-8' }]]]></http:headers>
+            </http:error-response>
+        </http:listener>
+
+        <!-- requestPath → fileName -->
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="fileName"><![CDATA[%dw 2.0
+output application/java
+import substring from dw::core::Strings
+var raw = attributes.requestPath default "/"
+var stripLead = if (raw startsWith "/") substring(raw, 1, sizeOf(raw)) else raw
+var stripTrail = if ((sizeOf(stripLead) > 0) and (stripLead endsWith "/")) substring(stripLead, 0, sizeOf(stripLead) - 1) else stripLead
+---
+if (stripTrail == "") "index.html" else stripTrail]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <choice>
+            <!-- ── /__health ── -->
+            <when expression="#[vars.fileName == '__health']">
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    app:     "atelier-static",
+    env:     p('mule.env'),
+    version: "1.0.1",
+    time:    now() as String
+}]]></ee:set-payload>
+                    </ee:message>
+                    <ee:variables>
+                        <ee:set-variable variableName="responseHeaders"><![CDATA[%dw 2.0 output application/java --- { "Content-Type": "application/json; charset=utf-8" }]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </when>
+
+            <!-- ── 静的ファイル ── -->
+            <otherwise>
+                <ee:transform>
+                    <ee:variables>
+                        <ee:set-variable variableName="contentType"><![CDATA[%dw 2.0
+output application/java
+var n = lower(vars.fileName)
+---
+if (n endsWith ".html")  "text/html; charset=utf-8"
+else if (n endsWith ".css")   "text/css; charset=utf-8"
+else if (n endsWith ".js")    "application/javascript; charset=utf-8"
+else if (n endsWith ".mjs")   "application/javascript; charset=utf-8"
+else if (n endsWith ".json")  "application/json; charset=utf-8"
+else if (n endsWith ".svg")   "image/svg+xml"
+else if (n endsWith ".png")   "image/png"
+else if (n endsWith ".jpg" or n endsWith ".jpeg") "image/jpeg"
+else if (n endsWith ".gif")   "image/gif"
+else if (n endsWith ".webp")  "image/webp"
+else if (n endsWith ".ico")   "image/x-icon"
+else if (n endsWith ".woff2") "font/woff2"
+else if (n endsWith ".woff")  "font/woff"
+else if (n endsWith ".ttf")   "font/ttf"
+else if (n endsWith ".txt")   "text/plain; charset=utf-8"
+else if (n endsWith ".map")   "application/json; charset=utf-8"
+else "application/octet-stream"]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <try>
+                    <ee:transform>
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+output application/octet-stream
+---
+readUrl("classpath://static/" ++ vars.fileName, "application/octet-stream")]]></ee:set-payload>
+                        </ee:message>
+                        <ee:variables>
+                            <ee:set-variable variableName="responseHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{
+    "Content-Type":   vars.contentType,
+    "Cache-Control":  "no-store, no-cache, must-revalidate, max-age=0",
+    "X-Atelier-File": vars.fileName
+}]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                    <error-handler>
+                        <on-error-continue type="ANY">
+                            <ee:transform>
+                                <ee:message>
+                                    <ee:set-payload><![CDATA[%dw 2.0
+output text/plain
+---
+"404 Not Found: " ++ vars.fileName]]></ee:set-payload>
+                                </ee:message>
+                                <ee:variables>
+                                    <ee:set-variable variableName="responseHeaders"><![CDATA[%dw 2.0 output application/java --- { "Content-Type": "text/plain; charset=utf-8", "X-Atelier-Status": "404" }]]></ee:set-variable>
+                                </ee:variables>
+                            </ee:transform>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+            </otherwise>
+        </choice>
+    </flow>
+
+</mule>

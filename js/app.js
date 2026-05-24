@@ -77,7 +77,6 @@ const state = {
   selectedCatalogFlow: "authcode",
   zoom: 1.0,
   sidebarCollapsed: false,
-  bookmarks: [],      // [{ protoId, url, name, host, auth, persona, addedAt }]
   catalogs: [],       // [{ id, name, flow, baseUrl, orgId, envId, clientId, clientSecret?, scopes, status, createdAt }]
   scripts: [],        // [{ id, name, body, createdAt, updatedAt }]
   selectedScriptId: null,
@@ -106,7 +105,6 @@ function init() {
   if (saved && saved.workspaces?.length) {
     state.zoom             = saved.zoom ?? 1.0;
     state.sidebarCollapsed = !!saved.sidebarCollapsed;
-    state.bookmarks        = saved.bookmarks || [];
     state.catalogs         = (saved.catalogs || []).map(migrateCatalog);
     state.scripts          = saved.scripts   || [];
     state.selectedScriptId = saved.selectedScriptId || null;
@@ -118,7 +116,6 @@ function init() {
     restoreFromSaved(saved);
   } else {
     state.sidebarCollapsed = !!saved?.sidebarCollapsed;
-    state.bookmarks = saved?.bookmarks || [];
     state.catalogs  = (saved?.catalogs || []).map(migrateCatalog);
     state.scripts   = saved?.scripts   || [];
     state.selectedScriptId = saved?.selectedScriptId || null;
@@ -269,6 +266,7 @@ function switchWorkspace(id) {
   state.activeWs = id;
   $$(".ws-layer").forEach(l => l.classList.toggle("is-active", l.dataset.wsId === id));
   renderTabs();
+  renderBookmarks();   // CONNECTIONS の active workspace ハイライト更新
   updateStatusLine();
   updateEmptyState();
   dirty();
@@ -368,69 +366,50 @@ function wireWsTabs() {
   $("#wsAdd").addEventListener("click", () => createWorkspace(`workspace ${wsCounter + 1}`));
 }
 
-// ─── Sidebar: bookmarks ───────────────────────────────
-function bookmarkId(b)        { return `${b.protoId}::${b.url}`; }
-function findBookmark(protoId, url) {
-  return state.bookmarks.find(b => b.protoId === protoId && b.url === url);
-}
-
-function isWindowBookmarked(win) {
-  return !!findBookmark(win.protoId, win.adapter.config.url);
-}
-
-function toggleBookmark(win) {
-  const cfg = win.adapter.config;
-  const existing = findBookmark(win.protoId, cfg.url);
-  if (existing) {
-    state.bookmarks = state.bookmarks.filter(b => b !== existing);
-  } else {
-    state.bookmarks.push({
-      protoId: win.protoId,
-      url:     cfg.url,
-      name:    cfg.name || win.name || cfg.url,
-      host:    hostFromUrl(cfg.url) || cfg.url,
-      auth:    cfg.auth,
-      persona: cfg.persona,
-      addedAt: Date.now()
-    });
-  }
-  renderBookmarks();
-  // 同URLを開いている他ウインドウの☆も同期
-  state.workspaces.forEach(w => w.windows.forEach(win => win.refreshBookmarkUi()));
-  dirty();
-}
-
+// 現存する全 window をサイドバーに一覧表示 (proto + url で group)
 function renderBookmarks() {
   const root  = $("#savedAgents");
   const empty = $("#bookmarksEmpty");
   root.innerHTML = "";
+  state._connExpanded = state._connExpanded || {};
 
-  // bookmark id → 展開状態のキャッシュ (初回はデフォルト open)
-  state._bookmarkExpanded = state._bookmarkExpanded || {};
+  // group by protoId + url、 順序維持
+  const groups = new Map();
+  state.workspaces.forEach(ws => {
+    ws.windows.forEach(win => {
+      const key = `${win.protoId}::${win.adapter.config.url || ""}`;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key,
+          name:    win.name,
+          host:    hostFromUrl(win.adapter.config.url) || win.adapter.config.url || "",
+          url:     win.adapter.config.url,
+          windows: []
+        });
+      }
+      groups.get(key).windows.push({ win, ws });
+    });
+  });
 
-  state.bookmarks.forEach(b => {
-    const bid = `${b.protoId}::${b.url}`;
-    // 同じ proto + url の現存ウインドウを収集
-    const children = state.workspaces.flatMap(w =>
-      w.windows.filter(win => win.protoId === b.protoId && win.adapter.config.url === b.url)
-    );
-    const hasChildren = children.length > 0;
-    if (state._bookmarkExpanded[bid] === undefined) state._bookmarkExpanded[bid] = true;
-    const expanded = !!state._bookmarkExpanded[bid];
+  const groupList = [...groups.values()];
+  groupList.forEach(g => {
+    const hasMulti = g.windows.length > 1;
+    if (state._connExpanded[g.key] === undefined) state._connExpanded[g.key] = true;
+    const expanded = !!state._connExpanded[g.key];
 
+    // 親 (group)
     const li = document.createElement("li");
-    li.className = "agent-item"
-      + (hasChildren ? " is-expandable" : "")
-      + (hasChildren && expanded ? " is-expanded" : "");
-    const initial = (b.name || "?").charAt(0).toUpperCase();
-    li.title = b.host;   // host は tooltip
+    li.className = "agent-item conn-group"
+      + (hasMulti ? " is-expandable" : "")
+      + (expanded ? " is-expanded" : "");
+    li.title = `${g.host}  ·  ${g.windows.length} window(s)`;
     li.innerHTML = `
-      <span class="agent-name" title="Click to toggle tree">${escapeHtml(b.name)}</span>
-      <span class="bm-count" title="${children.length} window(s)">${children.length}</span>
-      <button class="bookmark-new" title="New connection" aria-label="new connection">
+      <span class="agent-name">${escapeHtml(g.name)}</span>
+      <span class="bm-count" title="${g.windows.length} window(s)">${g.windows.length}</span>
+      <button class="bookmark-new" title="Open another window to the same agent" aria-label="new window">
         <svg viewBox="0 0 14 14" width="10" height="10"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
-      <button class="agent-remove" title="Remove bookmark" aria-label="remove">
+      <button class="agent-remove" title="Disconnect all" aria-label="disconnect all">
         <svg viewBox="0 0 14 14" width="9" height="9">
           <line x1="3" y1="3" x2="11" y2="11" stroke="currentColor" stroke-width="1.4"/>
           <line x1="11" y1="3" x2="3" y2="11" stroke="currentColor" stroke-width="1.4"/>
@@ -439,49 +418,67 @@ function renderBookmarks() {
     `;
     li.addEventListener("click", (e) => {
       if (e.target.closest(".agent-remove")) {
-        state.bookmarks = state.bookmarks.filter(x => x !== b);
-        delete state._bookmarkExpanded[bid];
-        renderBookmarks();
-        state.workspaces.forEach(w => w.windows.forEach(win => win.refreshBookmarkUi()));
-        dirty();
+        e.stopPropagation();
+        g.windows.forEach(({ win }) => win.close());
         return;
       }
       if (e.target.closest(".bookmark-new")) {
         e.stopPropagation();
-        connect({ protoId: b.protoId, url: b.url, name: b.name, auth: b.auth, persona: b.persona });
+        // 同 URL / proto / auth / persona / channel で新規 window
+        const first = g.windows[0]?.win;
+        if (!first) return;
+        const cfg = first.adapter.config || {};
+        connect({
+          protoId: first.protoId,
+          url:     cfg.url,
+          name:    cfg.name || g.name,
+          auth:    cfg.auth,
+          persona: cfg.persona,
+          channel: cfg.channel
+        });
         return;
       }
-      // 名称・count をクリックで toggle (子があれば)
+      // name / count クリック: 子があれば toggle、 単独ならその window へ focus
       if (e.target.closest(".agent-name, .bm-count")) {
-        if (!hasChildren) return;
-        state._bookmarkExpanded[bid] = !state._bookmarkExpanded[bid];
-        renderBookmarks();
+        if (g.windows.length === 1) {
+          const { win, ws } = g.windows[0];
+          if (ws.id !== state.activeWs) { switchWorkspace(ws.id); setTimeout(() => win.focus(), 50); }
+          else win.focus();
+        } else {
+          state._connExpanded[g.key] = !expanded;
+          renderBookmarks();
+        }
       }
     });
     root.appendChild(li);
 
-    // 子ツリー (現存ウインドウ一覧)
-    if (hasChildren) {
+    // 子ツリー (展開時のみ)
+    if (expanded) {
       const sub = document.createElement("li");
-      sub.className = "bookmark-children" + (expanded ? "" : " is-collapsed");
-      children.forEach((win, i) => {
-        const isLast = i === children.length - 1;
-        const ws = state.workspaces.find(w => w.id === win._wsId);
-        const isActiveWin = (ws?.id === state.activeWs) && (document.activeElement === win.el);
+      sub.className = "bookmark-children";
+      g.windows.forEach(({ win, ws }, i) => {
+        const isLast = i === g.windows.length - 1;
+        const isActiveWs = ws.id === state.activeWs;
         const btn = document.createElement("button");
         btn.type = "button";
-        btn.className = "bookmark-child" + (isActiveWin ? " is-active" : "");
-        btn.title = ws ? `workspace: ${ws.name}` : "";
+        btn.className = "bookmark-child" + (isActiveWs ? "" : " is-other-ws");
+        btn.title = `${ws.name}  ·  ${win.adapter.config.url || ""}`;
         btn.innerHTML = `
           <span class="bc-branch">${isLast ? "└─" : "├─"}</span>
           <span class="bc-id">${win.id}</span>
           <span class="bc-name">${escapeHtml(windowDisplayName(win))}</span>
+          <button class="bc-remove" title="Disconnect" aria-label="disconnect">
+            <svg viewBox="0 0 12 12" width="8" height="8"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/><line x1="9.5" y1="2.5" x2="2.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/></svg>
+          </button>
         `;
         btn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          // 別ワークスペースなら切替してから focus
-          if (win._wsId && win._wsId !== state.activeWs) {
-            switchWorkspace(win._wsId);
+          if (e.target.closest(".bc-remove")) {
+            e.stopPropagation();
+            win.close();
+            return;
+          }
+          if (!isActiveWs) {
+            switchWorkspace(ws.id);
             setTimeout(() => win.focus(), 50);
           } else {
             win.focus();
@@ -493,8 +490,9 @@ function renderBookmarks() {
     }
   });
 
-  $("#savedCount").textContent = String(state.bookmarks.length);
-  empty.classList.toggle("is-hidden", state.bookmarks.length > 0);
+  const total = state.workspaces.reduce((n, w) => n + w.windows.length, 0);
+  $("#savedCount").textContent = String(total);
+  empty.classList.toggle("is-hidden", total > 0);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -582,26 +580,70 @@ async function fetchBgAssets(cat, bg) {
     offset += PAGE;
   }
 
-  // 各アセットのa2a-card.jsonを並列取得して instance URL を解決
-  // (テンプレ変数 ${...} はデプロイ未確定なので無効扱い)
+  // 各アセットの a2a-card.json + asset 詳細 (managed instances) を並列取得
   await Promise.allSettled(assets.map(async (a) => {
+    // 1) a2a-card.json (instance URL がテンプレでなければそのまま採用)
     const card = findA2ACardFile(a);
-    if (!card) return;
-    try {
-      const r = await fetch(`/proxy?url=${encodeURIComponent(card.downloadURL)}`, {
-        headers: { Authorization: `Bearer ${cat.accessToken}` }
-      });
-      if (!r.ok) return;
-      const c = await r.json();
-      a._a2aCard = c;
-      const u = c?.url;
-      if (u && !/\$\{[^}]+\}/.test(u)) a._a2aUrl = u;
-    } catch (e) {
-      // 取得失敗は単に has-instance=false 扱い
+    if (card) {
+      try {
+        const r = await fetch(`/proxy?url=${encodeURIComponent(card.downloadURL)}`, {
+          headers: { Authorization: `Bearer ${cat.accessToken}` }
+        });
+        if (r.ok) {
+          const c = await r.json();
+          a._a2aCard = c;
+          const u = c?.url;
+          if (u && !/\$\{[^}]+\}/.test(u)) a._a2aUrl = u;
+        }
+      } catch {}
+    }
+    // 2) instance URL がまだ無い場合、 asset 詳細から managed instances を取得
+    //    (Exchange UI の "Managed instances" 相当 = 実稼働 deployment の URL)
+    if (!a._a2aUrl) {
+      await fetchAssetInstances(cat, a);
     }
   }));
 
   return assets;
+}
+
+// Exchange の asset 詳細 → managed instances の URL を a に注入
+async function fetchAssetInstances(cat, a) {
+  const gid = a.groupId || a.organizationId || a.organization?.id;
+  const aid = a.assetId;
+  if (!gid || !aid) return;
+  const v   = a.version ? `/${encodeURIComponent(a.version)}` : "";
+  // 詳細エンドポイント候補 (Anypoint Exchange API の version 差を吸収)
+  const candidates = [
+    `https://anypoint.mulesoft.com/exchange/api/v2/assets/${gid}/${aid}${v}`,
+    `https://anypoint.mulesoft.com/exchange/api/v2/assets/${gid}/${aid}`
+  ];
+  for (const url of candidates) {
+    try {
+      const r = await fetch(`/proxy?url=${encodeURIComponent(url)}`, {
+        headers: { Authorization: `Bearer ${cat.accessToken}` }
+      });
+      if (!r.ok) continue;
+      const d = await r.json();
+      // response の様々な location をチェック (Exchange UI は "Managed instances")
+      const instances =
+           d.instances
+        || d.managedInstances
+        || d.endpoints
+        || d.version?.instances
+        || d.versions?.[0]?.instances
+        || [];
+      if (instances.length) {
+        a._instances = instances;
+        // url または endpointUri 等のキー名のばらつきを吸収
+        const first = instances.find(i => i?.url || i?.endpointUri || i?.endpoint);
+        if (first) a._a2aUrl = first.url || first.endpointUri || first.endpoint;
+        if (a._a2aUrl) return;
+      }
+      // 一部 deployment 系では asset.detail に直接 endpoint URL があることも
+      if (d.endpointUri) { a._a2aUrl = d.endpointUri; return; }
+    } catch {}
+  }
 }
 
 function findA2ACardFile(asset) {
@@ -817,7 +859,9 @@ function renderAssetList(assets) {
 // アセットクリック: 詳細パネル(2段目)を開く
 function openAssetDetail(asset, cat) {
   const card = asset._a2aCard || {};
-  const url  = asset._a2aUrl;
+  const resolvedUrl = asset._a2aUrl;
+  // card.url がテンプレ ${...} の場合は raw 値も参照できるよう保持
+  const rawCardUrl = card?.url || "";
   state._detailAsset = asset;
   state._detailCat   = cat;
 
@@ -827,12 +871,30 @@ function openAssetDetail(asset, cat) {
 
   $("#detailName").textContent = card.name || asset.name || asset.assetId;
   $("#detailBody").innerHTML = renderDetailBody(asset, card);
-  $("#detailFootMeta").textContent = url || "no instance URL";
 
+  // URL input: 既存 (overridden) > resolved > placeholder 表示用 raw
+  const urlInput = $("#detailUrlInput");
   const btn = $("#detailConnect");
-  btn.disabled = !url;
+  const seed = asset._userUrl || resolvedUrl || "";
+  urlInput.value = seed;
+  if (rawCardUrl && rawCardUrl !== seed) {
+    urlInput.placeholder = `card url: ${rawCardUrl}`;
+  } else {
+    urlInput.placeholder = "https://...example.com/agent  (override / fill if template)";
+  }
+  const refreshFoot = () => {
+    const v = urlInput.value.trim();
+    const valid = /^https?:\/\/.+/i.test(v);
+    btn.disabled = !valid;
+    $("#detailFootMeta").textContent = valid ? v : (v ? "invalid URL" : "no instance URL");
+  };
+  refreshFoot();
+  urlInput.oninput = refreshFoot;
 
-  // skill 行の展開を toggle (説明あるものだけ)
+  // managed instances が複数あれば pill で選べる UI を入れる
+  renderManagedInstancesPicker(asset, urlInput, refreshFoot);
+
+  // skill 行の展開を toggle
   $("#detailBody").querySelectorAll(".skill-row.has-desc").forEach(row => {
     row.addEventListener("click", () => row.classList.toggle("is-expanded"));
   });
@@ -888,9 +950,56 @@ function renderDetailBody(asset, card) {
   `;
 }
 
-function connectAsset(asset, cat) {
+function renderManagedInstancesPicker(asset, urlInput, refreshFoot) {
+  // 既存 picker を撤去 (詳細を開き直す度に再描画)
+  $("#assetDetailDrawer").querySelectorAll(".instance-picker").forEach(n => n.remove());
+
+  const list = Array.isArray(asset._instances) ? asset._instances : [];
+  if (list.length === 0) return;
+
+  const root = document.createElement("div");
+  root.className = "instance-picker";
+  root.innerHTML = `<div class="ip-label">managed instances · ${list.length}</div>`;
+  const wrap = document.createElement("div");
+  wrap.className = "ip-chips";
+
+  list.forEach((inst) => {
+    const u = inst?.url || inst?.endpointUri || inst?.endpoint;
+    if (!u) return;
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "ip-chip";
+    if (urlInput.value === u) chip.classList.add("is-selected");
+    const env  = inst.environment?.name || inst.environment || inst.environmentName || "";
+    const org  = inst.organization?.name || inst.organization || "";
+    const name = inst.name || inst.instanceName || u.split("/").slice(-2, -1)[0] || "instance";
+    chip.title = u;
+    chip.innerHTML = `
+      <span class="ip-name">${escapeHtml(name)}</span>
+      ${env ? `<span class="ip-env">${escapeHtml(env)}</span>` : ""}
+      ${org && org !== env ? `<span class="ip-org">${escapeHtml(org)}</span>` : ""}
+    `;
+    chip.addEventListener("click", () => {
+      urlInput.value = u;
+      asset._userUrl = u;
+      refreshFoot();
+      // 選択 highlight 更新
+      wrap.querySelectorAll(".ip-chip").forEach(c => c.classList.remove("is-selected"));
+      chip.classList.add("is-selected");
+    });
+    wrap.appendChild(chip);
+  });
+
+  root.appendChild(wrap);
+  // URL input 行の直前 (footer 内部) に挿入
+  const foot = $("#assetDetailDrawer .detail-foot");
+  const urlRow = foot.querySelector(".detail-url-row");
+  foot.insertBefore(root, urlRow);
+}
+
+function connectAsset(asset, cat, overrideUrl) {
   if (!asset || !cat) return;
-  const url = asset._a2aUrl;
+  const url = overrideUrl || asset._a2aUrl;
   if (!url) return;
   const cardUrl = /\.well-known\/agent-card\.json$/.test(url)
     ? url
@@ -906,7 +1015,11 @@ function connectAsset(asset, cat) {
 }
 
 async function connectAssetInstance() {
-  connectAsset(state._detailAsset, state._detailCat);
+  const asset = state._detailAsset;
+  const cat   = state._detailCat;
+  const override = $("#detailUrlInput")?.value.trim();
+  if (asset && override) asset._userUrl = override;   // 入力を asset に保持
+  connectAsset(asset, cat, override);
 }
 
 function wireDrawer() {
@@ -1197,6 +1310,7 @@ function openCatalogDialog(editing) {
   $("#catClientId").value     = editing?.clientId    || "";
   $("#catClientSecret").value = editing?.clientSecret ? "•".repeat(12) : "";
   $("#catScopes").value       = editing?.scopes      || "";
+  $("#catBusinessGroup").value = "";   // 編集時は既存 BGs に追加する形なので空 (初回のみ使用)
   $("#catRedirect").value     = redirectUri();
 
   refreshCatalogDialog();
@@ -1214,6 +1328,7 @@ async function submitCatalogDialog() {
   const clientId = $("#catClientId").value.trim();
   const secretInput = $("#catClientSecret").value;
   const scopes   = $("#catScopes").value.trim();
+  const bgInput  = $("#catBusinessGroup").value.trim();
 
   if (!name)     { $("#catName").focus(); return; }
   if (!clientId) { $("#catClientId").focus(); return; }
@@ -1260,9 +1375,29 @@ async function submitCatalogDialog() {
   }
   closeCatalogDialog();
 
-  // 初回作成で BG がまだなら 「+ で BG を追加」 を促す Toast 風 alert
-  if (cat.status === "connected" && (!cat.businessGroups || cat.businessGroups.length === 0)) {
-    addBusinessGroupToCatalog(cat);   // すぐ追加 modal を出す
+  if (cat.status !== "connected") return;
+
+  // ダイアログで BG が入力された + まだ未登録 → 追加 + drawer を即開く
+  if (bgInput && !cat.businessGroups.some(b => (b.input || "").toLowerCase() === bgInput.toLowerCase())) {
+    const bg = {
+      id:    `bg-${++bgCounter}`,
+      input: bgInput,
+      bgId:  null,
+      bgName: null,
+      assets: null,
+      assetsFetchedAt: null
+    };
+    cat.businessGroups.push(bg);
+    state._catalogExpanded[cat.id] = true;
+    renderCatalogs();
+    dirty();
+    openBgDrawer(cat, bg);
+    return;
+  }
+
+  // BG 未指定で初回作成 → 追加 modal を即出す
+  if ((!cat.businessGroups || cat.businessGroups.length === 0)) {
+    addBusinessGroupToCatalog(cat);
   }
 }
 
@@ -2146,8 +2281,6 @@ async function connect({ protoId, url, name, auth, persona, channel }, opts = {}
     onClose: removeWindow,
     onFocus: () => {},
     onChange: dirty,
-    onBookmarkToggle: toggleBookmark,
-    isBookmarked: isWindowBookmarked,
     instanceSuffix,
     restore: opts.restore
   });

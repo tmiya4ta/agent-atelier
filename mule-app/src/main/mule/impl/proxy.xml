@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!--
+      /proxy?url=<encoded>
+      ─────────────────────
+      Atelier client から CORS bypass のため使用 (Python dev-server と同じ I/F)。
+      ・ GET/POST/OPTIONS をそのまま forward
+      ・ Authorization / Content-Type を forward
+      ・ 3xx redirect (Anypoint Exchange の S3 presigned URL 等) は Authorization なしで再リクエスト
+      ・ CORS ヘッダを response に付与
+    -->
+
+    <!-- HTTP Request 用 config (URL は dynamic 指定なので path/host は最小限) -->
+    <http:request-config name="proxy-request-config">
+        <http:request-connection protocol="HTTPS" host="anypoint.mulesoft.com" port="443"/>
+    </http:request-config>
+
+    <flow name="proxy-flow">
+        <http:listener config-ref="http-listener-config" path="/proxy" allowedMethods="GET,POST,PUT,DELETE,OPTIONS">
+            <http:response statusCode="#[vars.proxyStatus default 200]">
+                <http:headers><![CDATA[#[vars.proxyHeaders default {}]]]></http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.proxyStatus default 502]">
+                <http:body>#[payload]</http:body>
+                <http:headers><![CDATA[#[vars.proxyHeaders default { 'Content-Type': 'text/plain; charset=utf-8', 'Access-Control-Allow-Origin': '*' }]]]></http:headers>
+            </http:error-response>
+        </http:listener>
+
+        <!-- CORS preflight は即 OK -->
+        <choice>
+            <when expression="#[attributes.method == 'OPTIONS']">
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0 output text/plain --- ""]]></ee:set-payload>
+                    </ee:message>
+                    <ee:variables>
+                        <ee:set-variable variableName="proxyHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{
+    "Access-Control-Allow-Origin":  "*",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+    "Access-Control-Max-Age":       "86400"
+}]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </when>
+
+            <otherwise>
+                <!-- target URL と forward header を準備 -->
+                <ee:transform>
+                    <ee:variables>
+                        <ee:set-variable variableName="targetUrl"><![CDATA[%dw 2.0
+output application/java
+---
+attributes.queryParams.url default ""]]></ee:set-variable>
+                        <ee:set-variable variableName="fwdHeaders"><![CDATA[%dw 2.0
+output application/java
+var h = attributes.headers default {}
+---
+{
+    (if (h.authorization?) { "Authorization": h.authorization } else {}),
+    (if (h."content-type"?) { "Content-Type": h."content-type" } else {}),
+    "Accept": h.accept default "*/*"
+}]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+
+                <try>
+                    <!-- leg 1: target にそのまま forward (redirect は手動 follow) -->
+                    <http:request method="#[attributes.method]"
+                                  url="#[vars.targetUrl]"
+                                  config-ref="proxy-request-config"
+                                  followRedirects="false"
+                                  responseTimeout="120000">
+                        <http:headers>#[vars.fwdHeaders]</http:headers>
+                        <http:response-validator>
+                            <http:success-status-code-validator values="0..599"/>
+                        </http:response-validator>
+                    </http:request>
+
+                    <!-- 3xx の時は Location に Authorization 無しで再リクエスト (S3 presigned URL 対応) -->
+                    <choice>
+                        <when expression="#[(attributes.statusCode >= 300) and (attributes.statusCode &lt; 400) and (attributes.headers['location'] != null)]">
+                            <set-variable variableName="redirectUrl" value="#[attributes.headers['location']]"/>
+                            <http:request method="GET"
+                                          url="#[vars.redirectUrl]"
+                                          config-ref="proxy-request-config"
+                                          followRedirects="true"
+                                          responseTimeout="120000">
+                                <http:headers>#[{ 'Accept': '*/*' }]</http:headers>
+                                <http:response-validator>
+                                    <http:success-status-code-validator values="0..599"/>
+                                </http:response-validator>
+                            </http:request>
+                        </when>
+                    </choice>
+
+                    <!-- response の Content-Type と CORS を返す -->
+                    <ee:transform>
+                        <ee:variables>
+                            <ee:set-variable variableName="proxyStatus"><![CDATA[%dw 2.0
+output application/java
+---
+attributes.statusCode default 200]]></ee:set-variable>
+                            <ee:set-variable variableName="proxyHeaders"><![CDATA[%dw 2.0
+output application/java
+var ct = (attributes.headers default {})."content-type" default "application/octet-stream"
+---
+{
+    "Content-Type":                ct,
+    "Access-Control-Allow-Origin": "*",
+    "Cache-Control":               "no-store"
+}]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+
+                    <error-handler>
+                        <on-error-continue type="ANY">
+                            <ee:transform>
+                                <ee:message>
+                                    <ee:set-payload><![CDATA[%dw 2.0
+output text/plain
+---
+"proxy error: " ++ (error.description default "unknown")]]></ee:set-payload>
+                                </ee:message>
+                                <ee:variables>
+                                    <ee:set-variable variableName="proxyStatus"><![CDATA[%dw 2.0 output application/java --- 502]]></ee:set-variable>
+                                    <ee:set-variable variableName="proxyHeaders"><![CDATA[%dw 2.0 output application/java --- { "Content-Type": "text/plain; charset=utf-8", "Access-Control-Allow-Origin": "*" }]]></ee:set-variable>
+                                </ee:variables>
+                            </ee:transform>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+            </otherwise>
+        </choice>
+    </flow>
+
+</mule>

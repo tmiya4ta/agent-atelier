@@ -738,12 +738,17 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 }
 .detail-foot {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
   gap: 10px;
   padding: 12px 14px;
   border-top: 1px solid var(--line);
   background: var(--paper);
+}
+.detail-foot-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 .detail-foot-meta {
   font-family: var(--f-mono);
@@ -754,8 +759,88 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+  flex: 1;
 }
 .detail-foot .primary-btn { flex-shrink: 0; }
+
+/* Managed instances picker — Exchange の "Managed instances" 相当 */
+.instance-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ip-label {
+  font-family: var(--f-mono);
+  font-size: calc(9.5px * var(--fs, 1));
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+.ip-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.ip-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 100px;
+  font-size: calc(11px * var(--fs, 1));
+  color: var(--ink-2);
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+.ip-chip:hover { border-color: var(--ink-3); color: var(--ink); }
+.ip-chip.is-selected {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 500;
+}
+.ip-name { font-family: var(--f-mono); }
+.ip-env, .ip-org {
+  font-family: var(--f-mono);
+  font-size: calc(9.5px * var(--fs, 1));
+  color: var(--ink-4);
+  padding: 0 5px;
+  border-left: 1px solid var(--line);
+}
+.ip-chip.is-selected .ip-env,
+.ip-chip.is-selected .ip-org { color: var(--accent-ink); border-left-color: rgba(45,75,255, 0.25); }
+
+/* Instance URL input row (override / fill) */
+.detail-url-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.detail-url-label {
+  font-family: var(--f-mono);
+  font-size: calc(9.5px * var(--fs, 1));
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+.detail-url-input {
+  width: 100%;
+  padding: 7px 10px;
+  font-family: var(--f-mono);
+  font-size: calc(11.5px * var(--fs, 1));
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.detail-url-input:focus {
+  border-color: var(--ink-navy);
+  box-shadow: 0 0 0 3px rgba(31,42,74, 0.08);
+}
+.detail-url-input::placeholder { color: var(--ink-4); }
 
 .detail-hero {
   margin-bottom: 18px;
@@ -1475,6 +1560,12 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 }
 .agent-item:hover { background: var(--panel); border-color: var(--line); }
 .agent-item.is-active { background: var(--panel); border-color: var(--line); box-shadow: var(--shadow-sm); }
+
+/* CONNECTIONS — live window list, grouped by url */
+.conn-group.is-expandable .agent-name { cursor: pointer; }
+.conn-group.is-expandable .agent-name:hover { color: var(--accent-ink); }
+.bookmark-child.is-other-ws .bc-name { color: var(--ink-4); }
+.bookmark-child.is-other-ws .bc-id   { opacity: 0.6; }
 .agent-avatar {
   width: 22px; height: 22px;
   display: grid; place-items: center;
@@ -1773,11 +1864,6 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   color: var(--ink-4);
 }
 
-/* Bookmark icon: 通常outline、is-bookmarked時に塗り潰し + accent色 */
-.aw-btn-bookmark .bm-icon path { transition: fill 0.15s ease, stroke 0.15s ease; }
-.aw-btn-bookmark:hover { color: var(--ink); }
-.aw-btn-bookmark.is-bookmarked { color: var(--accent); }
-.aw-btn-bookmark.is-bookmarked .bm-icon path { fill: var(--accent); stroke: var(--accent); }
 
 /* Tabs */
 .aw-tabs {

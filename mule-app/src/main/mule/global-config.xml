@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:jmx="http://www.mulesoft.org/schema/mule/jmx"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/jmx http://www.mulesoft.org/schema/mule/jmx/current/mule-jmx.xsd">
+
+    <!-- mule.env を CLI/環境変数で上書き可能にする (default = local) -->
+    <global-property name="mule.env" value="local"/>
+    <configuration-properties file="config/config-${mule.env}.yaml"/>
+
+    <!-- JMX module: CloudHub 2.0 でログ取得手段がこれしかないため必ず組み込む -->
+    <jmx:config name="jmx-config" logBufferSize="5000"/>
+
+    <!-- HTTP listener -->
+    <http:listener-config name="http-listener-config">
+        <http:listener-connection host="0.0.0.0" port="${http.port}"/>
+    </http:listener-config>
+
+</mule>

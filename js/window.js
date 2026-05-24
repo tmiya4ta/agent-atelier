@@ -5,15 +5,13 @@ let zCounter = 10;
 let idCounter = 0;
 
 export class AgentWindow {
-  constructor({ adapter, layer, onClose, onFocus, onChange, onBookmarkToggle, isBookmarked, instanceSuffix, restore }) {
+  constructor({ adapter, layer, onClose, onFocus, onChange, instanceSuffix, restore }) {
     this.id = `aw-${++idCounter}`;
     this.adapter = adapter;
     this.layer    = layer;
     this.onClose  = onClose;
     this.onFocus  = onFocus;
     this.onChange = onChange;
-    this.onBookmarkToggle = onBookmarkToggle;
-    this.isBookmarked = isBookmarked || (() => false);
     this.instanceSuffix = instanceSuffix || "";   // 重複ウインドウ用 " #2" など
     this.restore  = restore || null;
 
@@ -72,14 +70,6 @@ export class AgentWindow {
     node.querySelector(".aw-btn-close").addEventListener("click", () => this.close());
     node.querySelector('.aw-traffic-dot[data-act="close"]').addEventListener("click", () => this.close());
 
-    // Bookmark
-    const bmBtn = node.querySelector(".aw-btn-bookmark");
-    bmBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      this.onBookmarkToggle?.(this);
-      this.refreshBookmarkUi();
-    });
-
     // Drag
     const head = node.querySelector(".aw-head");
     head.addEventListener("mousedown", (e) => this._beginDrag(e));
@@ -123,7 +113,6 @@ export class AgentWindow {
 
     this.layer.appendChild(node);
     this.focus();
-    this.refreshBookmarkUi();
 
     // 既に open 済み adapter を渡された場合は、 open event 相当の初期描画を即時実行
     if (this.adapter.state === "open" && this.adapter.agentCard) {
@@ -135,7 +124,6 @@ export class AgentWindow {
         this.name = cardName;
         this.adapter.config.name = cardName;
         this.el.querySelector(".aw-title").textContent = cardName + this.instanceSuffix;
-        this.refreshBookmarkUi();
         this.onChange?.();
       }
       if (this.restore?.activeTab && this.restore.activeTab !== "chat") {
@@ -145,14 +133,6 @@ export class AgentWindow {
     } else {
       this._addSystemMessage(`Connecting to ${this.name}…`);
     }
-  }
-
-  refreshBookmarkUi() {
-    const btn = this.el.querySelector(".aw-btn-bookmark");
-    if (!btn) return;
-    const on = !!this.isBookmarked?.(this);
-    btn.classList.toggle("is-bookmarked", on);
-    btn.title = on ? "ブックマーク済み (クリックで解除)" : "ブックマーク";
   }
 
   _wireAdapter() {
@@ -166,7 +146,6 @@ export class AgentWindow {
         this.name = cardName;
         this.adapter.config.name = cardName;
         this.el.querySelector(".aw-title").textContent = cardName + this.instanceSuffix;
-        this.refreshBookmarkUi();
         this.onChange?.();
       }
       // 復元タブを反映 (open後にカード/設定が描画されてからの方が安全)
@@ -622,7 +601,6 @@ export class AgentWindow {
         this.adapter.config.name = v;
         this._nameLocked = true;   // 以後 agentCard.name で上書きしない
         this.el.querySelector(".aw-title").textContent = v + this.instanceSuffix;
-        this.refreshBookmarkUi();
         this.onChange?.();
       };
       nameInput.addEventListener("change", commit);
