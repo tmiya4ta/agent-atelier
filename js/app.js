@@ -129,7 +129,6 @@ function init() {
   renderBookmarks();
   renderCatalogs();
   renderScripts();
-  renderProtoList();
   renderProtoGrid();
   renderTabs();
   wireRail();

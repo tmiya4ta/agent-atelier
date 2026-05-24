@@ -1574,6 +1574,23 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .agent-item:hover { background: var(--panel); border-color: var(--line); }
 .agent-item.is-active { background: var(--panel); border-color: var(--line); box-shadow: var(--shadow-sm); }
 
+/* CONNECTIONS — make each agent group visually a card so it's easier to scan */
+.conn-group {
+  background: rgba(0, 0, 0, 0.025);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 11px;
+  margin-bottom: 4px;
+}
+.conn-group:hover { background: rgba(0, 0, 0, 0.045); border-color: var(--ink-3); }
+.conn-group.is-active {
+  background: var(--panel);
+  border-color: var(--ink-3);
+  box-shadow: var(--shadow-sm);
+}
+/* child rows (aw-1 etc) sit visually outside the card (no background) — separator between groups */
+.bookmark-children { margin-bottom: 8px; }
+
 /* CONNECTIONS — live window list, grouped by url */
 .conn-group.is-expandable .agent-name { cursor: pointer; }
 .conn-group.is-expandable .agent-name:hover { color: var(--accent-ink); }
@@ -2059,11 +2076,52 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   color: var(--ink-2);
 }
 .msg-user .msg-body blockquote { border-left-color: rgba(255,255,255, 0.5); color: rgba(255,255,255, 0.85); }
-.msg-body ul { margin: 4px 0; padding-left: 20px; }
+.msg-body ul, .msg-body ol { margin: 4px 0; padding-left: 20px; }
 .msg-body li { margin: 1px 0; }
 .msg-body strong { font-weight: 600; }
 .msg-body em     { font-style: italic; }
 .msg-body del    { text-decoration: line-through; opacity: 0.7; }
+
+/* Markdown rendering (marked.js GFM) — headings / hr / tables */
+.msg-body h1, .msg-body h2, .msg-body h3, .msg-body h4 {
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 10px 0 4px;
+}
+.msg-body h1 { font-size: calc(16px * var(--fs, 1)); }
+.msg-body h2 { font-size: calc(14px * var(--fs, 1)); }
+.msg-body h3 { font-size: calc(13px * var(--fs, 1)); color: var(--ink-2); }
+.msg-body h4 { font-size: calc(12px * var(--fs, 1)); color: var(--ink-3); margin-top: 6px; }
+.msg-body h2:first-child,
+.msg-body h3:first-child,
+.msg-body h4:first-child { margin-top: 0; }
+.msg-body hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 8px 0;
+}
+.msg-body table {
+  border-collapse: collapse;
+  margin: 6px 0;
+  font-size: calc(12px * var(--fs, 1));
+  width: auto;
+  max-width: 100%;
+}
+.msg-body th, .msg-body td {
+  border: 1px solid var(--line);
+  padding: 4px 9px;
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+}
+.msg-body th {
+  background: rgba(14,14,12, 0.05);
+  font-weight: 600;
+}
+.msg-body p { margin: 4px 0; }
+.msg-user .msg-body th { background: rgba(255,255,255, 0.15); }
+.msg-user .msg-body th,
+.msg-user .msg-body td { border-color: rgba(255,255,255, 0.28); }
 .msg-body a {
   color: var(--accent-ink);
   text-decoration: underline;

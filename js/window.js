@@ -69,6 +69,7 @@ export class AgentWindow {
     badge.dataset.proto = this.protoId;
 
     // Close
+    node.querySelector(".aw-btn-clear")?.addEventListener("click", () => this.clearChat());
     node.querySelector(".aw-btn-close").addEventListener("click", () => this.close());
     node.querySelector('.aw-traffic-dot[data-act="close"]').addEventListener("click", () => this.close());
 
@@ -390,7 +391,7 @@ export class AgentWindow {
     let i = current.length;
     const total = fullText.length;
     const stepSize = total > 400 ? 3 : total > 120 ? 2 : 1;
-    const interval = 22;
+    const interval = 30;
     const tick = () => {
       if (i >= total) {
         body.parentElement.dataset.typing = "0";
@@ -418,7 +419,7 @@ export class AgentWindow {
     let i = 0;
     const total = fullText.length;
     const stepSize = total > 400 ? 3 : total > 120 ? 2 : 1;
-    const interval = 18;
+    const interval = 26;
     const tick = () => {
       if (i >= total) {
         body.parentElement.dataset.typing = "0";

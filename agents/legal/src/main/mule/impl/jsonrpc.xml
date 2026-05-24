@@ -195,11 +195,11 @@ var replyText =
         "> 意図を解釈できませんでした。`クレーム` / `SLA` / `違反` / `判定` などを含めてください。"
     else if (intent == "claim_intake")
         (if (orderId == null)
-            "## クレーム受付完了\n\n**SLA違反判定**のため、以下の情報を確認させてください:\n\n- 注文ID (例 `A123`)\n- 契約ID (なければ顧客ID)\n- 発生日\n- 商品コード\n- 配送状況・遅延理由 → Logisticsへ\n- 在庫・入荷予定 → Inventoryへ"
+            "## クレーム受付完了\n\n**SLA違反判定**のため、以下の情報を確認させてください:\n\n- 注文ID (例 `A123`)\n- 契約ID (なければ顧客ID)\n- 発生日\n- 商品コード\n- 配送状況・遅延理由 (物流部門へ)\n- 在庫・入荷予定 (在庫管理部門へ)\n\n> 該当部門で確認後、まとめて再度ご相談ください。"
         else if (orderRec == null)
             "> 注文ID `" ++ orderId ++ "` は契約マスタに存在しません。マスタの注文は `A123` `A124` `A125` です。"
         else
-            "## クレーム受付完了 (注文 `" ++ orderId ++ "`)\n\n| 項目 | 値 |\n|---|---|\n| 顧客 | " ++ orderRec.customerId ++ " |\n| 契約 | `" ++ orderRec.contractId ++ "` (SLA `" ++ (contract.slaDeliveryDays as String) ++ "日`) |\n| 商品 | `" ++ orderRec.productCode ++ "` |\n\n**SLA違反判定**のため、以下を集めてください:\n\n- 配送ステータス → Logisticsへ\n- 遅延理由 → Logisticsへ\n- 入荷予定 → Inventoryへ\n\n> 集めた情報を再度ご相談ください。")
+            "## クレーム受付完了 (注文 `" ++ orderId ++ "`)\n\n| 項目 | 値 |\n|---|---|\n| 顧客 | " ++ orderRec.customerId ++ " |\n| 契約 | `" ++ orderRec.contractId ++ "` (SLA `" ++ (contract.slaDeliveryDays as String) ++ "日`) |\n| 商品 | `" ++ orderRec.productCode ++ "` |\n\n**SLA違反判定**のため、以下の情報をお集めください:\n\n- 配送ステータス (物流部門へ)\n- 遅延理由 (物流部門へ)\n- 入荷予定 (在庫管理部門へ)\n\n> 各部門に確認後、まとめて再度ご相談ください。")
     else if (intent == "sla_check")
         (if (contract == null)
             (if (orderId != null)
@@ -209,7 +209,7 @@ var replyText =
         else if (hasDelayKeyword)
             "## SLA違反判定 (契約 `" ++ contract.contractId ++ "`)\n\n| 項目 | 値 |\n|---|---|\n| 顧客 | " ++ contract.customerId ++ " |\n" ++ (if (orderId != null) "| 注文 | `" ++ orderId ++ "` |\n" else "") ++ "| 納期SLA | **" ++ (contract.slaDeliveryDays as String) ++ "日** |\n| 状態 | 配送遅延中 |\n| **判定** | **SLA違反** |\n| **ペナルティ** | 注文金額の **" ++ ((contract.penaltyRate * 100) as String) ++ "%** |"
         else
-            "## SLA判定 (契約 `" ++ contract.contractId ++ "`)\n\n契約条件: 納期SLA `" ++ (contract.slaDeliveryDays as String) ++ "日` / 違反時ペナルティ `" ++ ((contract.penaltyRate * 100) as String) ++ "%`\n\n> 違反判定には「配送状況」「遅延有無」の情報が必要です。" ++ (if (orderId != null) "Logisticsに `" ++ orderId ++ "` の遅延理由を問い合わせてください。" else ""))
+            "## SLA判定 (契約 `" ++ contract.contractId ++ "`)\n\n契約条件: 納期SLA `" ++ (contract.slaDeliveryDays as String) ++ "日` / 違反時ペナルティ `" ++ ((contract.penaltyRate * 100) as String) ++ "%`\n\n> 違反判定には「配送状況」「遅延有無」の情報が必要です。" ++ (if (orderId != null) "物流部門で `" ++ orderId ++ "` の遅延理由を確認してください。" else ""))
     else
         "> 意図を解釈できませんでした。`クレーム` / `SLA` / `違反` / `判定` などを含めてください。"
 ---
