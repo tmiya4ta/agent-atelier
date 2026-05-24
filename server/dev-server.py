@@ -69,8 +69,11 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_response(404); self._cors(); self.end_headers()
 
     def end_headers(self):
-        # 静的アセットにも CORS を付ける
+        # 静的アセットにも CORS + キャッシュ完全無効化 (dev 用)
         self._cors()
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         super().end_headers()
 
     # ─── Proxy ─────

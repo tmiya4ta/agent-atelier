@@ -5,7 +5,7 @@
 import { PROTOCOLS, getProtocol }           from "./protocols/index.js";
 import { AgentWindow }                      from "./window.js";
 import * as persist                         from "./persist.js";
-import { modalConfirm, modalAlert }         from "./modal.js";
+import { modalConfirm, modalAlert, modalPrompt } from "./modal.js";
 import { runAuthCodeFlow, redirectUri }     from "./oauth.js";
 import { parseScript, ScriptRunner }        from "./script.js";
 
@@ -19,7 +19,43 @@ const DEMO_AGENTS = [
 // ─── State ────────────────────────────────────────────
 let wsCounter     = 0;
 let catCounter    = 0;
+let bgCounter     = 0;
 let scriptCounter = 0;
+
+// 旧 catalog (cat.businessGroup / cat.assets が直下) を businessGroups[] 配列に変換 (防御的)
+function migrateCatalog(c) {
+  try {
+    if (!c || typeof c !== "object") return c;
+    if (Array.isArray(c.businessGroups)) {
+      c.businessGroups.forEach(bg => {
+        const m = (bg?.id || "").match(/^bg-(\d+)$/);
+        if (m) bgCounter = Math.max(bgCounter, parseInt(m[1], 10));
+      });
+      return c;
+    }
+    c.businessGroups = [];
+    if (c.businessGroup) {
+      c.businessGroups.push({
+        id:    `bg-${++bgCounter}`,
+        input: c.businessGroup,
+        bgId:  c.businessGroupId || null,
+        bgName: c.businessGroupName || null,
+        assets: c.assets || null,
+        assetsFetchedAt: c.assetsFetchedAt || null
+      });
+    }
+    delete c.businessGroup;
+    delete c.businessGroupId;
+    delete c.businessGroupName;
+    delete c.assets;
+    delete c.assetsFetchedAt;
+    return c;
+  } catch (e) {
+    console.warn("migrateCatalog failed:", e, c);
+    if (c && !Array.isArray(c.businessGroups)) c.businessGroups = [];
+    return c;
+  }
+}
 
 const CATALOG_FLOWS = [
   { id: "cc",       label: "Client Credentials",  sub: "oauth2 / cc",   description: "Client credentials grant" },
@@ -71,7 +107,7 @@ function init() {
     state.zoom             = saved.zoom ?? 1.0;
     state.sidebarCollapsed = !!saved.sidebarCollapsed;
     state.bookmarks        = saved.bookmarks || [];
-    state.catalogs         = saved.catalogs  || [];
+    state.catalogs         = (saved.catalogs || []).map(migrateCatalog);
     state.scripts          = saved.scripts   || [];
     state.selectedScriptId = saved.selectedScriptId || null;
     state.openScriptIds    = (saved.openScriptIds || []).filter(id => state.scripts.find(s => s.id === id));
@@ -83,7 +119,7 @@ function init() {
   } else {
     state.sidebarCollapsed = !!saved?.sidebarCollapsed;
     state.bookmarks = saved?.bookmarks || [];
-    state.catalogs  = saved?.catalogs  || [];
+    state.catalogs  = (saved?.catalogs || []).map(migrateCatalog);
     state.scripts   = saved?.scripts   || [];
     state.selectedScriptId = saved?.selectedScriptId || null;
     state.openScriptIds    = (saved?.openScriptIds || []).filter(id => state.scripts.find(s => s.id === id));
@@ -196,7 +232,8 @@ function restoreFromSaved(saved) {
         url:     winData.config?.url,
         name:    winData.config?.name,
         auth:    winData.config?.auth,
-        persona: winData.config?.persona
+        persona: winData.config?.persona,
+        channel: winData.config?.channel
       }, { restore: { pos: winData.pos, activeTab: winData.activeTab }, skipDirty: true });
     });
   });
@@ -368,17 +405,31 @@ function renderBookmarks() {
   const empty = $("#bookmarksEmpty");
   root.innerHTML = "";
 
+  // bookmark id → 展開状態のキャッシュ (初回はデフォルト open)
+  state._bookmarkExpanded = state._bookmarkExpanded || {};
+
   state.bookmarks.forEach(b => {
+    const bid = `${b.protoId}::${b.url}`;
+    // 同じ proto + url の現存ウインドウを収集
+    const children = state.workspaces.flatMap(w =>
+      w.windows.filter(win => win.protoId === b.protoId && win.adapter.config.url === b.url)
+    );
+    const hasChildren = children.length > 0;
+    if (state._bookmarkExpanded[bid] === undefined) state._bookmarkExpanded[bid] = true;
+    const expanded = !!state._bookmarkExpanded[bid];
+
     const li = document.createElement("li");
-    li.className = "agent-item";
+    li.className = "agent-item"
+      + (hasChildren ? " is-expandable" : "")
+      + (hasChildren && expanded ? " is-expanded" : "");
     const initial = (b.name || "?").charAt(0).toUpperCase();
+    li.title = b.host;   // host は tooltip
     li.innerHTML = `
-      <span class="agent-avatar">${escapeHtml(initial)}</span>
-      <span class="agent-info">
-        <span class="agent-name">${escapeHtml(b.name)}</span>
-        <span class="agent-host">${escapeHtml(b.host)}</span>
-      </span>
-      <span class="agent-proto">${b.protoId.toUpperCase()}</span>
+      <span class="agent-name" title="クリックでツリー開閉">${escapeHtml(b.name)}</span>
+      <span class="bm-count" title="${children.length} window(s)">${children.length}</span>
+      <button class="bookmark-new" title="新規接続" aria-label="new connection">
+        <svg viewBox="0 0 14 14" width="10" height="10"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
       <button class="agent-remove" title="ブックマーク削除" aria-label="remove">
         <svg viewBox="0 0 14 14" width="9" height="9">
           <line x1="3" y1="3" x2="11" y2="11" stroke="currentColor" stroke-width="1.4"/>
@@ -389,15 +440,57 @@ function renderBookmarks() {
     li.addEventListener("click", (e) => {
       if (e.target.closest(".agent-remove")) {
         state.bookmarks = state.bookmarks.filter(x => x !== b);
+        delete state._bookmarkExpanded[bid];
         renderBookmarks();
-        // 既存ウインドウのブックマークアイコンも更新
         state.workspaces.forEach(w => w.windows.forEach(win => win.refreshBookmarkUi()));
         dirty();
         return;
       }
-      connect({ protoId: b.protoId, url: b.url, name: b.name, auth: b.auth, persona: b.persona });
+      if (e.target.closest(".bookmark-new")) {
+        e.stopPropagation();
+        connect({ protoId: b.protoId, url: b.url, name: b.name, auth: b.auth, persona: b.persona });
+        return;
+      }
+      // 名称・count をクリックで toggle (子があれば)
+      if (e.target.closest(".agent-name, .bm-count")) {
+        if (!hasChildren) return;
+        state._bookmarkExpanded[bid] = !state._bookmarkExpanded[bid];
+        renderBookmarks();
+      }
     });
     root.appendChild(li);
+
+    // 子ツリー (現存ウインドウ一覧)
+    if (hasChildren) {
+      const sub = document.createElement("li");
+      sub.className = "bookmark-children" + (expanded ? "" : " is-collapsed");
+      children.forEach((win, i) => {
+        const isLast = i === children.length - 1;
+        const ws = state.workspaces.find(w => w.id === win._wsId);
+        const isActiveWin = (ws?.id === state.activeWs) && (document.activeElement === win.el);
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "bookmark-child" + (isActiveWin ? " is-active" : "");
+        btn.title = ws ? `workspace: ${ws.name}` : "";
+        btn.innerHTML = `
+          <span class="bc-branch">${isLast ? "└─" : "├─"}</span>
+          <span class="bc-id">${win.id}</span>
+          <span class="bc-name">${escapeHtml(windowDisplayName(win))}</span>
+        `;
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          // 別ワークスペースなら切替してから focus
+          if (win._wsId && win._wsId !== state.activeWs) {
+            switchWorkspace(win._wsId);
+            setTimeout(() => win.focus(), 50);
+          } else {
+            win.focus();
+          }
+        });
+        sub.appendChild(btn);
+      });
+      root.appendChild(sub);
+    }
   });
 
   $("#savedCount").textContent = String(state.bookmarks.length);
@@ -454,20 +547,30 @@ async function authenticateCatalog(cat) {
   cat.lastError      = null;
 }
 
-async function fetchCatalogAssets(cat) {
+async function fetchBgAssets(cat, bg) {
   if (!cat.accessToken || Date.now() > cat.tokenExpiresAt) {
     await authenticateCatalog(cat);
   }
   if (cat.status !== "connected") {
     throw new Error(cat.lastError || "not connected");
   }
-  // types=agent で agent型のみ、limit/offset でページング (max 500件で safety cap)
+
+  // BG が未解決なら ID 解決
+  if (!bg.bgId) {
+    try {
+      await resolveBusinessGroupId(cat, bg);
+    } catch (e) {
+      throw new Error(`Business group の解決に失敗: ${e.message}`);
+    }
+  }
+
   const PAGE = 50;
   const HARD_CAP = 500;
   const assets = [];
   let offset = 0;
+  const orgFilter = bg.bgId ? `&organizationId=${encodeURIComponent(bg.bgId)}` : "";
   while (offset < HARD_CAP) {
-    const url = `https://anypoint.mulesoft.com/exchange/api/v2/assets?types=agent&limit=${PAGE}&offset=${offset}`;
+    const url = `https://anypoint.mulesoft.com/exchange/api/v2/assets?types=agent&limit=${PAGE}&offset=${offset}${orgFilter}`;
     const res = await fetch(`/proxy?url=${encodeURIComponent(url)}`, {
       headers: { Authorization: `Bearer ${cat.accessToken}` }
     });
@@ -505,9 +608,51 @@ function findA2ACardFile(asset) {
   return asset?.files?.find(f => f.classifier === "a2a-card" && f.packaging === "json");
 }
 
+// BG.input が UUID なら直接、 名前なら hierarchy から照合 → bg.bgId / bg.bgName を埋める
+async function resolveBusinessGroupId(cat, bg) {
+  const raw = (bg.input || "").trim();
+  if (!raw) return;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)) {
+    bg.bgId   = raw;
+    bg.bgName = null;
+    return;
+  }
+  const meUrl = "https://anypoint.mulesoft.com/accounts/api/me";
+  const meRes = await fetch(`/proxy?url=${encodeURIComponent(meUrl)}`, {
+    headers: { Authorization: `Bearer ${cat.accessToken}` }
+  });
+  if (!meRes.ok) throw new Error(`/me HTTP ${meRes.status}`);
+  const me = await meRes.json();
+  const rootOrg = me.user?.organization || me.organization;
+  if (!rootOrg) throw new Error("no organization in /me");
+
+  const hUrl = `https://anypoint.mulesoft.com/accounts/api/cs/organizations/${rootOrg.id}/hierarchy`;
+  const hRes = await fetch(`/proxy?url=${encodeURIComponent(hUrl)}`, {
+    headers: { Authorization: `Bearer ${cat.accessToken}` }
+  });
+  let nodes = [rootOrg];
+  if (hRes.ok) {
+    const h = await hRes.json();
+    nodes = flattenOrgTree(h);
+  }
+  const target = raw.toLowerCase();
+  const hit = nodes.find(o => (o.name || "").toLowerCase() === target)
+           || nodes.find(o => (o.name || "").toLowerCase().includes(target));
+  if (!hit) throw new Error(`"${raw}" にマッチする business group なし`);
+  bg.bgId   = hit.id;
+  bg.bgName = hit.name;
+}
+
+function flattenOrgTree(node, acc = []) {
+  if (!node) return acc;
+  acc.push({ id: node.id, name: node.name });
+  (node.subOrganizations || node.subOrganization || node.children || []).forEach(s => flattenOrgTree(s, acc));
+  return acc;
+}
+
 // ─── Drawer ────────────────────────────────────────────
-function openCatalogDrawer(cat) {
-  // Script panel と排他: 開いていれば閉じる
+function openBgDrawer(cat, bg) {
+  // Script panel と排他
   if (state.scriptPanelOpen) {
     state.scriptPanelOpen = false;
     applyScriptPanel();
@@ -516,36 +661,36 @@ function openCatalogDrawer(cat) {
   const drawer = $("#assetDrawer");
   drawer.classList.add("is-open");
   drawer.setAttribute("aria-hidden", "false");
-  $("#drawerName").textContent = cat.name;
+  $("#drawerName").textContent = `${cat.name} · ${bg.bgName || bg.input}`;
   $("#drawerMeta").classList.remove("is-error");
   $("#drawerBody").innerHTML = "";
   $("#drawerFilter").value = "";
   $("#drawerFilterClear").hidden = true;
   state._drawerCatalogId = cat.id;
-  renderCatalogs();   // is-active 反映
+  state._drawerBgId      = bg.id;
+  renderCatalogs();
 
-  // キャッシュがあれば即時表示 (fetchはしない)
-  if (Array.isArray(cat.assets) && cat.assets.length > 0) {
+  if (Array.isArray(bg.assets) && bg.assets.length > 0) {
     $("#drawerSpinner").hidden = true;
-    renderCachedAssets(cat);
+    renderCachedAssets(cat, bg);
     return;
   }
-  // 初回オープン → fetch
-  loadDrawerAssets(cat);
+  loadDrawerAssets(cat, bg);
 }
 function closeCatalogDrawer() {
   $("#assetDrawer").classList.remove("is-open");
   $("#assetDrawer").setAttribute("aria-hidden", "true");
   state._drawerCatalogId = null;
-  renderCatalogs();   // is-active 解除
+  state._drawerBgId      = null;
+  renderCatalogs();
 }
 
-function renderCachedAssets(cat) {
-  const withInst = cat.assets.filter(a => a._a2aUrl).length;
-  const ageSec = Math.round((Date.now() - (cat.assetsFetchedAt || Date.now())) / 1000);
+function renderCachedAssets(cat, bg) {
+  const withInst = bg.assets.filter(a => a._a2aUrl).length;
+  const ageSec = Math.round((Date.now() - (bg.assetsFetchedAt || Date.now())) / 1000);
   $("#drawerMeta").textContent =
-    `${cat.assets.length} assets · ${withInst} connectable · cached ${formatAge(ageSec)}`;
-  renderAssetList(cat.assets);
+    `${bg.assets.length} assets · ${withInst} connectable · cached ${formatAge(ageSec)} · BG: ${bg.bgName || bg.input}`;
+  renderAssetList(bg.assets);
   applyDrawerFilter();
 }
 
@@ -556,7 +701,7 @@ function formatAge(sec) {
   return `${Math.round(sec/86400)}d ago`;
 }
 
-async function loadDrawerAssets(cat) {
+async function loadDrawerAssets(cat, bg) {
   const meta    = $("#drawerMeta");
   const body    = $("#drawerBody");
   const spinner = $("#drawerSpinner");
@@ -566,15 +711,14 @@ async function loadDrawerAssets(cat) {
   meta.classList.remove("is-error");
   try {
     const t0 = performance.now();
-    const assets = await fetchCatalogAssets(cat);
+    const assets = await fetchBgAssets(cat, bg);
     const elapsed = Math.round(performance.now() - t0);
-    if (state._drawerCatalogId !== cat.id) return;
+    if (state._drawerBgId !== bg.id) return;
     spinner.hidden = true;
-    // キャッシュ保存
-    cat.assets = assets;
-    cat.assetsFetchedAt = Date.now();
+    bg.assets = assets;
+    bg.assetsFetchedAt = Date.now();
     const withInst = assets.filter(a => a._a2aUrl).length;
-    meta.textContent = `${assets.length} assets · ${withInst} connectable · ${elapsed}ms`;
+    meta.textContent = `${assets.length} assets · ${withInst} connectable · ${elapsed}ms · BG: ${bg.bgName || bg.input}`;
     renderAssetList(assets);
     applyDrawerFilter();
     renderCatalogs();
@@ -775,21 +919,24 @@ function wireDrawer() {
   $("#drawerRefresh").addEventListener("click", () => {
     const cat = state.catalogs.find(c => c.id === state._drawerCatalogId);
     if (!cat) return;
-    // 強制リフレッシュ: キャッシュを捨てて取り直す
-    cat.assets = null;
-    cat.assetsFetchedAt = null;
-    loadDrawerAssets(cat);
+    const bg = cat.businessGroups?.find(b => b.id === state._drawerBgId);
+    if (!bg) return;
+    bg.assets = null;
+    bg.assetsFetchedAt = null;
+    loadDrawerAssets(cat, bg);
   });
   $("#drawerDelete").addEventListener("click", async () => {
     const cat = state.catalogs.find(c => c.id === state._drawerCatalogId);
     if (!cat) return;
+    const bg = cat.businessGroups?.find(b => b.id === state._drawerBgId);
+    if (!bg) return;
     const ok = await modalConfirm({
-      title:        `Delete "${cat.name}"?`,
-      confirmLabel: "Delete",
+      title:        `Remove "${bg.bgName || bg.input}" from "${cat.name}"?`,
+      confirmLabel: "Remove",
       danger:       true
     });
     if (!ok) return;
-    state.catalogs = state.catalogs.filter(x => x.id !== cat.id);
+    cat.businessGroups = cat.businessGroups.filter(x => x.id !== bg.id);
     closeCatalogDrawer();
     renderCatalogs();
     dirty();
@@ -818,29 +965,40 @@ function renderCatalogs() {
   const empty = $("#catalogsEmpty");
   if (!root) return;
   root.innerHTML = "";
+
+  // catalog 開閉状態 (bookmark と同じパターン)
+  state._catalogExpanded = state._catalogExpanded || {};
+
   state.catalogs.forEach(c => {
-    const li = document.createElement("li");
-    li.className = "catalog-item";
-    li.dataset.catId = c.id;
-    const initial = (c.name || "?").charAt(0).toUpperCase();
+    if (!c.businessGroups) c.businessGroups = [];
+    const hasChildren = c.businessGroups.length > 0;
+    if (state._catalogExpanded[c.id] === undefined) state._catalogExpanded[c.id] = true;
+    const expanded = !!state._catalogExpanded[c.id];
+
     const statusCls = c.status === "connected" ? "is-connected"
                     : c.status === "error"     ? "is-error"
                     : c.status === "connecting"? "is-connecting"
                     : "";
     const sourceUrl = c.authUrl || c.tokenUrl;
     const host = hostFromUrl(sourceUrl) || (c.type === "anypoint" ? "anypoint.mulesoft.com" : "");
-    if (state._drawerCatalogId === c.id) li.classList.add("is-active");
+
+    // 親 (catalog) — bookmark item と同形式: name + count + + + ×
+    const li = document.createElement("li");
+    li.className = "catalog-item"
+      + (hasChildren ? " is-expandable" : "")
+      + (hasChildren && expanded ? " is-expanded" : "");
+    li.dataset.catId = c.id;
+    li.title = `${host}  ·  ${c.flow === "cc" ? "Client Credentials" : "Authorization Code"}  ·  ${c.status || "idle"}`;
     li.innerHTML = `
-      <span class="catalog-icon">${escapeHtml(initial)}</span>
-      <span class="catalog-info">
-        <span class="catalog-name">${escapeHtml(c.name)}</span>
-        <span class="catalog-sub">${escapeHtml(host)}</span>
-      </span>
+      <span class="catalog-name" title="クリックで開閉">${escapeHtml(c.name)}</span>
       <span class="catalog-meta">
-        <span class="catalog-flow">${escapeHtml(c.flow === "cc" ? "CC" : "CODE")}</span>
         <span class="catalog-status-dot ${statusCls}" title="${escapeHtml(c.status || "idle")}"></span>
+        <span class="bm-count" title="${c.businessGroups.length} BG">${c.businessGroups.length}</span>
       </span>
-      <button class="agent-remove" title="削除" aria-label="remove">
+      <button class="bookmark-new" title="Business group を追加" aria-label="add bg">
+        <svg viewBox="0 0 14 14" width="10" height="10"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+      <button class="agent-remove" title="catalog 削除" aria-label="remove">
         <svg viewBox="0 0 14 14" width="9" height="9">
           <line x1="3" y1="3" x2="11" y2="11" stroke="currentColor" stroke-width="1.4"/>
           <line x1="11" y1="3" x2="3" y2="11" stroke="currentColor" stroke-width="1.4"/>
@@ -851,34 +1009,117 @@ function renderCatalogs() {
       if (e.target.closest(".agent-remove")) {
         e.stopPropagation();
         const ok = await modalConfirm({
-          title:        `Delete "${c.name}"?`,
+          title:        `Delete "${c.name}"? (BG ${c.businessGroups.length} 件も削除)`,
           confirmLabel: "Delete",
           danger:       true
         });
         if (!ok) return;
         state.catalogs = state.catalogs.filter(x => x.id !== c.id);
+        delete state._catalogExpanded[c.id];
         if (state._drawerCatalogId === c.id) closeCatalogDrawer();
         renderCatalogs();
         dirty();
         return;
       }
-      // トグル: 既に同じ catalog の drawer が開いていれば閉じる、 そうでなければ開く
-      if (state._drawerCatalogId === c.id) {
-        closeAssetDetail();
-        closeCatalogDrawer();
+      if (e.target.closest(".bookmark-new")) {
+        e.stopPropagation();
+        addBusinessGroupToCatalog(c);
+        return;
+      }
+      // name / count クリック → 開閉トグル (子があれば)
+      if (e.target.closest(".catalog-name, .bm-count")) {
+        if (!hasChildren) {
+          // 子なしの場合は即 BG 追加 UI を出す
+          addBusinessGroupToCatalog(c);
+          return;
+        }
+        state._catalogExpanded[c.id] = !state._catalogExpanded[c.id];
         renderCatalogs();
-      } else {
-        openCatalogDrawer(c);
       }
     });
     li.addEventListener("dblclick", (e) => {
-      // ダブルクリックで編集ダイアログ
       e.stopPropagation();
       openCatalogDialog(c);
     });
     root.appendChild(li);
+
+    // 子 BG tree
+    if (hasChildren && expanded) {
+      const sub = document.createElement("li");
+      sub.className = "bookmark-children";
+      c.businessGroups.forEach((bg, i) => {
+        const isLast = i === c.businessGroups.length - 1;
+        const isActive = state._drawerCatalogId === c.id && state._drawerBgId === bg.id;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "bookmark-child" + (isActive ? " is-active" : "");
+        btn.title = `${bg.bgName || bg.input}${bg.bgId ? " · " + bg.bgId : ""}`;
+        btn.innerHTML = `
+          <span class="bc-branch">${isLast ? "└─" : "├─"}</span>
+          <span class="bc-name">${escapeHtml(bg.bgName || bg.input)}</span>
+          <button class="bc-remove" title="この BG を削除" aria-label="remove bg">
+            <svg viewBox="0 0 12 12" width="8" height="8"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/><line x1="9.5" y1="2.5" x2="2.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/></svg>
+          </button>
+        `;
+        btn.addEventListener("click", async (e) => {
+          if (e.target.closest(".bc-remove")) {
+            e.stopPropagation();
+            const ok = await modalConfirm({
+              title: `Remove "${bg.bgName || bg.input}" from catalog?`,
+              confirmLabel: "Remove",
+              danger: true
+            });
+            if (!ok) return;
+            c.businessGroups = c.businessGroups.filter(x => x.id !== bg.id);
+            if (state._drawerBgId === bg.id) closeCatalogDrawer();
+            renderCatalogs();
+            dirty();
+            return;
+          }
+          // トグル: 同じ bg を開いてたら閉じる
+          if (state._drawerCatalogId === c.id && state._drawerBgId === bg.id) {
+            closeAssetDetail();
+            closeCatalogDrawer();
+          } else {
+            openBgDrawer(c, bg);
+          }
+        });
+        sub.appendChild(btn);
+      });
+      root.appendChild(sub);
+    }
   });
   empty.classList.toggle("is-hidden", state.catalogs.length > 0);
+}
+
+// + ボタンから BG を追加する modal フロー
+async function addBusinessGroupToCatalog(cat) {
+  const input = await modalPrompt({
+    title:        `Add business group to "${cat.name}"`,
+    label:        "business group name or ID",
+    placeholder:  "例: btd  または  0fc4eaf1-5697-4cef-9c1b-3b96e3a52ee2",
+    confirmLabel: "Add"
+  });
+  if (!input) return;
+  // 重複チェック
+  if (cat.businessGroups.some(x => x.input.toLowerCase() === input.toLowerCase())) {
+    await modalAlert({ title: "Already added", message: `"${input}" は既にこの catalog に登録されています。` });
+    return;
+  }
+  const bg = {
+    id:    `bg-${++bgCounter}`,
+    input,
+    bgId:  null,
+    bgName: null,
+    assets: null,
+    assetsFetchedAt: null
+  };
+  cat.businessGroups.push(bg);
+  state._catalogExpanded[cat.id] = true;
+  renderCatalogs();
+  dirty();
+  // 直ちに drawer を開いて取得
+  openBgDrawer(cat, bg);
 }
 
 // ─── Auth flow セグメント ───
@@ -956,7 +1197,7 @@ function openCatalogDialog(editing) {
   $("#catClientId").value     = editing?.clientId    || "";
   $("#catClientSecret").value = editing?.clientSecret ? "•".repeat(12) : "";
   $("#catScopes").value       = editing?.scopes      || "";
-  $("#catRedirect").value     = redirectUri();   // ランタイムのoriginから生成
+  $("#catRedirect").value     = redirectUri();
 
   refreshCatalogDialog();
   setTimeout(() => $("#catName").focus(), 50);
@@ -980,12 +1221,11 @@ async function submitCatalogDialog() {
   const editingId = state._editingCatalogId;
   const existing  = editingId ? state.catalogs.find(c => c.id === editingId) : null;
   const isMask = secretInput && /^•+$/.test(secretInput);
-  // CCは必須、Auth Codeでも Web app型 Connected App の時のみ使う (空ならPKCEのみ)
   const clientSecret = isMask
     ? existing?.clientSecret
     : (secretInput || undefined);
 
-  const cat = existing || {};
+  const cat = existing || { businessGroups: [] };
   Object.assign(cat, {
     id:        existing?.id || `cat-${++catCounter}`,
     name,
@@ -997,6 +1237,7 @@ async function submitCatalogDialog() {
     status:    existing?.status || "idle",
     createdAt: existing?.createdAt || Date.now()
   });
+  if (!cat.businessGroups) cat.businessGroups = [];
   if (!existing) state.catalogs.push(cat);
 
   // CC/Auth Code どちらもここで認証
@@ -1019,9 +1260,9 @@ async function submitCatalogDialog() {
   }
   closeCatalogDialog();
 
-  // 接続成功なら drawer を開いてアセット表示
-  if (cat.status === "connected") {
-    openCatalogDrawer(cat);
+  // 初回作成で BG がまだなら 「+ で BG を追加」 を促す Toast 風 alert
+  if (cat.status === "connected" && (!cat.businessGroups || cat.businessGroups.length === 0)) {
+    addBusinessGroupToCatalog(cat);   // すぐ追加 modal を出す
   }
 }
 
@@ -1120,23 +1361,16 @@ function renderScripts() {
     li.className = "script-item";
     if (s.id === state.selectedScriptId) li.classList.add("is-active");
     li.dataset.scriptId = s.id;
-    const initial = (s.name || "?").charAt(0).toUpperCase();
     const lineCount = (s.body || "").split(/\r?\n/).filter(l => l.trim() && !l.trim().startsWith("#")).length;
     const ageSec = Math.max(0, Math.round((Date.now() - (s.updatedAt || s.createdAt)) / 1000));
+    li.title = `${lineCount} ops · edited ${formatAge(ageSec)}${s.autoLoop ? " · auto loop ON" : ""}`;
     li.innerHTML = `
-      <span class="script-icon">${escapeHtml(initial)}</span>
-      <span class="script-info">
-        <span class="script-name">${escapeHtml(s.name)}</span>
-        <span class="script-sub">edited ${formatAge(ageSec)}</span>
-      </span>
-      <span class="script-meta">
-        <span class="script-lines">${lineCount}L</span>
-        <button class="script-loop ${s.autoLoop ? "is-on" : ""} ${(state._script && state.selectedScriptId === s.id && s.autoLoop) ? "is-running" : ""}"
-                title="${s.autoLoop ? "auto loop ON (停止/解除)" : "auto loop モード (繰り返し実行)"}"
-                aria-label="toggle auto loop">
-          <svg viewBox="0 0 16 16" width="11" height="11"><path d="M3 7 a5 5 0 0 1 9 -2.5 M13 9 a5 5 0 0 1 -9 2.5 M3 2 v3 h3 M13 14 v-3 h-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
-      </span>
+      <span class="script-name">${escapeHtml(s.name)}</span>
+      <button class="script-loop ${s.autoLoop ? "is-on" : ""} ${(state._script && state.selectedScriptId === s.id && s.autoLoop) ? "is-running" : ""}"
+              title="${s.autoLoop ? "auto loop ON (停止/解除)" : "auto loop モード (繰り返し実行)"}"
+              aria-label="toggle auto loop">
+        <svg viewBox="0 0 16 16" width="11" height="11"><path d="M3 7 a5 5 0 0 1 9 -2.5 M13 9 a5 5 0 0 1 -9 2.5 M3 2 v3 h3 M13 14 v-3 h-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
       <button class="agent-remove" title="削除" aria-label="remove">
         <svg viewBox="0 0 14 14" width="9" height="9">
           <line x1="3" y1="3" x2="11" y2="11" stroke="currentColor" stroke-width="1.4"/>
@@ -1230,9 +1464,30 @@ function renderProtoGrid() {
       if (p.status !== "ready") return;
       state.selectedProto = p.id;
       renderProtoGrid();
+      applyProtoSpecificFields();
     });
     root.appendChild(card);
   });
+  applyProtoSpecificFields();
+}
+
+function applyProtoSpecificFields() {
+  const isSlack = state.selectedProto === "slack";
+  const channelField = $("#dlgSlackChannelField");
+  if (channelField) channelField.hidden = !isSlack;
+  // placeholder の切替
+  const urlInput  = $("#dlgUrl");
+  const authInput = $("#dlgAuth");
+  if (urlInput) {
+    urlInput.placeholder = isSlack
+      ? "https://slack.com   ·   https://slack.example.com   (互換サーバ)"
+      : "http://127.0.0.1:5180  ·  https://api.example.com/.well-known/agent.json";
+  }
+  if (authInput) {
+    authInput.placeholder = isSlack
+      ? "xoxb-...  (bot token)  ·  xoxp-...  (user token)"
+      : "optional";
+  }
 }
 
 // ─── Rail ─────────────────────────────────────────────
@@ -1322,7 +1577,8 @@ function closeScriptTab(sid) {
 
 function toggleScriptPanel() {
   if (state.scriptPanelOpen) {
-    state.scriptPanelOpen = false;
+    state.scriptPanelOpen  = false;
+    state.selectedScriptId = null;
   } else {
     // Catalog drawer と排他: 開いていれば閉じる
     closeAssetDetail();
@@ -1599,9 +1855,12 @@ function insertWindowName(win, matchMode) {
   updateScriptHighlight();
 }
 function closeScriptPanel() {
-  if (state._script?.runner) state._script.runner.stop();
-  state.scriptPanelOpen = false;
+  // 注: 走っている script は止めない (panel と実行は独立)
+  // 停止したい時は sidebar の loop トグル OFF か、 panel 再表示して stop ボタン
+  state.scriptPanelOpen   = false;
+  state.selectedScriptId  = null;   // sidebar の is-active も解除
   applyScriptPanel();
+  renderScripts();
   dirty();
 }
 
@@ -1812,33 +2071,43 @@ function closeDialog() {
   $("#connectDialog").hidden = true;
 }
 
-function submitDialog() {
+async function submitDialog() {
   const raw  = $("#dlgUrl").value.trim();
   const name = $("#dlgName").value.trim();
   const auth = $("#dlgAuth").value.trim();
-  if (!raw && state.selectedProto !== "mock") {
+  const channel = $("#dlgChannel")?.value.trim().replace(/^#/, "") || "";
+  if (!raw) {
     $("#dlgUrl").focus();
     return;
   }
   const url = raw ? (/^https?:\/\//i.test(raw) ? raw : "https://" + raw) : "";
-  connect({
+
+  // submit ボタンを連打防止 + 進行表示
+  const btn = $("#dlgSubmit");
+  btn.disabled = true;
+  const ok = await connect({
     protoId: state.selectedProto,
     url,
     name: name || hostFromUrl(url) || "Untitled",
-    auth: auth || undefined
+    auth: auth || undefined,
+    channel: state.selectedProto === "slack" ? (channel || "general") : undefined
   });
-  closeDialog();
+  btn.disabled = false;
+
+  if (ok) closeDialog();
+  // 失敗時はダイアログを残して再入力できるようにする
+  else setTimeout(() => $("#dlgUrl").focus(), 50);
 }
 
 // ─── Connect ────────────────────────────────────────
-async function connect({ protoId, url, name, auth, persona }, opts = {}) {
+async function connect({ protoId, url, name, auth, persona, channel }, opts = {}) {
   const proto = getProtocol(protoId);
   if (!proto || !proto.AdapterClass) {
     await modalAlert({
       title:   "Protocol not supported yet",
       message: `${protoId} アダプタはまだ実装されていません。`
     });
-    return;
+    return false;
   }
 
   const ws = activeWorkspace();
@@ -1855,7 +2124,22 @@ async function connect({ protoId, url, name, auth, persona }, opts = {}) {
   while (usedNums.has(n)) n++;
   const instanceSuffix = n === 1 ? "" : ` #${n}`;
 
-  const adapter = new proto.AdapterClass({ url, name, auth, persona });
+  const adapter = new proto.AdapterClass({ url, name, auth, persona, channel });
+
+  // ── 接続を先に試す: 失敗時はウインドウを作らず modal で通知 ──
+  // (復元時は元々開いてた接続なので、 失敗しても ウインドウだけは作って後で再接続できるようにする)
+  if (!opts.restore) {
+    try {
+      await adapter.connect();
+    } catch (e) {
+      await modalAlert({
+        title:   "Connection failed",
+        message: `${name || url}\n\n${e?.message || String(e)}`
+      });
+      return false;
+    }
+  }
+
   const win = new AgentWindow({
     adapter,
     layer: ws.layer,
@@ -1871,6 +2155,7 @@ async function connect({ protoId, url, name, auth, persona }, opts = {}) {
   ws.windows.push(win);
 
   renderTabs();
+  renderBookmarks();
   updateStatusLine();
   updateEmptyState();
 
@@ -1879,16 +2164,17 @@ async function connect({ protoId, url, name, auth, persona }, opts = {}) {
 
   if (!opts.skipDirty) dirty();
 
-  // 復元時は保存位置をそのまま使う。新規接続は workspace 内の全 window を自動 tile
   if (!opts.restore) {
     tileWindows();
+  } else {
+    // 復元時のみここで接続 (失敗してもウインドウは残す)
+    try {
+      await adapter.connect();
+    } catch (e) {
+      console.warn("restore reconnect failed:", e);
+    }
   }
-
-  try {
-    await adapter.connect();
-  } catch (e) {
-    console.warn("connect failed:", e);
-  }
+  return true;
 }
 
 function removeWindow(win) {
@@ -1896,6 +2182,7 @@ function removeWindow(win) {
   if (!ws) return;
   ws.windows = ws.windows.filter(w => w !== win);
   renderTabs();
+  renderBookmarks();   // bookmark tree からも除外
   updateStatusLine();
   updateEmptyState();
   dirty();

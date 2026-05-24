@@ -80,3 +80,62 @@ export function modalConfirm(opts) {
 export function modalAlert(opts) {
   return _show({ kind: "alert", ...opts });
 }
+
+// modalPrompt — 1 行入力モーダル
+//   await modalPrompt({ title, label?, placeholder?, defaultValue?, confirmLabel? })
+//     → 入力文字列 (Cancel/Esc は null)
+export function modalPrompt({ title, label, placeholder, defaultValue, confirmLabel, cancelLabel } = {}) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement("div");
+    wrap.className = "modal-backdrop";
+    wrap.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true">
+        <header class="modal-head">
+          <span class="modal-eyebrow">input</span>
+          <h3 class="modal-title">${escapeHtml(title || "Enter value")}</h3>
+        </header>
+        <div class="modal-body">
+          ${label ? `<label class="modal-label">${escapeHtml(label)}</label>` : ""}
+          <input class="modal-input" type="text" autocomplete="off"
+                 placeholder="${escapeHtml(placeholder || "")}"
+                 value="${escapeHtml(defaultValue || "")}" />
+        </div>
+        <footer class="modal-foot">
+          <div class="modal-foot-actions">
+            <button type="button" class="ghost-btn modal-cancel">${escapeHtml(cancelLabel || "Cancel")}</button>
+            <button type="button" class="primary-btn modal-confirm">
+              <span>${escapeHtml(confirmLabel || "OK")}</span>
+              <span class="arrow">→</span>
+            </button>
+          </div>
+        </footer>
+      </div>
+    `;
+    document.body.appendChild(wrap);
+    requestAnimationFrame(() => wrap.classList.add("is-open"));
+
+    const input = wrap.querySelector(".modal-input");
+    const close = (result) => {
+      wrap.classList.remove("is-open");
+      setTimeout(() => wrap.remove(), 220);
+      if (_stackKeyHandler === onKey) {
+        document.removeEventListener("keydown", onKey, true);
+        _stackKeyHandler = null;
+      }
+      resolve(result);
+    };
+    wrap.querySelector(".modal-confirm").addEventListener("click", () => close(input.value.trim() || null));
+    wrap.querySelector(".modal-cancel").addEventListener("click", () => close(null));
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(null); }
+      else if (e.key === "Enter" && document.activeElement === input) {
+        e.preventDefault(); e.stopPropagation();
+        close(input.value.trim() || null);
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    _stackKeyHandler = onKey;
+
+    setTimeout(() => { input.focus(); input.select(); }, 50);
+  });
+}

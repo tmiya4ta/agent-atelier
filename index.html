@@ -308,6 +308,17 @@
           </div>
         </div>
 
+        <div class="field" id="dlgSlackChannelField" hidden>
+          <label class="field-label" for="dlgChannel">
+            <span>channel</span>
+            <span class="field-hint">投稿先 channel 名 (# は不要)</span>
+          </label>
+          <div class="input-wrap">
+            <span class="input-prefix">#</span>
+            <input id="dlgChannel" type="text" placeholder="general" autocomplete="off" />
+          </div>
+        </div>
+
         <details class="advanced">
           <summary><span class="caret">▸</span> advanced</summary>
           <div class="advanced-body">
@@ -383,6 +394,7 @@
             </label>
             <input id="catClientSecret" type="password" placeholder="••••••••" autocomplete="off" />
           </div>
+
         </div>
 
         <!-- ④ 詳細 (URL確認, scope, redirect) -->
@@ -438,24 +450,8 @@
         <!-- 動的生成 -->
       </div>
       <div class="script-tabbar-spacer"></div>
-      <div class="script-toolbar">
-        <span class="script-saved" id="scriptSavedAt">—</span>
-        <span class="script-status" id="scriptStatus" hidden></span>
-        <button class="script-tool script-tool-icon" id="scriptClear" title="エディタ内容をクリア">
-          <svg viewBox="0 0 16 16" width="12" height="12"><path d="M3 4 h10 M5.5 4 v-1 a1 1 0 0 1 1 -1 h3 a1 1 0 0 1 1 1 v1 M4 4 v10 a1 1 0 0 0 1 1 h6 a1 1 0 0 0 1 -1 v-10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
-        <button class="script-tool" id="scriptStop" disabled title="停止 (⌘.)">
-          <svg viewBox="0 0 12 12" width="9" height="9"><rect x="2" y="2" width="8" height="8" fill="currentColor"/></svg>
-          <span>stop</span>
-        </button>
-        <button class="script-tool is-run" id="scriptRun" title="実行 (⌘⏎)">
-          <svg viewBox="0 0 12 12" width="9" height="9"><path d="M3 2 L10 6 L3 10 Z" fill="currentColor"/></svg>
-          <span>run</span>
-        </button>
-        <button class="script-tool script-tool-icon" id="scriptCollapse" title="パネルを閉じる (⌘⇧K)">
-          <svg viewBox="0 0 16 16" width="12" height="12"><path d="M3 5 L8 10 L13 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
-      </div>
+      <span class="script-saved" id="scriptSavedAt">—</span>
+      <span class="script-status" id="scriptStatus" hidden></span>
     </div>
 
     <div class="script-windows-bar" id="scriptWindowsBar">
@@ -466,6 +462,24 @@
     <div class="script-windows-bar script-commands-bar">
       <span class="script-windows-label">commands</span>
       <div class="script-window-chips" id="scriptCommandChips"></div>
+    </div>
+
+    <div class="script-actions">
+      <button class="script-tool script-tool-icon" id="scriptClear" title="エディタ内容をクリア">
+        <svg viewBox="0 0 16 16" width="12" height="12"><path d="M3 4 h10 M5.5 4 v-1 a1 1 0 0 1 1 -1 h3 a1 1 0 0 1 1 1 v1 M4 4 v10 a1 1 0 0 0 1 1 h6 a1 1 0 0 0 1 -1 v-10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="script-tool" id="scriptStop" disabled title="停止 (⌘.)">
+        <svg viewBox="0 0 12 12" width="9" height="9"><rect x="2" y="2" width="8" height="8" fill="currentColor"/></svg>
+        <span>stop</span>
+      </button>
+      <button class="script-tool is-run" id="scriptRun" title="実行 (⌘⏎)">
+        <svg viewBox="0 0 12 12" width="9" height="9"><path d="M3 2 L10 6 L3 10 Z" fill="currentColor"/></svg>
+        <span>run</span>
+      </button>
+      <div class="script-actions-spacer"></div>
+      <button class="script-tool script-tool-icon" id="scriptCollapse" title="パネルを閉じる (⌘⇧K)">
+        <svg viewBox="0 0 16 16" width="12" height="12"><path d="M3 5 L8 10 L13 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
     </div>
 
     <div class="script-editor-wrap">

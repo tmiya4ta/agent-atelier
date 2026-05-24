@@ -125,8 +125,26 @@ export class AgentWindow {
     this.focus();
     this.refreshBookmarkUi();
 
-    // welcome line
-    this._addSystemMessage(`Connecting to ${this.name}…`);
+    // 既に open 済み adapter を渡された場合は、 open event 相当の初期描画を即時実行
+    if (this.adapter.state === "open" && this.adapter.agentCard) {
+      this._setStatus("live");
+      this._renderCard(this.adapter.agentCard);
+      this._addSystemMessage(`Connected · agent card loaded`);
+      const cardName = this.adapter.agentCard.name;
+      if (cardName && !this._nameLocked) {
+        this.name = cardName;
+        this.adapter.config.name = cardName;
+        this.el.querySelector(".aw-title").textContent = cardName + this.instanceSuffix;
+        this.refreshBookmarkUi();
+        this.onChange?.();
+      }
+      if (this.restore?.activeTab && this.restore.activeTab !== "chat") {
+        this.switchTab(this.restore.activeTab);
+        this.restore = null;
+      }
+    } else {
+      this._addSystemMessage(`Connecting to ${this.name}…`);
+    }
   }
 
   refreshBookmarkUi() {
@@ -142,11 +160,11 @@ export class AgentWindow {
       this._setStatus("live");
       this._addSystemMessage(`Connected · agent card loaded`);
       this._renderCard(e.detail.card);
-      // ウインドウタイトルを AgentCard.name で上書き
+      // ウインドウタイトルを AgentCard.name で上書き (ユーザーが settings で変更してない時のみ)
       const cardName = e.detail.card?.name;
-      if (cardName) {
+      if (cardName && !this._nameLocked) {
         this.name = cardName;
-        this.adapter.config.name = cardName;  // 永続化スナップショットの source of truth
+        this.adapter.config.name = cardName;
         this.el.querySelector(".aw-title").textContent = cardName + this.instanceSuffix;
         this.refreshBookmarkUi();
         this.onChange?.();
@@ -305,7 +323,10 @@ export class AgentWindow {
 
   _addUserMessage(text) {
     const stream = this.el.querySelector(".chat-stream");
-    stream.appendChild(this._renderMsg("user", "you", text));
+    const node = this._renderMsg("user", "you", "");
+    stream.appendChild(node);
+    const body = node.querySelector(".msg-body");
+    this._typewriteUser(body, text);
     this._scrollChat();
   }
 
@@ -317,18 +338,89 @@ export class AgentWindow {
 
   _handleAgentMessage(text, final) {
     this._showTyping(false);
-    // Update or create the last agent message
     const stream = this.el.querySelector(".chat-stream");
     let last = stream.lastElementChild;
+    let body;
     if (last?.classList.contains("msg-agent") && last?.dataset.streaming === "1") {
-      last.querySelector(".msg-body").textContent = text;
+      body = last.querySelector(".msg-body");
     } else {
-      const node = this._renderMsg("agent", this.adapter.agentCard?.name || this.name, text);
-      if (!final) node.dataset.streaming = "1";
+      const node = this._renderMsg("agent", this.adapter.agentCard?.name || this.name, "");
+      node.dataset.streaming = "1";
       stream.appendChild(node);
+      body = node.querySelector(".msg-body");
     }
-    if (final && stream.lastElementChild) stream.lastElementChild.dataset.streaming = "0";
-    this._scrollChat();
+    // ChatGPT 風 typewriter で逐次表示 (現在の長さから差分を append)
+    this._typewrite(body, text, final);
+  }
+
+  // 文字を 1 〜 数文字ずつ append して滑らかに表示
+  _typewrite(body, fullText, final) {
+    if (this._typeTimer) {
+      clearTimeout(this._typeTimer);
+      this._typeTimer = null;
+    }
+    const current = body.textContent || "";
+    const finalize = () => {
+      if (final) body.parentElement.dataset.streaming = "0";
+      // Slack: typewriter 完了後に mrkdwn を HTML 化
+      if (final && this.protoId === "slack") {
+        body.innerHTML = mrkdwnToHtml(fullText);
+      }
+    };
+    if (fullText.length <= current.length) {
+      body.textContent = fullText;
+      finalize();
+      this._scrollChat();
+      return;
+    }
+    body.parentElement.dataset.typing = "1";
+    let i = current.length;
+    const total = fullText.length;
+    const stepSize = total > 400 ? 3 : total > 120 ? 2 : 1;
+    const interval = 14;
+    const tick = () => {
+      if (i >= total) {
+        body.parentElement.dataset.typing = "0";
+        finalize();
+        this._typeTimer = null;
+        this._scrollChat();
+        return;
+      }
+      const next = Math.min(i + stepSize, total);
+      body.textContent = fullText.slice(0, next);
+      i = next;
+      this._scrollChat();
+      this._typeTimer = setTimeout(tick, interval);
+    };
+    tick();
+  }
+
+  // user 側の typewriter (agent と同じ感覚で少し速め)
+  _typewriteUser(body, fullText) {
+    if (this._userTypeTimer) {
+      clearTimeout(this._userTypeTimer);
+      this._userTypeTimer = null;
+    }
+    body.parentElement.dataset.typing = "1";
+    let i = 0;
+    const total = fullText.length;
+    const stepSize = total > 400 ? 3 : total > 120 ? 2 : 1;
+    const interval = 12;
+    const tick = () => {
+      if (i >= total) {
+        body.parentElement.dataset.typing = "0";
+        if (this.protoId === "slack") body.innerHTML = mrkdwnToHtml(fullText);
+        this._userTypeTimer = null;
+        this._scrollChat();
+        return;
+      }
+      const next = Math.min(i + stepSize, total);
+      body.textContent = fullText.slice(0, next);
+      i = next;
+      this._scrollChat();
+      this._userTypeTimer = setTimeout(tick, interval);
+    };
+    tick();
   }
 
   _renderMsg(role, author, text) {
@@ -473,38 +565,31 @@ export class AgentWindow {
     const box = this.el.querySelector(".settings-scroll");
     box.innerHTML = `
       <div class="set-section">
+        <h4>Identity</h4>
+        <div class="set-row">
+          <div class="set-row-text">
+            <div class="set-row-title">Display name</div>
+            <div class="set-row-sub">ウインドウのタイトルに表示</div>
+          </div>
+          <input class="set-input set-input-name" value="${escapeHtml(this.name || "")}" placeholder="Untitled" />
+        </div>
+      </div>
+
+      <div class="set-section">
         <h4>Connection</h4>
         <div class="set-row">
           <div class="set-row-text">
             <div class="set-row-title">Endpoint</div>
             <div class="set-row-sub">エージェントのHTTPベースURL</div>
           </div>
-          <input class="set-input" value="${escapeHtml(this.adapter.config.url || "")}" />
+          <input class="set-input" value="${escapeHtml(this.adapter.config.url || "")}" readonly />
         </div>
         <div class="set-row">
           <div class="set-row-text">
             <div class="set-row-title">Authorization</div>
             <div class="set-row-sub">Bearer token (任意)</div>
           </div>
-          <input class="set-input" value="${this.adapter.config.auth ? "•".repeat(12) : ""}" placeholder="none" />
-        </div>
-      </div>
-
-      <div class="set-section">
-        <h4>Behavior</h4>
-        <div class="set-row">
-          <div class="set-row-text">
-            <div class="set-row-title">Streaming</div>
-            <div class="set-row-sub">サポート時は SSE / chunked を使用</div>
-          </div>
-          <label class="switch"><input type="checkbox" checked /><span></span></label>
-        </div>
-        <div class="set-row">
-          <div class="set-row-text">
-            <div class="set-row-title">Record traffic</div>
-            <div class="set-row-sub">Debug タブへ全フレームを残す</div>
-          </div>
-          <label class="switch"><input type="checkbox" checked /><span></span></label>
+          <input class="set-input" value="${this.adapter.config.auth ? "•".repeat(12) : ""}" placeholder="none" readonly />
         </div>
       </div>
 
@@ -517,8 +602,35 @@ export class AgentWindow {
           </div>
           <input class="set-input" value="${this.id}" readonly />
         </div>
+        <div class="set-row">
+          <div class="set-row-text">
+            <div class="set-row-title">Protocol</div>
+            <div class="set-row-sub">通信プロトコル</div>
+          </div>
+          <input class="set-input" value="${escapeHtml(this.protoId || "")}" readonly />
+        </div>
       </div>
     `;
+
+    // Display name 編集を反映 (タイトル / 永続化)
+    const nameInput = box.querySelector(".set-input-name");
+    if (nameInput) {
+      const commit = () => {
+        const v = nameInput.value.trim();
+        if (!v || v === this.name) return;
+        this.name = v;
+        this.adapter.config.name = v;
+        this._nameLocked = true;   // 以後 agentCard.name で上書きしない
+        this.el.querySelector(".aw-title").textContent = v + this.instanceSuffix;
+        this.refreshBookmarkUi();
+        this.onChange?.();
+      };
+      nameInput.addEventListener("change", commit);
+      nameInput.addEventListener("blur",   commit);
+      nameInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); nameInput.blur(); }
+      });
+    }
   }
 }
 
@@ -532,6 +644,46 @@ function escapeHtml(s) {
 function timeStr(ts) {
   const d = ts ? new Date(ts) : new Date();
   return d.toTimeString().slice(0, 8);
+}
+
+// Slack mrkdwn → 安全な HTML サブセット変換
+//   *bold*  _italic_  ~strike~  `code`  ```code block```
+//   > quote  ・ <url> / <url|label>  ・ unordered/ordered list
+function mrkdwnToHtml(text) {
+  let s = escapeHtml(String(text || ""));
+  // code block (先に処理して中身を保護)
+  const blocks = [];
+  s = s.replace(/```([\s\S]*?)```/g, (_, body) => {
+    blocks.push(body);
+    return ` CB${blocks.length - 1} `;
+  });
+  // inline code
+  const inlines = [];
+  s = s.replace(/`([^`\n]+)`/g, (_, body) => {
+    inlines.push(body);
+    return ` IC${inlines.length - 1} `;
+  });
+  // Slack 風リンク: <url|label> / <url>
+  s = s.replace(/&lt;(https?:\/\/[^|&\s]+)\|([^&\n]+?)&gt;/g, '<a href="$1" target="_blank" rel="noopener">$2</a>');
+  s = s.replace(/&lt;(https?:\/\/[^&\s]+)&gt;/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+  // 素の URL
+  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+  // bold / italic / strike (word 境界を考慮)
+  s = s.replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<strong>$2</strong>');
+  s = s.replace(/(^|[\s(])_([^_\n]+)_/g,   '$1<em>$2</em>');
+  s = s.replace(/(^|[\s(])~([^~\n]+)~/g,   '$1<del>$2</del>');
+  // 行頭 quote
+  s = s.replace(/^&gt;\s?(.+)$/gm, '<blockquote>$1</blockquote>');
+  // unordered list
+  s = s.replace(/(^|\n)([-*•])\s+(.+)/g, '$1<li>$3</li>');
+  s = s.replace(/(<li>.+<\/li>(?:\n<li>.+<\/li>)*)/g, '<ul>$1</ul>');
+  // 改行 → <br> (block 要素の外のみ簡易に)
+  s = s.replace(/\n/g, '<br>');
+  s = s.replace(/<br>(<\/?(?:ul|li|blockquote|pre)[^>]*>)/g, '$1');
+  // 復元
+  s = s.replace(/ IC(\d+) /g, (_, i) => `<code>${inlines[+i]}</code>`);
+  s = s.replace(/ CB(\d+) /g, (_, i) => `<pre><code>${blocks[+i]}</code></pre>`);
+  return s;
 }
 
 // JSON syntax highlighter (keys / strings / numbers / booleans-null)

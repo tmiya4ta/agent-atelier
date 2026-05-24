@@ -13,7 +13,8 @@ function snapshotWindow(win) {
       url:     win.adapter.config.url,
       name:    win.adapter.config.name,
       auth:    win.adapter.config.auth,
-      persona: win.adapter.config.persona
+      persona: win.adapter.config.persona,
+      channel: win.adapter.config.channel
     },
     pos: {
       left:   win.el.style.left,

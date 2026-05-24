@@ -1,8 +1,8 @@
 // プロトコルレジストリ
 // 新規プロトコルは ここに追加すれば自動的に UI へ反映される。
 
-import { A2AAdapter }  from "./a2a.js";
-import { MockAdapter } from "./mock.js";
+import { A2AAdapter }   from "./a2a.js";
+import { SlackAdapter } from "./slack.js";
 
 export const PROTOCOLS = [
   {
@@ -14,11 +14,11 @@ export const PROTOCOLS = [
     status: "ready"
   },
   {
-    id: "mock",
-    label: "Mock",
-    sub: "offline demo",
-    description: "Offline demo agents (no network)",
-    AdapterClass: MockAdapter,
+    id: "slack",
+    label: "Slack",
+    sub: "web api · mrkdwn",
+    description: "Slack 互換 Web API (chat.postMessage)",
+    AdapterClass: SlackAdapter,
     status: "ready"
   },
   {
