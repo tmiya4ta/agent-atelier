@@ -1,0 +1,343 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!-- POST / — JSON-RPC 2.0 dispatcher -->
+    <flow name="jsonrpc-flow">
+        <http:listener config-ref="HTTP_Listener_config" path="/" allowedMethods="POST">
+            <http:response statusCode="200">
+                <http:headers><![CDATA[#[{
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type, Authorization"
+                }]]]></http:headers>
+            </http:response>
+        </http:listener>
+
+        <!-- Store the parsed request in a variable -->
+        <set-variable variableName="rpcReq" value="#[payload]"/>
+        <!-- Store RPC method -->
+        <set-variable variableName="rpcMethod" value="#[payload.method default '']"/>
+
+        <choice>
+            <!-- message/send: invoke rule evaluation sub-flow -->
+            <when expression="#[vars.rpcMethod == 'message/send']">
+                <flow-ref name="broker-rule-eval-subflow"/>
+            </when>
+
+            <!-- agent/getCard: return agent card -->
+            <when expression="#[vars.rpcMethod == 'agent/getCard']">
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    "jsonrpc": "2.0",
+    "id": vars.rpcReq.id,
+    "result": {
+        "name": "Broker Agent",
+        "description": "マルチエージェントオーケストレーター。複数のドメインエージェントに問い合わせて結論を集約 (LLM非使用)",
+        "url": "http://localhost:5180/",
+        "version": "0.1.0",
+        "provider": {
+            "organization": "agent-center demo",
+            "url": "http://localhost:8000/"
+        },
+        "capabilities": {
+            "streaming": false,
+            "pushNotifications": false,
+            "stateTransitionHistory": false
+        },
+        "defaultInputModes": ["text"],
+        "defaultOutputModes": ["text"],
+        "skills": [
+            {
+                "id": "handle_delivery_delay_claim",
+                "name": "Handle Delivery Delay Claim",
+                "description": "納期遅延クレームを受け、配送状況・在庫・SLA判定をまとめて返す",
+                "tags": ["broker", "orchestration", "claim"]
+            }
+        ]
+    }
+}]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+            </when>
+
+            <!-- Unknown method: JSON-RPC error -32601 -->
+            <otherwise>
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    "jsonrpc": "2.0",
+    "id": vars.rpcReq.id,
+    "error": {
+        "code": -32601,
+        "message": "Method not found"
+    }
+}]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+            </otherwise>
+        </choice>
+    </flow>
+
+    <!-- Sub-flow: Broker intent classification and orchestration -->
+    <sub-flow name="broker-rule-eval-subflow">
+        <set-variable variableName="userText" value="#[vars.rpcReq.params.message.parts[0].text default '' as String]"/>
+
+        <!-- Intent classification using find operator -->
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="intent"><![CDATA[%dw 2.0
+output application/java
+var txtLower = lower(vars.userText)
+---
+if ((txtLower find "クレーム") != [] or (txtLower find "claim") != [] or
+    (txtLower find "納期遅延") != [] or (txtLower find "delivery_delay") != [] or
+    (txtLower find "苦情") != [] or (txtLower find "complaint") != [] or
+    (txtLower find "届かない") != [] or (txtLower find "届きません") != [] or
+    (txtLower find "遅れ") != [] or (txtLower find "遅延") != [] or
+    (txtLower find "delay") != [] or (txtLower find "late") != [] or (txtLower find "delayed") != [] or
+    (txtLower find "問題") != [] or (txtLower find "トラブル") != [] or (txtLower find "trouble") != [] or (txtLower find "issue") != [] or
+    (txtLower find "怒") != [] or (txtLower find "困っ") != [] or (txtLower find "助け") != [])
+    "handle_delivery_delay_claim"
+else
+    "unknown"]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <choice>
+            <when expression="#[vars.intent == 'handle_delivery_delay_claim']">
+                <flow-ref name="handle-delivery-delay-claim-subflow"/>
+            </when>
+            <otherwise>
+                <!-- Unknown intent response -->
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    "jsonrpc": "2.0",
+    "id": vars.rpcReq.id,
+    "result": {
+        "status": { "state": "completed" },
+        "messages": [
+            {
+                "role": "agent",
+                "parts": [{ "kind": "text", "text": "> 現在は **クレーム** / **納期遅延** 系のキーワードに対応しています。\n>\n> 例: `納期遅延クレーム` `商品が届かない` `トラブルが起きた` `お客さんから苦情` など" }],
+                "messageId": uuid()
+            }
+        ]
+    }
+}]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+            </otherwise>
+        </choice>
+    </sub-flow>
+
+    <!-- Sub-flow: handle_delivery_delay_claim — sequential orchestration of 4 agent calls -->
+    <sub-flow name="handle-delivery-delay-claim-subflow">
+
+        <!-- Step 0: Extract orderId from user text -->
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="orderId"><![CDATA[%dw 2.0
+output application/java
+var matches = vars.userText scan /A\d{3,}/
+---
+if (!isEmpty(matches)) (matches[0])[0] else null]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <!-- Call 1: Logistics — 配送ステータス (orderId引き継ぎ) -->
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    jsonrpc: "2.0",
+    id: "broker-" ++ uuid(),
+    method: "message/send",
+    params: {
+        message: {
+            role: "user",
+            parts: [{kind: "text", text: "注文 " ++ (vars.orderId default "?") ++ " の配送ステータスは？"}],
+            messageId: uuid()
+        }
+    }
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        <http:request method="POST" config-ref="HTTP_Request_config" url="${agents.logistics_url}" responseTimeout="15000">
+            <http:headers>#[{"Content-Type": "application/json"}]</http:headers>
+        </http:request>
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="shipmentStatus"><![CDATA[%dw 2.0
+output application/java
+---
+payload.result.messages[0].parts[0].text default "(取得失敗)"]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <!-- Call 2: Logistics — 遅延理由 -->
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    jsonrpc: "2.0",
+    id: "broker-" ++ uuid(),
+    method: "message/send",
+    params: {
+        message: {
+            role: "user",
+            parts: [{kind: "text", text: "注文 " ++ (vars.orderId default "?") ++ " の遅延理由を教えて"}],
+            messageId: uuid()
+        }
+    }
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        <http:request method="POST" config-ref="HTTP_Request_config" url="${agents.logistics_url}" responseTimeout="15000">
+            <http:headers>#[{"Content-Type": "application/json"}]</http:headers>
+        </http:request>
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="delayReason"><![CDATA[%dw 2.0
+output application/java
+---
+payload.result.messages[0].parts[0].text default "(取得失敗)"]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <!-- Step 2.5: Extract productCode from Logistics delayReason response -->
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="productCode"><![CDATA[%dw 2.0
+output application/java
+var matches = vars.delayReason scan /P\d{3,}/
+---
+if (!isEmpty(matches)) (matches[0])[0] else null]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <!-- Call 3: Inventory — 入荷予定 (productCode引き継ぎ) -->
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    jsonrpc: "2.0",
+    id: "broker-" ++ uuid(),
+    method: "message/send",
+    params: {
+        message: {
+            role: "user",
+            parts: [{kind: "text", text: "商品 " ++ (vars.productCode default "?") ++ " の入荷予定は？"}],
+            messageId: uuid()
+        }
+    }
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        <http:request method="POST" config-ref="HTTP_Request_config" url="${agents.inventory_url}" responseTimeout="15000">
+            <http:headers>#[{"Content-Type": "application/json"}]</http:headers>
+        </http:request>
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="restockEta"><![CDATA[%dw 2.0
+output application/java
+---
+payload.result.messages[0].parts[0].text default "(取得失敗)"]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <!-- Call 4: Legal — SLA判定 -->
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    jsonrpc: "2.0",
+    id: "broker-" ++ uuid(),
+    method: "message/send",
+    params: {
+        message: {
+            role: "user",
+            parts: [{kind: "text", text: "注文 " ++ (vars.orderId default "?") ++ "、商品 " ++ (vars.productCode default "?") ++ "、配送遅延中、SLA違反か判定して"}],
+            messageId: uuid()
+        }
+    }
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        <http:request method="POST" config-ref="HTTP_Request_config" url="${agents.legal_url}" responseTimeout="15000">
+            <http:headers>#[{"Content-Type": "application/json"}]</http:headers>
+        </http:request>
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="legalSlaCheck"><![CDATA[%dw 2.0
+output application/java
+---
+payload.result.messages[0].parts[0].text default "(取得失敗)"]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <!-- Build final aggregated response -->
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    jsonrpc: "2.0",
+    id: vars.rpcReq.id,
+    result: {
+        status: { state: "completed" },
+        messages: [
+            {
+                role: "agent",
+                parts: [{
+                    kind: "text",
+                    text:
+                        "## 最終判定 (注文 `" ++ (vars.orderId default "?") ++ "`)\n\n" ++
+                        vars.legalSlaCheck ++ "\n\n" ++
+                        "---\n\n" ++
+                        "### 内訳\n\n" ++
+                        "#### Logistics — 配送ステータス\n\n" ++ vars.shipmentStatus ++ "\n\n" ++
+                        "#### Logistics — 遅延理由\n\n" ++ vars.delayReason ++ "\n\n" ++
+                        "#### Inventory — 入荷予定 (商品 `" ++ (vars.productCode default "?") ++ "`)\n\n" ++ vars.restockEta ++ "\n\n" ++
+                        "#### Legal — SLA判定\n\n" ++ vars.legalSlaCheck ++ "\n\n" ++
+                        "---\n\n" ++
+                        "> **抽出ID**: 注文 `" ++ (vars.orderId default "?") ++ "` → Logistics → 商品 `" ++ (vars.productCode default "?") ++ "` → Inventory → Legal で集約\n>\n" ++
+                        "> **トレース**: Logistics×2 + Inventory×1 + Legal×1 = **4 calls** (Brokerが裏で処理)"
+                }],
+                messageId: uuid()
+            }
+        ]
+    }
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+    </sub-flow>
+
+</mule>

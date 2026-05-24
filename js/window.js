@@ -62,6 +62,8 @@ export class AgentWindow {
 
     // Head bits
     node.querySelector(".aw-title").textContent = this.name + this.instanceSuffix;
+    const wm = node.querySelector(".aw-watermark");
+    if (wm) wm.textContent = this.name + this.instanceSuffix;
     const badge = node.querySelector(".aw-proto-badge");
     badge.textContent = this.protoLabel;
     badge.dataset.proto = this.protoId;
@@ -124,6 +126,8 @@ export class AgentWindow {
         this.name = cardName;
         this.adapter.config.name = cardName;
         this.el.querySelector(".aw-title").textContent = cardName + this.instanceSuffix;
+        const wm = this.el.querySelector(".aw-watermark");
+        if (wm) wm.textContent = cardName + this.instanceSuffix;
         this.onChange?.();
       }
       if (this.restore?.activeTab && this.restore.activeTab !== "chat") {
@@ -146,6 +150,8 @@ export class AgentWindow {
         this.name = cardName;
         this.adapter.config.name = cardName;
         this.el.querySelector(".aw-title").textContent = cardName + this.instanceSuffix;
+        const wm = this.el.querySelector(".aw-watermark");
+        if (wm) wm.textContent = cardName + this.instanceSuffix;
         this.onChange?.();
       }
       // 復元タブを反映 (open後にカード/設定が描画されてからの方が安全)
@@ -282,6 +288,7 @@ export class AgentWindow {
   }
 
   // 次の最終応答を待つ Promise を返す
+  // (script DSL の `< Agent` 用) — message 受信後、typewriter 完了まで待ってから resolve
   waitForReply({ timeout = 60000 } = {}) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -291,12 +298,29 @@ export class AgentWindow {
       const onMsg = (e) => {
         const d = e.detail;
         if (d && d.role === "agent" && d.final) {
-          clearTimeout(timer);
           this.adapter.removeEventListener("message", onMsg);
-          resolve(d);
+          // typewriter が走っている間は次のメッセージを流さない
+          this._waitForTypewriterDone().then(() => {
+            clearTimeout(timer);
+            resolve(d);
+          });
         }
       };
       this.adapter.addEventListener("message", onMsg);
+    });
+  }
+
+  // 直近の agent メッセージの typewriter が終わるまで待つ
+  _waitForTypewriterDone() {
+    return new Promise(resolve => {
+      const isTyping = () => !!this.el.querySelector('.msg-agent[data-typing="1"], .msg-agent[data-streaming="1"]');
+      if (!isTyping()) { resolve(); return; }
+      const tick = () => {
+        if (!isTyping()) { resolve(); return; }
+        setTimeout(tick, 60);
+      };
+      // typewriter 開始は次マイクロタスク。少し待ってから poll 開始
+      setTimeout(tick, 80);
     });
   }
 
@@ -345,6 +369,16 @@ export class AgentWindow {
       if (final && this.protoId === "slack") {
         body.innerHTML = mrkdwnToHtml(fullText);
       }
+      // a2a: Markdown (GFM) を HTML 化
+      else if (final && this.protoId === "a2a" && window.marked) {
+        try {
+          window.marked.setOptions({ gfm: true, breaks: true });
+          body.innerHTML = window.marked.parse(fullText);
+        } catch (e) {
+          // fallback to plain text on parse error
+          console.warn("[window] marked.parse failed:", e);
+        }
+      }
     };
     if (fullText.length <= current.length) {
       body.textContent = fullText;
@@ -356,7 +390,7 @@ export class AgentWindow {
     let i = current.length;
     const total = fullText.length;
     const stepSize = total > 400 ? 3 : total > 120 ? 2 : 1;
-    const interval = 14;
+    const interval = 22;
     const tick = () => {
       if (i >= total) {
         body.parentElement.dataset.typing = "0";
@@ -384,7 +418,7 @@ export class AgentWindow {
     let i = 0;
     const total = fullText.length;
     const stepSize = total > 400 ? 3 : total > 120 ? 2 : 1;
-    const interval = 12;
+    const interval = 18;
     const tick = () => {
       if (i >= total) {
         body.parentElement.dataset.typing = "0";
@@ -601,6 +635,8 @@ export class AgentWindow {
         this.adapter.config.name = v;
         this._nameLocked = true;   // 以後 agentCard.name で上書きしない
         this.el.querySelector(".aw-title").textContent = v + this.instanceSuffix;
+        const wm = this.el.querySelector(".aw-watermark");
+        if (wm) wm.textContent = v + this.instanceSuffix;
         this.onChange?.();
       };
       nameInput.addEventListener("change", commit);

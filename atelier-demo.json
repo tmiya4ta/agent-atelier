@@ -1,0 +1,136 @@
+{
+  "app": "atelier",
+  "exportedAt": "2026-05-24T00:00:00.000Z",
+  "state": {
+    "v": 1,
+    "zoom": 1.0,
+    "sidebarCollapsed": false,
+    "catalogs": [],
+    "scripts": [
+      {
+        "id": "script-1",
+        "name": "A — Broker 1コマンド (A123)",
+        "body": "# ┌─ Brokerに1コマンド投げるだけ ─────────────────────────┐\n# │ Broker が orderId=A123 を抽出 → Logistics×2 を呼んで\n# │ 応答から productCode=P001 を自動抽出 → Inventory に引き継ぎ\n# │ → Legal に集約情報を渡して SLA判定 → 4 call の結果を集約\n# └────────────────────────────────────────────────────┘\n\n> Broker Agent: 注文 A123 で納期遅延クレームが入りました\n< Broker Agent 30s\n",
+        "createdAt": "2026-05-24T00:00:00.000Z",
+        "updatedAt": "2026-05-24T00:00:00.000Z"
+      },
+      {
+        "id": "script-2",
+        "name": "B — No-Broker 手動連携 (A123)",
+        "body": "# ┌─ Brokerなしで同じ結論にたどり着く ───────────────────┐\n# │ ユーザーが \"A123\" や \"P001\" を覚えて手動で引き継ぐ\n# │ → これが Broker が裏でやってる仕事\n# └────────────────────────────────────────────────────┘\n\n> Legal Agent: 注文 A123 で納期遅延クレーム\n< Legal Agent\nsleep 1s\n\n# ↑Legalから「契約C-001、顧客CUST-A、商品P001 → 物流と在庫に聞いて」と返る\n> Logistics Agent: 注文 A123 の配送ステータスは？\n< Logistics Agent\nsleep 1s\n\n> Logistics Agent: 注文 A123 の遅延理由を教えて\n< Logistics Agent\nsleep 1s\n\n# ↑Logistics応答に \"商品 P001 の在庫切れ\" → ユーザーが P001 を覚えて在庫へ\n> Inventory Agent: 商品 P001 の入荷予定は？\n< Inventory Agent\nsleep 1s\n\n# ↓ユーザーが集めた情報を全部 Legal に戻して最終判定\n> Legal Agent: 注文 A123、商品 P001、配送遅延中、入荷3日後でSLA違反か判定して\n< Legal Agent\n",
+        "createdAt": "2026-05-24T00:00:00.000Z",
+        "updatedAt": "2026-05-24T00:00:00.000Z"
+      },
+      {
+        "id": "script-3",
+        "name": "C — Broker 顧客別の応答差分 (A123/A124/A125)",
+        "body": "# ┌─ 同じ「納期遅延クレーム」を 3 注文で順に投げて比較 ──┐\n# │ A123 → CUST-A / C-001 / SLA 2日 / ペナルティ 10% / 遅延あり P001\n# │ A124 → CUST-B / C-002 / SLA 5日 / ペナルティ  5% / 遅延なし\n# │ A125 → CUST-A / C-001 / SLA 2日 / ペナルティ 10% / 配達完了\n# │\n# │ 同じテンプレでも注文ごとに違う結果になることが見える。\n# └────────────────────────────────────────────────────┘\n\n> Broker Agent: 注文 A123 で納期遅延クレーム\n< Broker Agent 30s\nsleep 2s\n\n> Broker Agent: 注文 A124 で納期遅延クレーム\n< Broker Agent 30s\nsleep 2s\n\n> Broker Agent: 注文 A125 で納期遅延クレーム\n< Broker Agent 30s\n",
+        "createdAt": "2026-05-24T00:00:00.000Z",
+        "updatedAt": "2026-05-24T00:00:00.000Z"
+      },
+      {
+        "id": "script-4",
+        "name": "D — Direct query (ピンポイント質問)",
+        "body": "# ┌─ Broker を使わずドメインエージェントに直接 ─────────┐\n# │ 「商品 P002 の在庫だけ知りたい」のような単純な質問は\n# │ Broker を経由せず直接聞いた方が速い。\n# │ Broker パターンは「複雑な連携」の時に価値が出る。\n# └────────────────────────────────────────────────────┘\n\n# Inventory に在庫だけ\n> Inventory Agent: 商品 P002 の在庫\n< Inventory Agent\nsleep 1s\n\n# Logistics に追跡番号だけ\n> Logistics Agent: 注文 A124 の配送ステータス\n< Logistics Agent\nsleep 1s\n\n# Legal に契約条件だけ\n> Legal Agent: 契約 C-002 の SLA条件を教えて\n< Legal Agent\nsleep 1s\n\n# 在庫切れ商品の入荷予定\n> Inventory Agent: P001 の入荷予定\n< Inventory Agent\n",
+        "createdAt": "2026-05-24T00:00:00.000Z",
+        "updatedAt": "2026-05-24T00:00:00.000Z"
+      },
+      {
+        "id": "script-5",
+        "name": "E — エラー / ガード動作 (A999 / IDなし)",
+        "body": "# ┌─ マスタにない注文 / ID未指定 のフォールバック挙動 ──┐\n# │ ・存在しない注文 A999 → 各エージェントが\n# │   「見つかりません」を返す\n# │ ・ID未指定 → 各エージェントが「IDを含めて」と聞き返す\n# │ Broker は全部裏で受けて集約応答に「?」と「IDを含めて」を埋め込む\n# └────────────────────────────────────────────────────┘\n\n# 存在しない注文 (各エージェントの該当なし応答)\n> Broker Agent: 注文 A999 で納期遅延クレーム\n< Broker Agent 30s\nsleep 2s\n\n# orderId 未指定 (各エージェントの聞き返し)\n> Broker Agent: なんかクレーム来ました\n< Broker Agent 30s\nsleep 2s\n\n# 直接エージェントへの未指定問い合わせ\n> Logistics Agent: 配送状況を教えて\n< Logistics Agent\nsleep 1s\n\n> Inventory Agent: 在庫を教えて\n< Inventory Agent\n",
+        "createdAt": "2026-05-24T00:00:00.000Z",
+        "updatedAt": "2026-05-24T00:00:00.000Z"
+      },
+      {
+        "id": "script-6",
+        "name": "Smoke test — 4エージェント疎通確認",
+        "body": "# 各エージェントが応答するか1問ずつ確認 (デモ前のヘルスチェック用)\n\n> Broker Agent: hello\n< Broker Agent 30s\nsleep 500ms\n\n> Legal Agent: クレーム\n< Legal Agent\nsleep 500ms\n\n> Inventory Agent: P001 の在庫\n< Inventory Agent\nsleep 500ms\n\n> Logistics Agent: A123 の配送ステータス\n< Logistics Agent\n",
+        "createdAt": "2026-05-24T00:00:00.000Z",
+        "updatedAt": "2026-05-24T00:00:00.000Z"
+      }
+    ],
+    "selectedScriptId": "script-1",
+    "openScriptIds": ["script-1", "script-2", "script-3"],
+    "activeWsIdx": 0,
+    "workspaces": [
+      {
+        "name": "Multi-Agent Demo",
+        "windows": [
+          {
+            "protoId": "a2a",
+            "config": {
+              "url": "http://localhost:5180/",
+              "name": "Broker Agent",
+              "auth": "",
+              "persona": "",
+              "channel": ""
+            },
+            "pos": {
+              "left": "20px",
+              "top": "80px",
+              "width": "720px",
+              "height": "640px",
+              "zIndex": "100"
+            },
+            "activeTab": "chat"
+          },
+          {
+            "protoId": "a2a",
+            "config": {
+              "url": "http://localhost:5183/",
+              "name": "Logistics Agent",
+              "auth": "",
+              "persona": "",
+              "channel": ""
+            },
+            "pos": {
+              "left": "760px",
+              "top": "80px",
+              "width": "540px",
+              "height": "200px",
+              "zIndex": "101"
+            },
+            "activeTab": "chat"
+          },
+          {
+            "protoId": "a2a",
+            "config": {
+              "url": "http://localhost:5182/",
+              "name": "Inventory Agent",
+              "auth": "",
+              "persona": "",
+              "channel": ""
+            },
+            "pos": {
+              "left": "760px",
+              "top": "300px",
+              "width": "540px",
+              "height": "200px",
+              "zIndex": "102"
+            },
+            "activeTab": "chat"
+          },
+          {
+            "protoId": "a2a",
+            "config": {
+              "url": "http://localhost:5181/",
+              "name": "Legal Agent",
+              "auth": "",
+              "persona": "",
+              "channel": ""
+            },
+            "pos": {
+              "left": "760px",
+              "top": "520px",
+              "width": "540px",
+              "height": "200px",
+              "zIndex": "103"
+            },
+            "activeTab": "chat"
+          }
+        ]
+      }
+    ]
+  }
+}

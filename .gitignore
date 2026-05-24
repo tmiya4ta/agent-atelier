@@ -16,4 +16,4 @@ __pycache__/
 .idea/
 
 # mule build artifact
-mule-app/target/
+target/

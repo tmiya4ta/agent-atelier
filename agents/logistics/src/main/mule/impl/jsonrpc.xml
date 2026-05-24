@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!-- POST / — JSON-RPC 2.0 dispatcher -->
+    <flow name="jsonrpc-flow">
+        <http:listener config-ref="HTTP_Listener_config" path="/" allowedMethods="POST">
+            <http:response statusCode="200">
+                <http:headers><![CDATA[#[{
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type, Authorization"
+                }]]]></http:headers>
+            </http:response>
+        </http:listener>
+
+        <!-- Store the parsed request in a variable -->
+        <set-variable variableName="rpcReq" value="#[payload]"/>
+        <!-- Store RPC method -->
+        <set-variable variableName="rpcMethod" value="#[payload.method default '']"/>
+
+        <choice>
+            <!-- message/send: invoke rule evaluation sub-flow -->
+            <when expression="#[vars.rpcMethod == 'message/send']">
+                <flow-ref name="logistics-rule-eval-subflow"/>
+            </when>
+
+            <!-- agent/getCard: return agent card -->
+            <when expression="#[vars.rpcMethod == 'agent/getCard']">
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    "jsonrpc": "2.0",
+    "id": vars.rpcReq.id,
+    "result": {
+        "name": "Logistics Agent",
+        "description": "配送状況・遅延理由の確認を行うルールベースエージェント (LLM非使用)",
+        "url": "http://localhost:5183/",
+        "version": "0.1.0",
+        "provider": {
+            "organization": "agent-center demo",
+            "url": "http://localhost:8000/"
+        },
+        "capabilities": {
+            "streaming": false,
+            "pushNotifications": false,
+            "stateTransitionHistory": false
+        },
+        "defaultInputModes": ["text"],
+        "defaultOutputModes": ["text"],
+        "skills": [
+            {
+                "id": "shipment_status",
+                "name": "Shipment Status",
+                "description": "注文IDを元に現在の配送ステータスを返す",
+                "tags": ["logistics", "shipment"]
+            },
+            {
+                "id": "delay_reason",
+                "name": "Delay Reason",
+                "description": "配送遅延の理由を返す",
+                "tags": ["logistics", "delay"]
+            }
+        ]
+    }
+}]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+            </when>
+
+            <!-- Unknown method: JSON-RPC error -32601 -->
+            <otherwise>
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    "jsonrpc": "2.0",
+    "id": vars.rpcReq.id,
+    "error": {
+        "code": -32601,
+        "message": "Method not found"
+    }
+}]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+            </otherwise>
+        </choice>
+    </flow>
+
+    <!-- Sub-flow: Logistics rule evaluation (keyword matching, no LLM) -->
+    <sub-flow name="logistics-rule-eval-subflow">
+        <!-- Extract user text and classify intent, build JSON-RPC response -->
+        <set-variable variableName="userText" value="#[vars.rpcReq.params.message.parts[0].text default '' as String]"/>
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+
+var txt = vars.userText
+
+// Case-insensitive keyword matching
+var txtLower = lower(txt)
+
+// delay_reason is evaluated FIRST to handle overlap ("配送が遅延" matches both)
+var intent =
+    if ((txtLower find "delay") != [] or (txtLower find "遅延") != [] or (txtLower find "理由") != [] or (txtLower find "なぜ") != [] or
+        (txtLower find "なんで") != [] or (txtLower find "why") != [] or (txtLower find "原因") != [] or (txtLower find "reason") != [] or
+        (txtLower find "late") != [] or (txtLower find "遅れ") != [])
+        "delay_reason"
+    else if ((txtLower find "shipment") != [] or (txtLower find "配送") != [] or (txtLower find "配達") != [] or (txtLower find "ステータス") != [] or
+             (txtLower find "荷物") != [] or (txtLower find "発送") != [] or (txtLower find "delivery") != [] or (txtLower find "status") != [] or
+             (txtLower find "tracking") != [] or (txtLower find "追跡") != [] or (txtLower find "どこ") != [] or (txtLower find "届く") != [])
+        "shipment_status"
+    else
+        "unknown"
+
+var orders = [
+    {
+        orderId: "A123",
+        customerId: "CUST-A",
+        contractId: "C-001",
+        productCode: "P001",
+        shipmentStatus: "倉庫B出荷待ち",
+        carrier: "YT",
+        trackingNumber: "YT-9876",
+        plannedShipDays: 3,
+        delayed: true,
+        delayReason: "商品 P001 の在庫切れによる出荷遅延"
+    },
+    {
+        orderId: "A124",
+        customerId: "CUST-B",
+        contractId: "C-002",
+        productCode: "P002",
+        shipmentStatus: "配送中",
+        carrier: "SH",
+        trackingNumber: "SH-1234",
+        plannedShipDays: 0,
+        delayed: false,
+        delayReason: null
+    },
+    {
+        orderId: "A125",
+        customerId: "CUST-A",
+        contractId: "C-001",
+        productCode: "P003",
+        shipmentStatus: "配達完了",
+        carrier: "YT",
+        trackingNumber: "YT-0001",
+        plannedShipDays: -1,
+        delayed: false,
+        delayReason: null
+    }
+]
+
+var orderIdMatches = txt scan /A\d{3,}/
+var orderId = if (!isEmpty(orderIdMatches)) (orderIdMatches[0])[0] else null
+var order = if (orderId != null) (orders filter ($.orderId == orderId))[0] else null
+
+var replyText =
+    if (intent == "unknown")
+        "> 意図を解釈できませんでした。`配送` / `遅延` / `理由` などを含めてください。"
+    else if (orderId == null)
+        "> 注文ID (例 `A123`) を含めてください。"
+    else if (order == null)
+        "> 注文ID `" ++ orderId ++ "` は見つかりません。マスタに存在する注文は `A123` `A124` `A125` です。"
+    else if (intent == "shipment_status")
+        if (order.plannedShipDays < 0)
+            "**配送ステータス** (注文 `" ++ orderId ++ "`): `" ++ order.shipmentStatus ++ "` / 業者 " ++ order.carrier ++ " / 追跡 `" ++ order.trackingNumber ++ "`"
+        else
+            "**配送ステータス** (注文 `" ++ orderId ++ "`):\n\n| ステータス | 業者 | 追跡番号 | 発送予定 |\n|---|---|---|---|\n| `" ++ order.shipmentStatus ++ "` | " ++ order.carrier ++ " | `" ++ order.trackingNumber ++ "` | " ++ (if (order.plannedShipDays > 0) "+" ++ (order.plannedShipDays as String) ++ "日" else "予定どおり") ++ " |"
+    else if (intent == "delay_reason")
+        if (order.delayed)
+            "**配送遅延理由** (注文 `" ++ orderId ++ "`): " ++ order.delayReason ++ " (発送予定 +" ++ (order.plannedShipDays as String) ++ "日)"
+        else
+            "注文 `" ++ orderId ++ "` は **遅延していません** (`" ++ order.shipmentStatus ++ "`)"
+    else
+        "> 意図を解釈できませんでした。`配送` / `遅延` / `理由` などを含めてください。"
+---
+{
+    "jsonrpc": "2.0",
+    "id": vars.rpcReq.id,
+    "result": {
+        "status": {
+            "state": "completed"
+        },
+        "messages": [
+            {
+                "role": "agent",
+                "parts": [
+                    {
+                        "kind": "text",
+                        "text": replyText
+                    }
+                ],
+                "messageId": uuid()
+            }
+        ]
+    }
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+    </sub-flow>
+
+</mule>

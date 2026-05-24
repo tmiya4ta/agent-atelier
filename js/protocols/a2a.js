@@ -114,6 +114,10 @@ export class A2AAdapter extends ProtocolAdapter {
 
       // A2A 0.3 互換: 応答が様々な形を取りうるため、テキストパートを掘り出す
       const messages = collectMessages(data.result || {});
+      // LLM-like "thinking" delay: simulate think time before surfacing the reply
+      // (scriptRunner の `< Agent` wait もこの emit を待つので、順序が保たれる)
+      const delayMs = 1500 + Math.random() * 2000;
+      await new Promise(r => setTimeout(r, delayMs));
       for (const m of messages) {
         const txt = collectText(m);
         if (txt) this._emit("message", { role: m.role || "agent", text: txt, final: true });

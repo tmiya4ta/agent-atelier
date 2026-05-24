@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:jmx="http://www.mulesoft.org/schema/mule/jmx"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/jmx http://www.mulesoft.org/schema/mule/jmx/current/mule-jmx.xsd">
+
+    <flow name="logs-flow">
+        <http:listener config-ref="HTTP_Listener_config" path="/logs"/>
+        <jmx:get-recent-logs config-ref="jmx-config"
+                              lines="#[attributes.queryParams.lines default '100']"
+                              level="#[attributes.queryParams.level]"
+                              pattern="#[attributes.queryParams.pattern]"/>
+    </flow>
+
+    <flow name="logs-tail-flow">
+        <http:listener config-ref="HTTP_Listener_config" path="/logs/tail"/>
+        <jmx:tail-log-file config-ref="jmx-config"
+                            fileName="#[attributes.queryParams.file default 'logistics-agent.log']"
+                            lines="#[attributes.queryParams.lines default '100']"/>
+    </flow>
+
+    <flow name="logs-search-flow">
+        <http:listener config-ref="HTTP_Listener_config" path="/logs/search"/>
+        <jmx:search-log-file config-ref="jmx-config"
+                              fileName="#[attributes.queryParams.file default 'logistics-agent.log']"
+                              pattern="#[attributes.queryParams.pattern default 'ERROR']"
+                              lines="#[attributes.queryParams.lines default '50']"/>
+    </flow>
+
+</mule>

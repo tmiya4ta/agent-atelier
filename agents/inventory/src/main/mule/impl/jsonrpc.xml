@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!-- POST / — JSON-RPC 2.0 dispatcher -->
+    <flow name="jsonrpc-flow">
+        <http:listener config-ref="HTTP_Listener_config" path="/" allowedMethods="POST">
+            <http:response statusCode="200">
+                <http:headers><![CDATA[#[{
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type, Authorization"
+                }]]]></http:headers>
+            </http:response>
+        </http:listener>
+
+        <!-- Store the parsed request in a variable -->
+        <set-variable variableName="rpcReq" value="#[payload]"/>
+        <!-- Store RPC method -->
+        <set-variable variableName="rpcMethod" value="#[payload.method default '']"/>
+
+        <choice>
+            <!-- message/send: invoke rule evaluation sub-flow -->
+            <when expression="#[vars.rpcMethod == 'message/send']">
+                <flow-ref name="inventory-rule-eval-subflow"/>
+            </when>
+
+            <!-- agent/getCard: return agent card -->
+            <when expression="#[vars.rpcMethod == 'agent/getCard']">
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    "jsonrpc": "2.0",
+    "id": vars.rpcReq.id,
+    "result": {
+        "name": "Inventory Agent",
+        "description": "在庫照会・入荷予定確認を行うルールベースエージェント (LLM非使用)",
+        "url": "http://localhost:5182/",
+        "version": "0.1.0",
+        "provider": {
+            "organization": "agent-center demo",
+            "url": "http://localhost:8000/"
+        },
+        "capabilities": {
+            "streaming": false,
+            "pushNotifications": false,
+            "stateTransitionHistory": false
+        },
+        "defaultInputModes": ["text"],
+        "defaultOutputModes": ["text"],
+        "skills": [
+            {
+                "id": "stock_check",
+                "name": "Stock Check",
+                "description": "商品コードを元に現在の在庫数を返す",
+                "tags": ["inventory", "stock"]
+            },
+            {
+                "id": "restock_eta",
+                "name": "Restock ETA",
+                "description": "商品の入荷予定日を返す",
+                "tags": ["inventory", "restock"]
+            }
+        ]
+    }
+}]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+            </when>
+
+            <!-- Unknown method: JSON-RPC error -32601 -->
+            <otherwise>
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    "jsonrpc": "2.0",
+    "id": vars.rpcReq.id,
+    "error": {
+        "code": -32601,
+        "message": "Method not found"
+    }
+}]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+            </otherwise>
+        </choice>
+    </flow>
+
+    <!-- Sub-flow: Inventory rule evaluation (keyword matching with find, no LLM) -->
+    <sub-flow name="inventory-rule-eval-subflow">
+        <!-- Extract user text and classify intent, build JSON-RPC response -->
+        <set-variable variableName="userText" value="#[vars.rpcReq.params.message.parts[0].text default '' as String]"/>
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+
+var txt = vars.userText
+
+// Case-insensitive keyword matching using find operator
+var txtLower = lower(txt)
+
+var intent =
+    if ((txtLower find "restock") != [] or (txtLower find "入荷") != [] or (txtLower find "再入荷") != [] or
+        (txtLower find "入庫") != [] or (txtLower find "補充") != [] or (txtLower find "arrival") != [] or (txtLower find "eta") != [] or
+        (txtLower find "いつ届") != [] or (txtLower find "いつ来") != [] or (txtLower find "いつ入") != [])
+        "restock_eta"
+    else if ((txtLower find "stock") != [] or (txtLower find "在庫") != [] or (txtLower find "ストック") != [] or
+             (txtLower find "残り") != [] or (txtLower find "残数") != [] or (txtLower find "inventory") != [] or (txtLower find "数量") != [])
+        "stock_check"
+    else
+        "unknown"
+
+// Internal stock master
+var stock = [
+    { productCode: "P001", onHand: 0,   warehouse: "倉庫A", restockEtaDays: 3,    status: "発注済み" },
+    { productCode: "P002", onHand: 150, warehouse: "倉庫B", restockEtaDays: null, status: "在庫あり" },
+    { productCode: "P003", onHand: 42,  warehouse: "倉庫A", restockEtaDays: null, status: "在庫あり" }
+]
+
+// Extract product code from user text using scan (returns Array<Array<String>>)
+var productMatches = txt scan /P\d{3,}/
+var productCode = if (!isEmpty(productMatches)) (productMatches[0])[0] else null
+var product = if (productCode != null) (stock filter ($.productCode == productCode))[0] else null
+
+var replyText =
+    if (intent == "unknown")
+        "> 意図を解釈できませんでした。`在庫` / `入荷` / `残数` などを含めてください。"
+    else if (productCode == null)
+        "> 商品コード (例 `P001`) を含めてください。"
+    else if (product == null)
+        "> 商品コード `" ++ productCode ++ "` は見つかりません。マスタに存在する商品は `P001` `P002` `P003` です。"
+    else if (intent == "stock_check")
+        "**在庫照会** (商品 `" ++ productCode ++ "`):\n\n| 在庫 | 倉庫 | 状態 | 入荷予定 |\n|---|---|---|---|\n| **" ++ (product.onHand as String) ++ "個** | " ++ product.warehouse ++ " | " ++ product.status ++ " | " ++ (if (product.restockEtaDays != null) "+" ++ (product.restockEtaDays as String) ++ "日" else "(不要)") ++ " |"
+    else if (intent == "restock_eta")
+        if (product.restockEtaDays != null)
+            "**入荷予定** (商品 `" ++ productCode ++ "`): **+" ++ (product.restockEtaDays as String) ++ "日後** 入荷予定 (" ++ product.warehouse ++ "入庫、" ++ product.status ++ ")"
+        else
+            "商品 `" ++ productCode ++ "` は **在庫あり** (" ++ (product.onHand as String) ++ "個、" ++ product.warehouse ++ ")。入荷予定はありません。"
+    else
+        "> 意図を解釈できませんでした。`在庫` / `入荷` / `残数` などを含めてください。"
+---
+{
+    "jsonrpc": "2.0",
+    "id": vars.rpcReq.id,
+    "result": {
+        "status": {
+            "state": "completed"
+        },
+        "messages": [
+            {
+                "role": "agent",
+                "parts": [
+                    {
+                        "kind": "text",
+                        "text": replyText
+                    }
+                ],
+                "messageId": uuid()
+            }
+        ]
+    }
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+    </sub-flow>
+
+</mule>

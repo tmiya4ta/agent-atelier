@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:jmx="http://www.mulesoft.org/schema/mule/jmx"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/jmx http://www.mulesoft.org/schema/mule/jmx/current/mule-jmx.xsd">
+
+    <!-- mule.env: must be defined before configuration-properties -->
+    <global-property name="mule.env" value="local"/>
+    <configuration-properties file="config/config-${mule.env}.yaml"/>
+
+    <!-- JMX module for CloudHub 2.0 log retrieval -->
+    <jmx:config name="jmx-config" logBufferSize="5000"/>
+
+    <!-- HTTP listener -->
+    <http:listener-config name="HTTP_Listener_config">
+        <http:listener-connection host="0.0.0.0" port="${http.port}"/>
+    </http:listener-config>
+
+    <!-- HTTP request config for calling downstream agents -->
+    <http:request-config name="HTTP_Request_config">
+        <http:request-connection />
+    </http:request-config>
+
+</mule>

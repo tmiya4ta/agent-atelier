@@ -71,3 +71,35 @@ export function scheduleSave(state, ms = 80) {
   if (_timer) clearTimeout(_timer);
   _timer = setTimeout(() => { _timer = null; save(state); }, ms);
 }
+
+// ─── export / import ─────────────────────────
+// Snapshot file format:
+// { app: "atelier", exportedAt: ISO, state: <raw state object> }
+export function exportJson() {
+  const raw = localStorage.getItem(KEY);
+  const state = raw ? JSON.parse(raw) : { v: VERSION };
+  return JSON.stringify({
+    app: "atelier",
+    exportedAt: new Date().toISOString(),
+    state
+  }, null, 2);
+}
+
+export function importJson(str) {
+  const parsed = JSON.parse(str);
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Invalid JSON: not an object");
+  }
+  // Accept either a wrapped { app, state } file or a bare state object
+  const state = parsed.state ?? parsed;
+  if (typeof state !== "object" || state === null) {
+    throw new Error("Missing state payload");
+  }
+  if (state.v !== VERSION) {
+    throw new Error(`Unsupported snapshot version: ${state.v} (expected ${VERSION})`);
+  }
+  if (!Array.isArray(state.workspaces)) {
+    throw new Error("Snapshot missing workspaces[]");
+  }
+  localStorage.setItem(KEY, JSON.stringify(state));
+}

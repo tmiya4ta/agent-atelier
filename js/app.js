@@ -142,6 +142,7 @@ function init() {
   wireZoom();
   wireSidebarToggle();
   wireScriptPanel();
+  wireBackup();
   applyZoom();   // 復元値を反映
   applySidebar();
   applyScriptPanel();   // 復元値を反映
@@ -211,6 +212,8 @@ function toggleSidebar() {
   state.sidebarCollapsed = !state.sidebarCollapsed;
   applySidebar();
   dirty();
+  // サイドバー幅が変わると利用可能領域が変わるので、CSSトランジション後にタイリング
+  setTimeout(tileWindows, 260);
 }
 function wireSidebarToggle() {
   $("#sidebarToggle").addEventListener("click", toggleSidebar);
@@ -1499,8 +1502,15 @@ function renderScripts() {
     const lineCount = (s.body || "").split(/\r?\n/).filter(l => l.trim() && !l.trim().startsWith("#")).length;
     const ageSec = Math.max(0, Math.round((Date.now() - (s.updatedAt || s.createdAt)) / 1000));
     li.title = `${lineCount} ops · edited ${formatAge(ageSec)}${s.autoLoop ? " · auto loop ON" : ""}`;
+    const isRunningThis = !!(state._script && state._script.loopScriptId === s.id);
     li.innerHTML = `
       <span class="script-name">${escapeHtml(s.name)}</span>
+      <button class="script-run ${isRunningThis ? "is-running" : ""}"
+              title="${isRunningThis ? "running…" : "Run this script (no panel open)"}"
+              aria-label="run script"
+              ${isRunningThis ? "disabled" : ""}>
+        <svg viewBox="0 0 12 12" width="9" height="9"><path d="M3 2 L10 6 L3 10 Z" fill="currentColor"/></svg>
+      </button>
       <button class="script-loop ${s.autoLoop ? "is-on" : ""} ${(state._script && state.selectedScriptId === s.id && s.autoLoop) ? "is-running" : ""}"
               title="${s.autoLoop ? "auto loop ON (click to stop)" : "auto loop mode (repeat run)"}"
               aria-label="toggle auto loop">
@@ -1517,6 +1527,12 @@ function renderScripts() {
       if (e.target.closest(".agent-remove")) {
         e.stopPropagation();
         deleteScript(s.id);
+        return;
+      }
+      if (e.target.closest(".script-run")) {
+        e.stopPropagation();
+        if (state._script) return;   // 既に何か走ってる
+        runScript({ text: s.body || "", scriptId: s.id });
         return;
       }
       if (e.target.closest(".script-loop")) {
@@ -2017,10 +2033,11 @@ function appendScriptLog({ level, text }) {
   }
 }
 
-async function runScript() {
-  const text = $("#scriptEditor").value;
+async function runScript(opts = {}) {
+  // opts.text + opts.scriptId でサイドバーから呼べる。引数なしならエディタの内容を使う。
+  const text = opts.text != null ? opts.text : $("#scriptEditor").value;
   const ops  = parseScript(text);
-  const script = findScript(state.selectedScriptId);
+  const script = findScript(opts.scriptId || state.selectedScriptId);
   const loopMode = !!script?.autoLoop;
 
   $("#scriptRun").disabled  = true;
@@ -2064,20 +2081,20 @@ function wireScriptPanel() {
   $("#scriptCollapse").addEventListener("click", closeScriptPanel);
   $("#scriptRun").addEventListener("click",  runScript);
   $("#scriptStop").addEventListener("click", () => state._script?.runner?.stop());
-  $("#scriptClear").addEventListener("click", async () => {
+  $("#scriptClear").addEventListener("click", () => {
     const ed = $("#scriptEditor");
     if (!ed.value) return;
-    const ok = await modalConfirm({
-      title:        "Clear editor content?",
-      confirmLabel: "Clear",
-      danger:       true
-    });
-    if (!ok) return;
-    ed.value = "";
-    autoSaveScript();
-    refreshScriptChips();
-    updateScriptHighlight();
     ed.focus();
+    ed.setSelectionRange(0, ed.value.length);
+    // execCommand("delete") leaves the deletion on the textarea's undo stack
+    // so the user can recover the content with Cmd/Ctrl+Z. value="" doesn't.
+    const ok = document.execCommand("delete");
+    if (!ok) {
+      ed.value = "";
+      autoSaveScript();
+      refreshScriptChips();
+      updateScriptHighlight();
+    }
   });
 
   // editor: 入力で chip 再filter + highlight 更新 + 自動保存
@@ -2148,6 +2165,59 @@ function wireScriptPanel() {
     window.addEventListener("mouseup", onUp);
   });
 
+}
+
+// ═══════════════════════════════════════════════════════
+// BACKUP — export / import the full saved snapshot
+// ═══════════════════════════════════════════════════════
+function wireBackup() {
+  $("#btnExport").addEventListener("click", async () => {
+    const ok = await modalConfirm({
+      title:        "Export configuration?",
+      message:      "The file will contain connections, catalogs and scripts — including OAuth client secrets and access tokens. Treat it as sensitive.",
+      confirmLabel: "Export"
+    });
+    if (!ok) return;
+    try {
+      // Ensure pending debounced save is flushed so the export reflects the latest state
+      persist.save(state);
+      const json = persist.exportJson();
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const blob = new Blob([json], { type: "application/json" });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = `atelier-export-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      await modalAlert({ title: "Export failed", message: err?.message || String(err) });
+    }
+  });
+
+  $("#btnImport").addEventListener("click", () => $("#importFile").click());
+
+  $("#importFile").addEventListener("change", async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";   // reset so picking the same file twice re-triggers
+    if (!file) return;
+    const ok = await modalConfirm({
+      title:        "Import configuration?",
+      message:      `Replace current connections, catalogs and scripts with “${file.name}”? The page will reload.`,
+      confirmLabel: "Import",
+      danger:       true
+    });
+    if (!ok) return;
+    try {
+      const text = await file.text();
+      persist.importJson(text);
+      location.reload();
+    } catch (err) {
+      await modalAlert({ title: "Import failed", message: err?.message || String(err) });
+    }
+  });
 }
 
 function loadDemo() {
@@ -2280,7 +2350,7 @@ async function connect({ protoId, url, name, auth, persona, channel }, opts = {}
     layer: ws.layer,
     onClose: removeWindow,
     onFocus: () => {},
-    onChange: dirty,
+    onChange: () => { dirty(); renderBookmarks(); },  // display name 変更等を左サイドバーに即反映
     instanceSuffix,
     restore: opts.restore
   });
