@@ -280,7 +280,7 @@ async function removeWorkspace(id) {
   const ws = state.workspaces[idx];
   if (ws.windows.length > 0) {
     const ok = await modalConfirm({
-      title:        `Close "${ws.name}"? (${ws.windows.length} 件の接続を切断)`,
+      title:        `Close "${ws.name}"? (${ws.windows.length} connections will be disconnected)`,
       confirmLabel: "Close workspace",
       danger:       true
     });
@@ -323,7 +323,7 @@ function renderTabs() {
       <span class="ws-tab-dot"></span>
       <span class="ws-tab-name">${escapeHtml(ws.name)}</span>
       <span class="ws-tab-count">${ws.windows.length}</span>
-      <span class="ws-tab-close" title="ワークスペースを閉じる" aria-label="close">
+      <span class="ws-tab-close" title="Close workspace" aria-label="close">
         <svg viewBox="0 0 14 14" width="9" height="9"><line x1="3" y1="3" x2="11" y2="11" stroke="currentColor" stroke-width="1.4"/><line x1="11" y1="3" x2="3" y2="11" stroke="currentColor" stroke-width="1.4"/></svg>
       </span>
     `;
@@ -425,12 +425,12 @@ function renderBookmarks() {
     const initial = (b.name || "?").charAt(0).toUpperCase();
     li.title = b.host;   // host は tooltip
     li.innerHTML = `
-      <span class="agent-name" title="クリックでツリー開閉">${escapeHtml(b.name)}</span>
+      <span class="agent-name" title="Click to toggle tree">${escapeHtml(b.name)}</span>
       <span class="bm-count" title="${children.length} window(s)">${children.length}</span>
-      <button class="bookmark-new" title="新規接続" aria-label="new connection">
+      <button class="bookmark-new" title="New connection" aria-label="new connection">
         <svg viewBox="0 0 14 14" width="10" height="10"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
-      <button class="agent-remove" title="ブックマーク削除" aria-label="remove">
+      <button class="agent-remove" title="Remove bookmark" aria-label="remove">
         <svg viewBox="0 0 14 14" width="9" height="9">
           <line x1="3" y1="3" x2="11" y2="11" stroke="currentColor" stroke-width="1.4"/>
           <line x1="11" y1="3" x2="3" y2="11" stroke="currentColor" stroke-width="1.4"/>
@@ -560,7 +560,7 @@ async function fetchBgAssets(cat, bg) {
     try {
       await resolveBusinessGroupId(cat, bg);
     } catch (e) {
-      throw new Error(`Business group の解決に失敗: ${e.message}`);
+      throw new Error(`Business group resolution failed: ${e.message}`);
     }
   }
 
@@ -638,7 +638,7 @@ async function resolveBusinessGroupId(cat, bg) {
   const target = raw.toLowerCase();
   const hit = nodes.find(o => (o.name || "").toLowerCase() === target)
            || nodes.find(o => (o.name || "").toLowerCase().includes(target));
-  if (!hit) throw new Error(`"${raw}" にマッチする business group なし`);
+  if (!hit) throw new Error(`"${raw}" — no matching business group`);
   bg.bgId   = hit.id;
   bg.bgName = hit.name;
 }
@@ -727,7 +727,7 @@ async function loadDrawerAssets(cat, bg) {
     spinner.hidden = true;
     meta.textContent = `error: ${e.message}`;
     meta.classList.add("is-error");
-    body.innerHTML = `<div class="drawer-empty">取得に失敗しました</div>`;
+    body.innerHTML = `<div class="drawer-empty">Fetch failed</div>`;
     renderCatalogs();
   }
 }
@@ -751,7 +751,7 @@ function applyDrawerFilter() {
     if (!empty) {
       empty = document.createElement("div");
       empty.className = "drawer-empty drawer-empty-filter";
-      empty.textContent = "該当アセットなし";
+      empty.textContent = "No matching assets";
       $("#drawerBody").appendChild(empty);
     }
   } else if (empty) {
@@ -762,7 +762,7 @@ function renderAssetList(assets) {
   const body = $("#drawerBody");
   body.innerHTML = "";
   if (!assets?.length) {
-    body.innerHTML = `<div class="drawer-empty">A2A アセットがありません</div>`;
+    body.innerHTML = `<div class="drawer-empty">No A2A assets</div>`;
     return;
   }
   const cat = state.catalogs.find(c => c.id === state._drawerCatalogId);
@@ -779,7 +779,7 @@ function renderAssetList(assets) {
     const showArrow = hasInstance || hasCard;
     item.innerHTML = `
       ${hasInstance ? `
-      <button class="asset-quick-connect" title="即接続" aria-label="connect">
+      <button class="asset-quick-connect" title="Quick connect" aria-label="connect">
         <svg viewBox="0 0 16 16" width="10" height="10"><path d="M2 8 L12 8 M8 4 L12 8 L8 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <span>connect</span>
       </button>` : ""}
@@ -805,10 +805,10 @@ function renderAssetList(assets) {
         connectAsset(a, cat);
       });
     } else if (hasCard) {
-      item.title = "agent card あり (接続 URL 未解決) — 詳細は表示可能";
+      item.title = "Agent card available (instance URL unresolved) — detail viewable";
       item.addEventListener("click", () => openAssetDetail(a, cat));
     } else {
-      item.title = "agent card / instance URL ともになし";
+      item.title = "No agent card or instance URL";
     }
     body.appendChild(item);
   });
@@ -895,7 +895,7 @@ function connectAsset(asset, cat) {
   const cardUrl = /\.well-known\/agent-card\.json$/.test(url)
     ? url
     : `${url.replace(/\/+$/, "")}/.well-known/agent-card.json`;
-  // 両drawerを閉じる
+  // 両drawerをClose
   closeAssetDetail();
   closeCatalogDrawer();
   connect({
@@ -990,15 +990,15 @@ function renderCatalogs() {
     li.dataset.catId = c.id;
     li.title = `${host}  ·  ${c.flow === "cc" ? "Client Credentials" : "Authorization Code"}  ·  ${c.status || "idle"}`;
     li.innerHTML = `
-      <span class="catalog-name" title="クリックで開閉">${escapeHtml(c.name)}</span>
+      <span class="catalog-name" title="Click to toggle">${escapeHtml(c.name)}</span>
       <span class="catalog-meta">
         <span class="catalog-status-dot ${statusCls}" title="${escapeHtml(c.status || "idle")}"></span>
         <span class="bm-count" title="${c.businessGroups.length} BG">${c.businessGroups.length}</span>
       </span>
-      <button class="bookmark-new" title="Business group を追加" aria-label="add bg">
+      <button class="bookmark-new" title="Add business group" aria-label="add bg">
         <svg viewBox="0 0 14 14" width="10" height="10"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
-      <button class="agent-remove" title="catalog 削除" aria-label="remove">
+      <button class="agent-remove" title="Delete catalog" aria-label="remove">
         <svg viewBox="0 0 14 14" width="9" height="9">
           <line x1="3" y1="3" x2="11" y2="11" stroke="currentColor" stroke-width="1.4"/>
           <line x1="11" y1="3" x2="3" y2="11" stroke="currentColor" stroke-width="1.4"/>
@@ -1009,7 +1009,7 @@ function renderCatalogs() {
       if (e.target.closest(".agent-remove")) {
         e.stopPropagation();
         const ok = await modalConfirm({
-          title:        `Delete "${c.name}"? (BG ${c.businessGroups.length} 件も削除)`,
+          title:        `Delete "${c.name}"? (${c.businessGroups.length} business groups will also be deleted)`,
           confirmLabel: "Delete",
           danger:       true
         });
@@ -1057,7 +1057,7 @@ function renderCatalogs() {
         btn.innerHTML = `
           <span class="bc-branch">${isLast ? "└─" : "├─"}</span>
           <span class="bc-name">${escapeHtml(bg.bgName || bg.input)}</span>
-          <button class="bc-remove" title="この BG を削除" aria-label="remove bg">
+          <button class="bc-remove" title="Remove this business group" aria-label="remove bg">
             <svg viewBox="0 0 12 12" width="8" height="8"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/><line x1="9.5" y1="2.5" x2="2.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/></svg>
           </button>
         `;
@@ -1076,7 +1076,7 @@ function renderCatalogs() {
             dirty();
             return;
           }
-          // トグル: 同じ bg を開いてたら閉じる
+          // トグル: 同じ bg を開いてたらClose
           if (state._drawerCatalogId === c.id && state._drawerBgId === bg.id) {
             closeAssetDetail();
             closeCatalogDrawer();
@@ -1097,13 +1097,13 @@ async function addBusinessGroupToCatalog(cat) {
   const input = await modalPrompt({
     title:        `Add business group to "${cat.name}"`,
     label:        "business group name or ID",
-    placeholder:  "例: btd  または  0fc4eaf1-5697-4cef-9c1b-3b96e3a52ee2",
+    placeholder:  "e.g. btd  or  0fc4eaf1-5697-4cef-9c1b-3b96e3a52ee2",
     confirmLabel: "Add"
   });
   if (!input) return;
   // 重複チェック
   if (cat.businessGroups.some(x => x.input.toLowerCase() === input.toLowerCase())) {
-    await modalAlert({ title: "Already added", message: `"${input}" は既にこの catalog に登録されています。` });
+    await modalAlert({ title: "Already added", message: `"${input}" is already registered in this catalog.` });
     return;
   }
   const bg = {
@@ -1169,8 +1169,8 @@ function refreshCatalogDialog() {
   const secretHint = $("#catSecretHint");
   if (secretHint) {
     secretHint.textContent = state.selectedCatalogFlow === "authcode"
-      ? "Web app タイプのみ · SPA は空欄"
-      : "Service authentication 用 · 必須";
+      ? "Web app type only · leave empty for SPA"
+      : "Required for service authentication";
   }
 
   // CTA動的化
@@ -1367,11 +1367,11 @@ function renderScripts() {
     li.innerHTML = `
       <span class="script-name">${escapeHtml(s.name)}</span>
       <button class="script-loop ${s.autoLoop ? "is-on" : ""} ${(state._script && state.selectedScriptId === s.id && s.autoLoop) ? "is-running" : ""}"
-              title="${s.autoLoop ? "auto loop ON (停止/解除)" : "auto loop モード (繰り返し実行)"}"
+              title="${s.autoLoop ? "auto loop ON (click to stop)" : "auto loop mode (repeat run)"}"
               aria-label="toggle auto loop">
         <svg viewBox="0 0 16 16" width="11" height="11"><path d="M3 7 a5 5 0 0 1 9 -2.5 M13 9 a5 5 0 0 1 -9 2.5 M3 2 v3 h3 M13 14 v-3 h-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
-      <button class="agent-remove" title="削除" aria-label="remove">
+      <button class="agent-remove" title="Delete" aria-label="remove">
         <svg viewBox="0 0 14 14" width="9" height="9">
           <line x1="3" y1="3" x2="11" y2="11" stroke="currentColor" stroke-width="1.4"/>
           <line x1="11" y1="3" x2="3" y2="11" stroke="currentColor" stroke-width="1.4"/>
@@ -1389,7 +1389,7 @@ function renderScripts() {
         toggleScriptLoop(s.id);
         return;
       }
-      // トグル動作: 既に active + panel open なら閉じる、 そうでなければ open + activate
+      // トグル動作: 既に active + panel open ならClose、 そうでなければ open + activate
       const isActiveOpen = state.scriptPanelOpen
                        && state.selectedScriptId === s.id
                        && state.openScriptIds.includes(s.id);
@@ -1480,7 +1480,7 @@ function applyProtoSpecificFields() {
   const authInput = $("#dlgAuth");
   if (urlInput) {
     urlInput.placeholder = isSlack
-      ? "https://slack.com   ·   https://slack.example.com   (互換サーバ)"
+      ? "https://slack.com   ·   https://slack.example.com   (compatible server)"
       : "http://127.0.0.1:5180  ·  https://api.example.com/.well-known/agent.json";
   }
   if (authInput) {
@@ -1542,7 +1542,7 @@ function applyScriptPanel() {
 }
 
 function openScriptInPanel(scriptId) {
-  // Catalog drawer と排他: 開いていれば閉じる (detail も)
+  // Catalog drawer と排他: 開いていればClose (detail も)
   closeAssetDetail();
   closeCatalogDrawer();
   let sid = scriptId || state.selectedScriptId;
@@ -1580,7 +1580,7 @@ function toggleScriptPanel() {
     state.scriptPanelOpen  = false;
     state.selectedScriptId = null;
   } else {
-    // Catalog drawer と排他: 開いていれば閉じる
+    // Catalog drawer と排他: 開いていればClose
     closeAssetDetail();
     closeCatalogDrawer();
     if (state.openScriptIds.length === 0) {
@@ -1640,7 +1640,7 @@ function renderScriptTabs() {
     tab.innerHTML = `
       <span class="script-tab-dot"></span>
       <span class="script-tab-name">${escapeHtml(s.name)}</span>
-      <button class="script-tab-close" title="閉じる" aria-label="close">
+      <button class="script-tab-close" title="Close" aria-label="close">
         <svg viewBox="0 0 14 14" width="8" height="8"><line x1="3" y1="3" x2="11" y2="11" stroke="currentColor" stroke-width="1.6"/><line x1="11" y1="3" x2="3" y2="11" stroke="currentColor" stroke-width="1.6"/></svg>
       </button>
     `;
@@ -1750,11 +1750,11 @@ function autoSaveScript() {
 
 // DSL コマンド一覧
 const DSL_COMMANDS = [
-  { glyph: ">",     label: "send",    insert: "> ",        cursor: "end",  title: "ウインドウへ送信  > name: text" },
-  { glyph: "<",     label: "wait",    insert: "< ",        cursor: "end",  title: "応答待ち  < name [30s]" },
-  { glyph: "sleep", label: "pause",   insert: "sleep 1s",  cursor: "end",  title: "停止  sleep Ns" },
-  { glyph: "clear", label: "reset",   insert: "clear",     cursor: "end",  title: "チャットクリア  clear [name]" },
-  { glyph: "#",     label: "comment", insert: "# ",        cursor: "end",  title: "コメント行  # ..." }
+  { glyph: ">",     label: "send",    insert: "> ",        cursor: "end",  title: "Send to window — > name: text" },
+  { glyph: "<",     label: "wait",    insert: "< ",        cursor: "end",  title: "Wait for reply — < name [30s]" },
+  { glyph: "sleep", label: "pause",   insert: "sleep 1s",  cursor: "end",  title: "Pause — sleep Ns" },
+  { glyph: "clear", label: "reset",   insert: "clear",     cursor: "end",  title: "Clear chat — clear [name]" },
+  { glyph: "#",     label: "comment", insert: "# ",        cursor: "end",  title: "Comment line — # ..." }
 ];
 
 function renderCommandChips() {
@@ -2055,7 +2055,7 @@ function tileWindows() {
 function wireDialog() {
   $("#dlgClose").addEventListener("click", closeDialog);
   $("#dlgCancel").addEventListener("click", closeDialog);
-  // 背景クリックで閉じる挙動は廃止 (誤操作で入力が消えるのを防ぐ)
+  // 背景クリックでClose挙動は廃止 (誤操作で入力が消えるのを防ぐ)
   $("#dlgSubmit").addEventListener("click", submitDialog);
   $("#dlgUrl").addEventListener("keydown", (e) => {
     if (e.key === "Enter") submitDialog();
@@ -2105,7 +2105,7 @@ async function connect({ protoId, url, name, auth, persona, channel }, opts = {}
   if (!proto || !proto.AdapterClass) {
     await modalAlert({
       title:   "Protocol not supported yet",
-      message: `${protoId} アダプタはまだ実装されていません。`
+      message: `The ${protoId} adapter is not implemented yet.`
     });
     return false;
   }
@@ -2250,7 +2250,7 @@ function wireKeyboard() {
       toggleScriptPanel();
       return;
     }
-    // ⌘W で現在の script tab を閉じる (panel 開いてる時 + editor フォーカス時のみ)
+    // ⌘W で現在の script tab をClose (panel 開いてる時 + editor フォーカス時のみ)
     if (meta && e.key.toLowerCase() === "w" && state.scriptPanelOpen
         && document.activeElement?.id === "scriptEditor") {
       e.preventDefault();
