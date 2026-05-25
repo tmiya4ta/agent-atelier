@@ -78,12 +78,17 @@ const state = {
   zoom: 1.0,
   sidebarCollapsed: false,
   catalogs: [],       // [{ id, name, flow, baseUrl, orgId, envId, clientId, clientSecret?, scopes, status, createdAt }]
+  // 「コネクション登録」一覧。 ウインドウが 0 個になっても残り、 明示的な DELETE のみで消える。
+  // entry = { key, protoId, url, name, auth?, persona?, channel? }
+  bookmarks: [],
   scripts: [],        // [{ id, name, body, createdAt, updatedAt }]
   selectedScriptId: null,
   openScriptIds: [],  // panel に open しているタブの順序
   scriptPanelOpen: false,
   scriptPanelHeight: 480
 };
+
+function bookmarkKey(protoId, url) { return `${protoId}::${url || ""}`; }
 
 const ZOOM_MIN = 0.8;
 const ZOOM_MAX = 1.6;
@@ -106,6 +111,7 @@ function init() {
     state.zoom             = saved.zoom ?? 1.0;
     state.sidebarCollapsed = !!saved.sidebarCollapsed;
     state.catalogs         = (saved.catalogs || []).map(migrateCatalog);
+    state.bookmarks        = saved.bookmarks || [];
     state.scripts          = saved.scripts   || [];
     state.selectedScriptId = saved.selectedScriptId || null;
     state.openScriptIds    = (saved.openScriptIds || []).filter(id => state.scripts.find(s => s.id === id));
@@ -117,6 +123,7 @@ function init() {
   } else {
     state.sidebarCollapsed = !!saved?.sidebarCollapsed;
     state.catalogs  = (saved?.catalogs || []).map(migrateCatalog);
+    state.bookmarks = saved?.bookmarks || [];
     state.scripts   = saved?.scripts   || [];
     state.selectedScriptId = saved?.selectedScriptId || null;
     state.openScriptIds    = (saved?.openScriptIds || []).filter(id => state.scripts.find(s => s.id === id));
@@ -140,6 +147,7 @@ function init() {
   wireWsTabs();
   wireZoom();
   wireSidebarToggle();
+  wireWorkspaceBlur();
   wireScriptPanel();
   wireBackup();
   applyZoom();   // 復元値を反映
@@ -216,6 +224,21 @@ function toggleSidebar() {
 }
 function wireSidebarToggle() {
   $("#sidebarToggle").addEventListener("click", toggleSidebar);
+}
+
+// ウインドウ以外 (ワークスペース余白) を click したら focus を解除する。
+// mousedown だと自分自身の resize/drag や empty-state ボタンと競合するので click を使う。
+function wireWorkspaceBlur() {
+  const layer = $("#windowsLayer");
+  if (!layer) return;
+  layer.addEventListener("mousedown", (e) => {
+    // ウインドウ内でのクリックは AgentWindow の focus() で吸収されるので、
+    // 「layer 自身か ws-layer 自身が target のときだけ blur」
+    if (e.target === layer || e.target.classList?.contains("ws-layer")) {
+      document.querySelectorAll(".agent-window.is-focused")
+        .forEach(n => n.classList.remove("is-focused"));
+    }
+  });
 }
 
 // ═══════════════════════════════════════════════════════
@@ -372,98 +395,147 @@ function wireWsTabs() {
   $("#wsAdd").addEventListener("click", () => createWorkspace(`workspace ${wsCounter + 1}`));
 }
 
-// 現存する全 window をサイドバーに一覧表示 (proto + url で group)
+// 「コネクション登録」エントリの追加 / 上書き。 ウインドウの open/close と独立。
+function upsertBookmark({ protoId, url, name, auth, persona, channel }) {
+  if (!protoId || !url) return;
+  const key = bookmarkKey(protoId, url);
+  state.bookmarks = state.bookmarks || [];
+  const idx = state.bookmarks.findIndex(b => b.key === key);
+  const entry = { key, protoId, url, name, auth, persona, channel };
+  if (idx >= 0) {
+    // 既存はユーザーが付けた display name 等を尊重しつつ最新値で更新
+    const prev = state.bookmarks[idx];
+    state.bookmarks[idx] = { ...prev, ...entry, name: name || prev.name };
+  } else {
+    state.bookmarks.push(entry);
+  }
+  dirty();
+}
+
+function removeBookmark(key) {
+  state.bookmarks = (state.bookmarks || []).filter(b => b.key !== key);
+  dirty();
+}
+
+// CONNECTIONS = 登録済みコネクション (= bookmarks) を主軸に描画。
+// その下に「現在開いているウインドウ」を子要素として並べる。 ウインドウが 0 でも親は残る。
 function renderBookmarks() {
   const root  = $("#savedAgents");
   const empty = $("#bookmarksEmpty");
   root.innerHTML = "";
   state._connExpanded = state._connExpanded || {};
+  state.bookmarks = state.bookmarks || [];
 
-  // group by protoId + url、 順序維持
-  const groups = new Map();
+  // 各 bookmark に対応する開いているウインドウを集計
+  const winsByKey = new Map();
   state.workspaces.forEach(ws => {
     ws.windows.forEach(win => {
-      const key = `${win.protoId}::${win.adapter.config.url || ""}`;
-      if (!groups.has(key)) {
-        groups.set(key, {
-          key,
-          name:    win.name,
-          host:    hostFromUrl(win.adapter.config.url) || win.adapter.config.url || "",
-          url:     win.adapter.config.url,
-          windows: []
-        });
-      }
-      groups.get(key).windows.push({ win, ws });
+      const k = bookmarkKey(win.protoId, win.adapter.config.url);
+      if (!winsByKey.has(k)) winsByKey.set(k, []);
+      winsByKey.get(k).push({ win, ws });
     });
   });
 
-  const groupList = [...groups.values()];
-  groupList.forEach(g => {
-    const hasMulti = g.windows.length > 1;
-    if (state._connExpanded[g.key] === undefined) state._connExpanded[g.key] = true;
-    const expanded = !!state._connExpanded[g.key];
+  // 念のため: 開いているウインドウに bookmark が無い (旧データ等) なら登録扱い
+  winsByKey.forEach((arr, k) => {
+    if (!state.bookmarks.find(b => b.key === k)) {
+      const { win } = arr[0];
+      const cfg = win.adapter.config || {};
+      state.bookmarks.push({
+        key: k, protoId: win.protoId, url: cfg.url,
+        name: cfg.name || win.name,
+        auth: cfg.auth, persona: cfg.persona, channel: cfg.channel
+      });
+    }
+  });
 
-    // 親 (group)
+  state.bookmarks.forEach(b => {
+    const wins = winsByKey.get(b.key) || [];
+    const hasMulti = wins.length > 1;
+    if (state._connExpanded[b.key] === undefined) state._connExpanded[b.key] = true;
+    const expanded = !!state._connExpanded[b.key];
+
+    // ウインドウから取れる最新 display name を優先 (settings での編集を反映)
+    const displayName = wins[0]?.win.name || b.name || hostFromUrl(b.url) || b.url;
+    const host = hostFromUrl(b.url) || b.url || "";
+
     const li = document.createElement("li");
     li.className = "agent-item conn-group"
       + (hasMulti ? " is-expandable" : "")
-      + (expanded ? " is-expanded" : "");
-    li.title = `${g.host}  ·  ${g.windows.length} window(s)`;
+      + (expanded ? " is-expanded" : "")
+      + (wins.length === 0 ? " is-disconnected" : "");
+    li.title = wins.length
+      ? `${host}  ·  ${wins.length} window(s)`
+      : `${host}  ·  no open window — click + to open`;
     li.innerHTML = `
-      <span class="agent-name">${escapeHtml(g.name)}</span>
-      <span class="bm-count" title="${g.windows.length} window(s)">${g.windows.length}</span>
-      <button class="bookmark-new" title="Open another window to the same agent" aria-label="new window">
+      <span class="agent-name">${escapeHtml(displayName)}</span>
+      <span class="bm-count" title="${wins.length} window(s)">${wins.length}</span>
+      <button class="bookmark-new" title="${wins.length ? 'Open another window to the same agent' : 'Open a window'}" aria-label="new window">
         <svg viewBox="0 0 14 14" width="10" height="10"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
-      <button class="agent-remove" title="Disconnect all" aria-label="disconnect all">
+      <button class="agent-remove" title="Delete this connection (and disconnect all open windows)" aria-label="delete connection">
         <svg viewBox="0 0 14 14" width="9" height="9">
           <line x1="3" y1="3" x2="11" y2="11" stroke="currentColor" stroke-width="1.4"/>
           <line x1="11" y1="3" x2="3" y2="11" stroke="currentColor" stroke-width="1.4"/>
         </svg>
       </button>
     `;
-    li.addEventListener("click", (e) => {
+    li.addEventListener("click", async (e) => {
       if (e.target.closest(".agent-remove")) {
         e.stopPropagation();
-        g.windows.forEach(({ win }) => win.close());
+        // 開いているウインドウがあれば確認してから削除
+        if (wins.length > 0) {
+          const ok = await modalConfirm({
+            title: `Delete "${displayName}"?`,
+            message: `${wins.length} open window(s) will be disconnected and the connection will be removed from the sidebar.`,
+            confirmLabel: "Delete",
+            danger: true
+          });
+          if (!ok) return;
+          wins.forEach(({ win }) => win.close());
+        }
+        removeBookmark(b.key);
+        renderBookmarks();
         return;
       }
       if (e.target.closest(".bookmark-new")) {
         e.stopPropagation();
-        // 同 URL / proto / auth / persona / channel で新規 window
-        const first = g.windows[0]?.win;
-        if (!first) return;
-        const cfg = first.adapter.config || {};
         connect({
-          protoId: first.protoId,
-          url:     cfg.url,
-          name:    cfg.name || g.name,
-          auth:    cfg.auth,
-          persona: cfg.persona,
-          channel: cfg.channel
-        });
+          protoId: b.protoId,
+          url:     b.url,
+          name:    displayName,
+          auth:    b.auth,
+          persona: b.persona,
+          channel: b.channel
+        }, { lockName: true });
         return;
       }
-      // name / count クリック: 子があれば toggle、 単独ならその window へ focus
       if (e.target.closest(".agent-name, .bm-count")) {
-        if (g.windows.length === 1) {
-          const { win, ws } = g.windows[0];
+        if (wins.length === 0) {
+          // 閉じている bookmark をクリック → 開く
+          connect({
+            protoId: b.protoId, url: b.url, name: displayName,
+            auth: b.auth, persona: b.persona, channel: b.channel
+          }, { lockName: true });
+          return;
+        }
+        if (wins.length === 1) {
+          const { win, ws } = wins[0];
           if (ws.id !== state.activeWs) { switchWorkspace(ws.id); setTimeout(() => win.focus(), 50); }
           else win.focus();
         } else {
-          state._connExpanded[g.key] = !expanded;
+          state._connExpanded[b.key] = !expanded;
           renderBookmarks();
         }
       }
     });
     root.appendChild(li);
 
-    // 子ツリー (展開時のみ)
-    if (expanded) {
+    if (expanded && wins.length > 0) {
       const sub = document.createElement("li");
       sub.className = "bookmark-children";
-      g.windows.forEach(({ win, ws }, i) => {
-        const isLast = i === g.windows.length - 1;
+      wins.forEach(({ win, ws }, i) => {
+        const isLast = i === wins.length - 1;
         const isActiveWs = ws.id === state.activeWs;
         const btn = document.createElement("button");
         btn.type = "button";
@@ -473,7 +545,7 @@ function renderBookmarks() {
           <span class="bc-branch">${isLast ? "└─" : "├─"}</span>
           <span class="bc-id">${win.id}</span>
           <span class="bc-name">${escapeHtml(windowDisplayName(win))}</span>
-          <button class="bc-remove" title="Disconnect" aria-label="disconnect">
+          <button class="bc-remove" title="Disconnect this window" aria-label="disconnect">
             <svg viewBox="0 0 12 12" width="8" height="8"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/><line x1="9.5" y1="2.5" x2="2.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/></svg>
           </button>
         `;
@@ -496,7 +568,7 @@ function renderBookmarks() {
     }
   });
 
-  const total = state.workspaces.reduce((n, w) => n + w.windows.length, 0);
+  const total = state.bookmarks.length;
   $("#savedCount").textContent = String(total);
   empty.classList.toggle("is-hidden", total > 0);
 }
@@ -671,14 +743,20 @@ async function resolveBusinessGroupId(cat, bg) {
   });
   if (!meRes.ok) throw new Error(`/me HTTP ${meRes.status}`);
   const me = await meRes.json();
-  const rootOrg = me.user?.organization || me.organization;
-  if (!rootOrg) throw new Error("no organization in /me");
+  // password grant では me.user.organization、 client_credentials では me.client.org_id しか無い。
+  // どちらも root org の id を取って hierarchy API に渡せばよい (name は要らない)。
+  const rootOrgId =
+       me.user?.organization?.id
+    || me.organization?.id
+    || me.user?.organizationId
+    || me.client?.org_id;
+  if (!rootOrgId) throw new Error("no organization id in /me (password / client_credentials のいずれも未検出)");
 
-  const hUrl = `https://anypoint.mulesoft.com/accounts/api/cs/organizations/${rootOrg.id}/hierarchy`;
+  const hUrl = `https://anypoint.mulesoft.com/accounts/api/organizations/${rootOrgId}/hierarchy`;
   const hRes = await fetch(`/proxy?url=${encodeURIComponent(hUrl)}`, {
     headers: { Authorization: `Bearer ${cat.accessToken}` }
   });
-  let nodes = [rootOrg];
+  let nodes = [{ id: rootOrgId, name: me.user?.organization?.name || me.organization?.name || "" }];
   if (hRes.ok) {
     const h = await hRes.json();
     nodes = flattenOrgTree(h);
@@ -734,7 +812,7 @@ function closeCatalogDrawer() {
 }
 
 function renderCachedAssets(cat, bg) {
-  const withInst = bg.assets.filter(a => a._a2aUrl).length;
+  const withInst = bg.assets.filter(a => a._a2aUrl && !isInternalCh2Url(a._a2aUrl)).length;
   const ageSec = Math.round((Date.now() - (bg.assetsFetchedAt || Date.now())) / 1000);
   $("#drawerMeta").textContent =
     `${bg.assets.length} assets · ${withInst} connectable · cached ${formatAge(ageSec)} · BG: ${bg.bgName || bg.input}`;
@@ -765,7 +843,7 @@ async function loadDrawerAssets(cat, bg) {
     spinner.hidden = true;
     bg.assets = assets;
     bg.assetsFetchedAt = Date.now();
-    const withInst = assets.filter(a => a._a2aUrl).length;
+    const withInst = assets.filter(a => a._a2aUrl && !isInternalCh2Url(a._a2aUrl)).length;
     meta.textContent = `${assets.length} assets · ${withInst} connectable · ${elapsed}ms · BG: ${bg.bgName || bg.input}`;
     renderAssetList(assets);
     applyDrawerFilter();
@@ -806,6 +884,14 @@ function applyDrawerFilter() {
     empty.remove();
   }
 }
+// CH2 internal DNS (`*.internal-<shard>.cloudhub.io`) は VPC 外から到達できない。
+// Atelier (ブラウザ + dev-server) は外部側にいるので、 internal URL は connect 不可。
+function isInternalCh2Url(u) {
+  if (!u) return false;
+  try { return /\.internal-[^/]+\.cloudhub\.io/i.test(new URL(u).host); }
+  catch { return false; }
+}
+
 function renderAssetList(assets) {
   const body = $("#drawerBody");
   body.innerHTML = "";
@@ -815,11 +901,14 @@ function renderAssetList(assets) {
   }
   const cat = state.catalogs.find(c => c.id === state._drawerCatalogId);
   assets.forEach((a, i) => {
-    const hasInstance = !!a._a2aUrl;       // 実 URL に解決済み → 青で connectable
-    const hasCard     = !hasInstance && !!a._a2aCard;   // card だけ取れている (URL は ${...} 未解決等)
+    const hasUrl       = !!a._a2aUrl;
+    const isInternal   = hasUrl && isInternalCh2Url(a._a2aUrl);
+    const hasInstance  = hasUrl && !isInternal;        // 外部到達可能 → connectable
+    const hasCard      = !hasUrl && !!a._a2aCard;      // card だけ取れている
     const item = document.createElement("div");
     item.className = "asset-item"
       + (hasInstance ? " has-instance" : "")
+      + (isInternal  ? " has-internal" : "")
       + (hasCard     ? " has-card"     : "");
     item.style.animationDelay = `${Math.min(i * 30, 800)}ms`;
     const niceName = (a.name || a.assetId || "").replace(/\s*\(.*?\)\s*$/, "");
@@ -841,6 +930,7 @@ function renderAssetList(assets) {
         ${a.version ? `<span class="asset-tag">v${escapeHtml(a.version)}</span>` : ""}
         ${a.assetId ? `<span class="asset-tag">${escapeHtml(a.assetId)}</span>` : ""}
         ${hasInstance ? `<span class="asset-tag is-accent">instance</span>` : ""}
+        ${isInternal  ? `<span class="asset-tag is-muted" title="VPC-internal endpoint — Atelier からは接続できません">internal</span>` : ""}
         ${hasCard     ? `<span class="asset-tag">card only</span>`         : ""}
       </span>
       ${showArrow ? `<span class="asset-go" aria-hidden="true">→</span>` : ""}
@@ -852,6 +942,9 @@ function renderAssetList(assets) {
         ev.stopPropagation();
         connectAsset(a, cat);
       });
+    } else if (isInternal) {
+      item.title = `Internal CH2 endpoint (${a._a2aUrl}) — VPC 外からは到達できません`;
+      // クリックしても detail 開かない (URL を見ても connect できないので静かに)
     } else if (hasCard) {
       item.title = "Agent card available (instance URL unresolved) — detail viewable";
       item.addEventListener("click", () => openAssetDetail(a, cat));
@@ -2503,10 +2596,16 @@ async function connect({ protoId, url, name, auth, persona, channel }, opts = {}
     onFocus: () => {},
     onChange: () => { dirty(); renderBookmarks(); },  // display name 変更等を左サイドバーに即反映
     instanceSuffix,
-    restore: opts.restore
+    restore: opts.restore,
+    lockName: !!opts.lockName
   });
   win._wsId = ws.id;
   ws.windows.push(win);
+
+  // bookmark 登録: 同じ proto+url が無ければ追加、 あれば最新の name/auth/etc に更新
+  upsertBookmark({
+    protoId, url, name, auth, persona, channel
+  });
 
   renderTabs();
   renderBookmarks();

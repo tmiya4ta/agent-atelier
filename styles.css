@@ -482,17 +482,27 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .sidebar {
   grid-area: side;
   display: flex; flex-direction: column;
-  padding: 22px 0 16px;
+  padding: 18px 0 14px;
   border-right: 1px solid var(--line);
-  background: linear-gradient(180deg, var(--paper) 0%, var(--paper-2) 100%);
+  background: var(--panel-soft);
   overflow-y: auto;
   position: relative;
   z-index: 20;
 }
 
-.side-sec { padding: 0 16px 22px; }
-.side-sec + .side-sec { padding-top: 4px; }
-.side-footer { margin-top: auto; padding-bottom: 4px; }
+.side-sec { padding: 0 14px 14px; }
+.side-sec + .side-sec {
+  padding-top: 14px;
+  border-top: 1px solid var(--line-2);
+}
+/* CTA セクションは見出しを持たないので境界線を出さない */
+.side-cta-sec + .side-sec { border-top: 0; padding-top: 4px; }
+.side-footer {
+  margin-top: auto;
+  padding: 12px 14px 8px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
 
 /* ─── Sidebar New connection CTA ─── */
 .side-cta-sec { padding: 4px 16px 18px; }
@@ -547,22 +557,24 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 
 .side-title {
   display: flex; align-items: center; justify-content: space-between;
-  margin: 0 0 10px;
+  margin: 0 0 9px;
   font-family: var(--f-mono);
-  font-size: calc(10px * var(--fs-mul, 1.1) * var(--fs, 1));
-  font-weight: 500;
-  letter-spacing: 0.14em;
-  color: var(--ink-3);
+  font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  color: var(--ink-2);
   text-transform: uppercase;
 }
 .side-count {
   font-family: var(--f-mono);
-  font-size: calc(10px * var(--fs-mul, 1.1) * var(--fs, 1));
-  color: var(--ink-4);
+  font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  font-weight: 600;
+  color: var(--ink-3);
   background: var(--panel);
   border: 1px solid var(--line);
-  padding: 1px 6px;
-  border-radius: 100px;
+  padding: 0 6px;
+  border-radius: 3px;
+  letter-spacing: 0.04em;
 }
 
 /* ─── Sign in CTA (Auth Code flow) ─── */
@@ -1109,6 +1121,19 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   background: var(--accent-soft);
   border-color: #BFE7F5;
 }
+.asset-tag.is-muted {
+  color: var(--ink-4);
+  background: var(--paper-2);
+  border-color: var(--line);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+/* internal endpoint は到達不能なので、 connect 系のホバーや押下感を全部殺す */
+.asset-item.has-internal {
+  cursor: default;
+  opacity: 0.7;
+}
+.asset-item.has-internal:hover { background: inherit; }
 
 .drawer-empty {
   padding: 20px 12px;
@@ -1295,33 +1320,38 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 /* ─── Side-section add button (CATALOGS) ─── */
 .side-add {
   display: grid; place-items: center;
-  width: 16px; height: 16px;
-  color: var(--ink-3);
-  border: 1px dashed var(--line);
+  width: 18px; height: 18px;
+  color: var(--ink-2);
+  background: var(--panel);
+  border: 1px solid var(--line);
   border-radius: 3px;
   transition: all 0.15s ease;
 }
-.side-add:hover { color: var(--ink); border-color: var(--ink-3); border-style: solid; background: var(--panel); }
+.side-add:hover {
+  color: var(--paper);
+  background: var(--ink-navy);
+  border-color: var(--ink-navy);
+}
 
 /* ─── Catalog list ─── */
-.catalog-list { display: flex; flex-direction: column; gap: 2px; }
+.catalog-list { display: flex; flex-direction: column; gap: 3px; }
 .catalog-item {
   display: grid;
   grid-template-columns: 1fr auto auto auto;
   align-items: center;
   gap: 6px;
   padding: 6px 8px 6px 10px;
-  border-radius: 5px;
-  border: 1px solid transparent;
-  background: transparent;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--panel);
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .catalog-item.is-expandable .catalog-name:hover { color: var(--accent-ink); }
-.catalog-item:hover { background: var(--panel); border-color: var(--line); }
+.catalog-item:hover { border-color: #BFE7F5; box-shadow: 0 1px 0 rgba(0,22,74,.04); }
 .catalog-item.is-active {
   background: var(--accent-soft);
-  border-color: #BFE7F5;
+  border-color: var(--accent);
 }
 .catalog-meta {
   display: inline-flex; align-items: center; gap: 6px;
@@ -1347,24 +1377,23 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .catalog-status-dot.is-connecting { background: var(--accent); animation: pulse-soft 1s ease-in-out infinite; }
 
 /* ─── Script list ─── */
-.script-list { display: flex; flex-direction: column; gap: 2px; }
+.script-list { display: flex; flex-direction: column; gap: 3px; }
 .script-item {
   display: grid;
   grid-template-columns: 1fr auto auto;
   align-items: center;
   gap: 6px;
   padding: 6px 8px 6px 10px;
-  border-radius: 5px;
-  border: 1px solid transparent;
-  background: transparent;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--panel);
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.script-item:hover { background: var(--panel); border-color: var(--line); }
-.script-item:hover { border-color: var(--ink-3); }
+.script-item:hover { border-color: #BFE7F5; box-shadow: 0 1px 0 rgba(0,22,74,.04); }
 .script-item.is-active {
   background: var(--accent-soft);
-  border-color: #BFE7F5;
+  border-color: var(--accent);
 }
 .script-name {
   font-size: calc(13px * var(--fs-mul, 1.1) * var(--fs, 1));
@@ -1436,12 +1465,12 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 /* ─── Bookmarks empty state ─── */
 .agent-empty {
   margin: 4px 0 0;
-  padding: 10px 11px;
+  padding: 9px 11px;
   font-size: calc(11px * var(--fs-mul, 1.1) * var(--fs, 1));
-  color: var(--ink-4);
-  background: transparent;
-  border: 1px dashed var(--line);
-  border-radius: 5px;
+  color: var(--ink-3);
+  background: var(--panel);
+  border: 1px dashed var(--ink-4);
+  border-radius: 4px;
   line-height: 1.5;
 }
 .agent-empty.is-hidden { display: none; }
@@ -1524,8 +1553,9 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .bookmark-children {
   display: flex; flex-direction: column;
   gap: 1px;
-  margin: 2px 0 4px 12px;
-  padding: 2px 0;
+  margin: 4px 0 2px 8px;
+  padding: 2px 0 2px 6px;
+  border-left: 1px solid var(--line);
 }
 .bookmark-children.is-collapsed { display: none; }
 .bookmark-child {
@@ -1536,7 +1566,7 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   padding: 3px 8px 3px 4px;
   font-family: var(--f-mono);
   font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
-  color: var(--ink-3);
+  color: var(--ink-2);
   border-radius: 3px;
   transition: background 0.12s ease, color 0.12s ease;
   text-align: left;
@@ -1581,17 +1611,35 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 
 /* CONNECTIONS — make each agent group visually a card so it's easier to scan */
 .conn-group {
-  background: rgba(0, 0, 0, 0.025);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 9px 11px;
-  margin-bottom: 4px;
-}
-.conn-group:hover { background: rgba(0, 0, 0, 0.045); border-color: var(--ink-3); }
-.conn-group.is-active {
   background: var(--panel);
-  border-color: var(--ink-3);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
   box-shadow: var(--shadow-sm);
+}
+.conn-group:hover {
+  border-color: #BFE7F5;
+  box-shadow: 0 1px 0 rgba(0,22,74,.04), 0 2px 4px rgba(0,160,223,.06);
+}
+.conn-group.is-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 1px 2px rgba(0,22,74,.08);
+}
+/* ウインドウが開いていない bookmark — 灰色っぽくして「閉じている」とわかるように */
+.conn-group.is-disconnected {
+  background: var(--panel-soft);
+  box-shadow: none;
+}
+.conn-group.is-disconnected .agent-name { color: var(--ink-3); }
+.conn-group.is-disconnected .bm-count {
+  color: var(--ink-4);
+  background: transparent;
+}
+.conn-group.is-disconnected:hover {
+  background: var(--panel);
+  border-color: #BFE7F5;
+  box-shadow: 0 1px 0 rgba(0,22,74,.04);
 }
 /* child rows (aw-1 etc) sit visually outside the card (no background) — separator between groups */
 .bookmark-children { margin-bottom: 8px; }
@@ -1687,10 +1735,10 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 
 .side-tools {
   display: flex; align-items: center; gap: 8px;
-  padding: 0 4px 10px;
+  padding: 0 0 8px;
   font-family: var(--f-mono);
   font-size: calc(10px * var(--fs-mul, 1.1) * var(--fs, 1));
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--ink-3);
 }
@@ -1710,7 +1758,7 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 
 .side-meta {
   display: flex; justify-content: space-between; align-items: baseline;
-  padding: 0 4px;
+  padding: 0;
   font-family: var(--f-mono);
   font-size: calc(10px * var(--fs-mul, 1.1) * var(--fs, 1));
 }
@@ -1845,14 +1893,15 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   position: absolute;
   display: flex; flex-direction: column;
   background: var(--panel);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  box-shadow: 0 1px 0 rgba(0,22,74,.04), 0 1px 3px rgba(0,22,74,.06);
   min-width: 380px; min-height: 320px;
   overflow: hidden;
   font-family: var(--f-ui);
   outline: 0;
-  transition: box-shadow 0.2s ease;
-  animation: window-in 0.32s cubic-bezier(.2,.8,.2,1);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  animation: window-in 0.22s cubic-bezier(.2,.8,.2,1);
 }
 /* 右下リサイズグリップ (自前)。 透明な div を絶対配置 + cursor:nwse-resize、
    実際のサイズ変更は js/window.js の mousedown ハンドラで実施。
@@ -1874,52 +1923,50 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   border-bottom-right-radius: var(--radius-lg);
 }
 .agent-window:hover .aw-resize-grip { opacity: 0.7; }
-.agent-window.is-focused { box-shadow: var(--shadow-lg); }
+.agent-window.is-focused {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 4px 14px -4px rgba(0,22,74,.10);
+}
 @keyframes window-in {
   from { opacity: 0; transform: translateY(8px) scale(0.985); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-/* Window head */
+/* Window head — タイル感: 薄い border-bottom だけの細いトップバー。
+   ドラッグはバー全体で受ける (cursor: grab)。 traffic light は廃止。 */
 .aw-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 9px 12px;
+  padding: 7px 10px 7px 11px;
   border-bottom: 1px solid var(--line);
-  background: linear-gradient(180deg, var(--panel-soft) 0%, var(--panel) 100%);
+  background: var(--panel-soft);
+  color: var(--ink-2);
   cursor: grab;
   user-select: none;
+  min-height: 30px;
 }
 .aw-head:active { cursor: grabbing; }
-.aw-head-lh, .aw-head-rh { display: flex; align-items: center; gap: 10px; }
+.aw-head-lh, .aw-head-rh { display: flex; align-items: center; gap: 8px; }
 
-.aw-traffic { display: flex; gap: 5px; margin-right: 4px; }
-.aw-traffic-dot {
-  width: 11px; height: 11px;
-  border-radius: 50%;
-  border: 1px solid rgba(0,0,0,0.1);
-  cursor: pointer;
-}
-.aw-traffic-dot[data-act="close"] { background: #F45D4C; }
-.aw-traffic-dot[data-act="min"]   { background: #F0BB29; }
-.aw-traffic-dot[data-act="max"]   { background: #4BB749; }
-.aw-traffic-dot:hover { filter: brightness(0.92); }
+/* traffic light は使わないので非表示 */
+.aw-traffic { display: none; }
+.aw-traffic-dot { display: none; }
 
 .aw-status-dot {
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--ink-4);
 }
-.aw-status-dot.is-live { background: var(--ok); box-shadow: 0 0 0 3px rgba(31,122,77,0.12); }
+.aw-status-dot.is-live  { background: var(--ok); box-shadow: 0 0 0 3px rgba(13,130,69,0.10); }
 .aw-status-dot.is-error { background: var(--warn); }
 
 .aw-proto-badge {
   font-family: var(--f-mono);
   font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1));
   letter-spacing: 0.08em;
-  color: var(--ink-2);
-  background: var(--paper);
+  color: var(--ink-3);
+  background: var(--panel);
   border: 1px solid var(--line);
-  padding: 2px 6px;
-  border-radius: 3px;
+  padding: 1px 6px;
+  border-radius: 2px;
   text-transform: uppercase;
 }
 .aw-proto-badge[data-proto="a2a"]    { color: var(--accent-ink); background: var(--accent-soft); border-color: #BFE7F5; }
@@ -1929,11 +1976,10 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .aw-title {
   margin: 0;
   font-family: var(--f-display);
-
-  font-size: calc(13px * var(--fs-mul, 1.1) * var(--fs, 1));
+  font-size: calc(12.5px * var(--fs-mul, 1.1) * var(--fs, 1));
   font-weight: 500;
   color: var(--ink-2);
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
   line-height: 1;
 }
 .aw-latency {
@@ -1943,35 +1989,42 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 }
 
 
-/* Tabs */
+/* Tabs — タイル感: 平らな帯に下線で active を示すだけ */
 .aw-tabs {
   display: flex;
-  padding: 0 6px;
+  padding: 0 8px;
   border-bottom: 1px solid var(--line);
-  background: var(--panel-soft);
-  gap: 1px;
+  background: var(--panel);
+  gap: 2px;
 }
 .aw-tab {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 9px 11px 10px;
-  font-size: calc(12px * var(--fs-mul, 1.1) * var(--fs, 1));
+  padding: 8px 10px 9px;
+  font-size: calc(11.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  font-weight: 500;
   color: var(--ink-3);
-  border-bottom: 1.5px solid transparent;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
   margin-bottom: -1px;
-  transition: color 0.15s ease;
-  letter-spacing: -0.005em;
+  letter-spacing: 0;
+  transition: color 0.12s ease, border-color 0.12s ease;
 }
-.aw-tab:hover { color: var(--ink); }
-.aw-tab.is-active { color: var(--ink); border-bottom-color: var(--ink); font-weight: 500; }
-.tab-glyph { font-size: calc(11px * var(--fs-mul, 1.1) * var(--fs, 1)); color: var(--ink-4); }
+.aw-tab:hover { color: var(--ink-2); }
+.aw-tab.is-active {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+.tab-glyph { font-size: calc(10px * var(--fs-mul, 1.1) * var(--fs, 1)); color: var(--ink-4); }
 .aw-tab.is-active .tab-glyph { color: var(--accent); }
 .tab-count {
   font-family: var(--f-mono);
   font-size: calc(9px * var(--fs-mul, 1.1) * var(--fs, 1));
-  color: var(--ink-4);
-  background: var(--line-3);
+  color: var(--ink-3);
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
   padding: 0 5px;
-  border-radius: 100px;
+  border-radius: 2px;
   margin-left: 2px;
 }
 
@@ -2006,7 +2059,7 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   line-height: 1.05;
   text-align: center;
   color: var(--ink);
-  opacity: 0.05;
+  opacity: 0.07;
   user-select: none;
   white-space: nowrap;
   overflow: hidden;
@@ -2018,7 +2071,12 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   flex: 1; min-height: 0;
   overflow-y: auto;
   padding: 22px 22px 8px;
-  display: flex; flex-direction: column; gap: 16px;
+  display: flex; flex-direction: column; gap: 14px;
+  /* 微細なドットグリッドで「紙」感 — 単色べた塗りの「のっぺり」防止 */
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(0, 22, 74, 0.05) 1px, transparent 0);
+  background-size: 18px 18px;
+  background-position: 0 0;
 }
 .chat-meta {
   display: grid;
@@ -2056,10 +2114,11 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   font-size: calc(13px * var(--fs-mul, 1.1) * var(--fs, 1));
   line-height: 1.55;
   color: var(--ink);
-  background: var(--paper);
-  border: 1px solid var(--line-2);
+  background: var(--panel);
+  border: 1px solid var(--line);
   white-space: pre-wrap;
   word-break: break-word;
+  box-shadow: 0 1px 0 rgba(0,22,74, 0.04), 0 1px 3px rgba(0,22,74, 0.05);
 }
 /* markdown 描画完了後 (data-md=1) は <p>/<br> で段落構造ができているので
    pre-wrap を切る (= テキスト中の "\n" を二重改行として処理しない) */
@@ -2072,11 +2131,64 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .msg-body[data-md="1"] p:empty { display: none; }
 .msg-body[data-md="1"] br + br { display: none; }
 
+/* bubble = body + copy ボタンの relative ラップ。 ボタンを body の外に置くことで
+   marked.js が body.innerHTML を書き換えてもボタンが消えない。 */
+.msg-bubble {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+.msg-user .msg-bubble  { align-self: flex-end; }
+.msg-agent .msg-bubble { align-self: flex-start; }
+
+.msg-copy {
+  position: absolute;
+  top: 6px; right: 6px;
+  padding: 2px 7px;
+  font-family: var(--f-mono);
+  font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-1px);
+  transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.msg-bubble:hover .msg-copy,
+.msg-copy:focus-visible { opacity: 1; }
+.msg-copy:hover {
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  background: var(--paper);
+}
+.msg-copy.is-copied {
+  opacity: 1;
+  color: #14834A;
+  border-color: #14834A;
+  background: #E8F6EE;
+}
+/* user バブルは濃色なのでコピーボタンは白系で */
+.msg-user .msg-copy {
+  color: rgba(255,255,255, 0.82);
+  background: rgba(255,255,255, 0.14);
+  border-color: rgba(255,255,255, 0.28);
+}
+.msg-user .msg-copy:hover {
+  color: #fff;
+  background: rgba(255,255,255, 0.22);
+  border-color: rgba(255,255,255, 0.55);
+}
+
 .msg-user { align-self: flex-end; align-items: flex-end; }
 .msg-user .msg-body {
   background: var(--you);
   border-color: var(--you);
   color: var(--you-ink);
+  box-shadow: 0 2px 6px -2px rgba(0,22,74, 0.30), 0 1px 0 rgba(255,255,255, 0.10) inset;
 }
 .msg-agent .msg-body {
   background: var(--panel);
@@ -2195,32 +2307,62 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   0%, 50%   { opacity: 1; }
   50.01%, 100% { opacity: 0; }
 }
+/* system pill: 全幅バブルだと「のっぺり」見えるので、 中央寄せの細いタブ風に */
+.msg-system {
+  align-self: center;
+  max-width: none;
+}
 .msg-system .msg-body {
-  background: var(--accent-soft);
-  border-color: #BFE7F5;
-  color: var(--accent-ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 100px;
+  color: var(--ink-3);
   font-family: var(--f-mono);
-  font-size: calc(11.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  box-shadow: 0 1px 0 rgba(0,22,74, 0.04);
+}
+/* 左に小さな丸ドット */
+.msg-system .msg-body::before {
+  content: "";
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
 }
 
-/* typing: head 無し、ドット吹き出しだけ。intrinsic 幅にして左寄せ */
+/* typing: 通常メッセージと同じく名前は msg-head として枠外に。 ドットのみ枠内。 */
 .msg-typing {
   align-self: flex-start;
+  max-width: 86%;
+}
+.msg-typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 .msg-typing .msg-body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 12px 16px;
+  padding: 11px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: 0 1px 0 rgba(0,22,74, 0.04), 0 1px 3px rgba(0,22,74, 0.05);
 }
-.msg-typing span {
+.msg-typing-dots span {
   width: 7px; height: 7px; border-radius: 50%;
   background: var(--ink-3);
   animation: typing 1.2s ease-in-out infinite;
   flex: 0 0 auto;
 }
-.msg-typing span:nth-child(2) { animation-delay: 0.15s; }
-.msg-typing span:nth-child(3) { animation-delay: 0.3s; }
+.msg-typing-dots span:nth-child(2) { animation-delay: 0.15s; }
+.msg-typing-dots span:nth-child(3) { animation-delay: 0.3s; }
 @keyframes typing {
   0%,60%,100% { transform: translateY(0); opacity: 0.4; }
   30% { transform: translateY(-3px); opacity: 1; }
@@ -3270,8 +3412,9 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
 *::-webkit-scrollbar-thumb { background: var(--line); border-radius: 100px; border: 2px solid transparent; background-clip: padding-box; }
 *::-webkit-scrollbar-thumb:hover { background: var(--ink-4); background-clip: padding-box; border: 2px solid transparent; }
 
-/* Selection state on focus */
-.agent-window.is-focused .aw-head { background: linear-gradient(180deg, #FFFFFF 0%, #F2F6FB 100%); }
+/* unfocused: タイトル文字をやや薄くして「アクティブでない」ことを示す */
+.agent-window:not(.is-focused) .aw-title { color: var(--ink-3); }
+.agent-window:not(.is-focused) .aw-status-dot { opacity: 0.6; }
 
 /* ═══════════════════════════════════════════════════════
    NARROW VIEWPORT (zoom in や 狭い chrome --app ウインドウ)

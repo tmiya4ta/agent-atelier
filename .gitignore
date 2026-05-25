@@ -17,3 +17,6 @@ __pycache__/
 
 # mule build artifact
 target/
+
+# personal handoff notes (per-session scratch)
+/handoffs/

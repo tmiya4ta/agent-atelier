@@ -36,6 +36,9 @@ export function save(state) {
       catalogs:  state.catalogs  || [],
       scripts:   state.scripts   || [],
       selectedScriptId: state.selectedScriptId || null,
+      // 「閉じても残るコネクション登録」。 各 entry は { key, protoId, url, name, auth?, persona?, channel? }。
+      // ウインドウの開閉と独立に存続し、 ユーザが明示的に DELETE しない限り消えない。
+      bookmarks: state.bookmarks || [],
       activeWsIdx: Math.max(0, state.workspaces.findIndex(w => w.id === state.activeWs)),
       workspaces: state.workspaces.map(ws => ({
         name: ws.name,

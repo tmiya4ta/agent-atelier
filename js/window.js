@@ -5,7 +5,7 @@ let zCounter = 10;
 let idCounter = 0;
 
 export class AgentWindow {
-  constructor({ adapter, layer, onClose, onFocus, onChange, instanceSuffix, restore }) {
+  constructor({ adapter, layer, onClose, onFocus, onChange, instanceSuffix, restore, lockName }) {
     this.id = `aw-${++idCounter}`;
     this.adapter = adapter;
     this.layer    = layer;
@@ -21,7 +21,8 @@ export class AgentWindow {
 
     // restore (persisted snapshot or import) の場合、 config.name は意図して付けられた値
     // (ユーザ編集 or import の display name)。 AgentCard 取得時に上書きしないよう lock。
-    if (this.restore && adapter.config.name) this._nameLocked = true;
+    // lockName が明示的に渡された場合 (bookmark 再オープン等) も同様に lock。
+    if ((this.restore || lockName) && adapter.config.name) this._nameLocked = true;
 
     this.debugFrames = [];
     this.debugPaused = false;
@@ -411,9 +412,11 @@ export class AgentWindow {
       clearTimeout(this._typeTimer);
       this._typeTimer = null;
     }
+    // body.parentElement は .msg-bubble (copy ボタンの親)。 dataset 用には .msg まで遡る。
+    const msg = body.closest(".msg") || body.parentElement;
     const current = body.textContent || "";
     const finalize = () => {
-      if (final) body.parentElement.dataset.streaming = "0";
+      if (final) msg.dataset.streaming = "0";
       // Slack: typewriter 完了後に mrkdwn を HTML 化
       if (final && this.protoId === "slack") {
         body.innerHTML = mrkdwnToHtml(fullText);
@@ -440,14 +443,14 @@ export class AgentWindow {
       this._scrollChat();
       return;
     }
-    body.parentElement.dataset.typing = "1";
+    msg.dataset.typing = "1";
     let i = current.length;
     const total = fullText.length;
     const stepSize = total > 400 ? 3 : total > 120 ? 2 : 1;
     const interval = 30;
     const tick = () => {
       if (i >= total) {
-        body.parentElement.dataset.typing = "0";
+        msg.dataset.typing = "0";
         finalize();
         this._typeTimer = null;
         this._scrollChat();
@@ -472,13 +475,14 @@ export class AgentWindow {
     }
     // literal "\n" sequence (script DSL から渡る "\\n") を実改行に正規化
     const normalized = String(fullText).replace(/\\n/g, "\n");
-    body.parentElement.dataset.typing = "1";
+    const msg = body.closest(".msg") || body.parentElement;
+    msg.dataset.typing = "1";
     let i = 0;
     const total = normalized.length;
     const stepSize = total > 400 ? 3 : total > 120 ? 2 : 1;
     const interval = 26;
     const finalize = () => {
-      body.parentElement.dataset.typing = "0";
+      msg.dataset.typing = "0";
       this._userTypeTimer = null;
       // protocol に応じた整形
       if (this.protoId === "slack") {
@@ -515,10 +519,51 @@ export class AgentWindow {
       head.innerHTML = `<span class="msg-author">${escapeHtml(author)}</span><span class="msg-time">${timeStr()}</span>`;
       wrap.appendChild(head);
     }
-    const body = document.createElement("div");
-    body.className = "msg-body";
-    body.textContent = text;
-    wrap.appendChild(body);
+    if (role !== "system") {
+      // bubble = body + copy ボタンを relative ラップ。 body の innerHTML を marked が
+      // 書き換えるので、 ボタンは body の外 (= bubble 直下) に置いて消えないようにする。
+      const bubble = document.createElement("div");
+      bubble.className = "msg-bubble";
+      const body = document.createElement("div");
+      body.className = "msg-body";
+      body.textContent = text;
+      bubble.appendChild(body);
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "msg-copy";
+      btn.title = "Copy message";
+      btn.setAttribute("aria-label", "Copy message");
+      btn.textContent = "copy";
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const src = body.textContent || "";
+        const done = () => {
+          btn.classList.add("is-copied");
+          btn.textContent = "copied";
+          setTimeout(() => {
+            btn.classList.remove("is-copied");
+            btn.textContent = "copy";
+          }, 1200);
+        };
+        if (navigator.clipboard?.writeText) {
+          navigator.clipboard.writeText(src).then(done).catch(() => {
+            fallbackCopy(src);
+            done();
+          });
+        } else {
+          fallbackCopy(src);
+          done();
+        }
+      });
+      bubble.appendChild(btn);
+      wrap.appendChild(bubble);
+    } else {
+      const body = document.createElement("div");
+      body.className = "msg-body";
+      body.textContent = text;
+      wrap.appendChild(body);
+    }
     return wrap;
   }
 
@@ -526,10 +571,18 @@ export class AgentWindow {
     const stream = this.el.querySelector(".chat-stream");
     let t = stream.querySelector(".msg-typing");
     if (on && !t) {
+      const author = this.name || this.adapter.agentCard?.name || "agent";
       const node = document.createElement("div");
       node.className = "msg msg-agent msg-typing";
-      // ドット吹き出しのみ (名前は応答時に msg-head として表示される)
-      node.innerHTML = `<div class="msg-body"><span></span><span></span><span></span></div>`;
+      // 通常のメッセージと同じ構造: 名前は枠の外 (msg-head)、 ドットだけ枠内
+      node.innerHTML = `
+        <div class="msg-head">
+          <span class="msg-author">${escapeHtml(author)}</span>
+        </div>
+        <div class="msg-body">
+          <span class="msg-typing-dots"><span></span><span></span><span></span></span>
+        </div>
+      `;
       stream.appendChild(node);
       this._scrollChat();
     } else if (!on && t) {
@@ -719,6 +772,20 @@ export class AgentWindow {
 }
 
 // ─── helpers ─────────────────────────────────────────────
+// document.execCommand("copy") は Promise を返さないので Clipboard API 失敗時の保険として
+// 一時的な textarea を使った同期コピーを行う。
+function fallbackCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  ta.style.pointerEvents = "none";
+  document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  try { document.execCommand("copy"); } catch {}
+  document.body.removeChild(ta);
+}
+
 function escapeHtml(s) {
   return String(s ?? "")
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
