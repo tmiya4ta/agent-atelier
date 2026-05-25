@@ -1,0 +1,580 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:a2a="http://www.mulesoft.org/schema/mule/a2a"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:jmx="http://www.mulesoft.org/schema/mule/jmx"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+          http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+          http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+          http://www.mulesoft.org/schema/mule/a2a http://www.mulesoft.org/schema/mule/a2a/current/mule-a2a.xsd
+          http://www.mulesoft.org/schema/mule/jmx http://www.mulesoft.org/schema/mule/jmx/current/mule-jmx.xsd
+          http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <configuration-properties file="config.properties"/>
+
+    <http:listener-config name="HTTP_Listener_config">
+        <http:listener-connection host="0.0.0.0" port="${http.listener.port}"/>
+    </http:listener-config>
+
+    <a2a:server-config name="A2A_Server_config">
+        <a2a:connection listenerConfig="HTTP_Listener_config" agentPath="${a2a.path}"/>
+        <a2a:agent-card>
+            <a2a:json><![CDATA[{
+  "protocolVersion": "0.3.0",
+  "name": "atelier-legal-agent",
+  "description": "法務担当 AI エージェント (Atelier 用 同期 A2A 版)。Slack を介さず、Atelier の chat 入力をそのまま受けて LLM tool-use ループ (contract-mcp / mdm-mcp) を回し、統合サマリを A2A Task response で返す。",
+  "url": "${agent.public.url}",
+  "version": "1.0.0",
+  "preferredTransport": "JSONRPC",
+  "capabilities": { "streaming": false, "pushNotifications": false, "stateTransitionHistory": false },
+  "defaultInputModes": ["text/plain", "application/json"],
+  "defaultOutputModes": ["text/plain", "application/json"],
+  "skills": [
+    {
+      "id": "legal_handle_incident",
+      "name": "法務インシデント対応 (LLM tool-use)",
+      "description": "サプライヤー品質インシデント連絡を自然文で受け取り、品質保証協定書照会 / 返品要求書発行 / ペナルティ通知 / リスクスコア更新 / KG 記録を LLM の tool-use ループで実施し、Slack 投稿用フォーマットの統合サマリを返す。",
+      "examples": [
+        "関西部品 (G-KANSAI-PARTS-001) の P-2024-KAN-001 で不良率15% (500個) が出た。HIGH severity でインシデント INC-2026-0521 として法務対応してほしい。"
+      ],
+      "inputModes": ["text/plain", "application/json"],
+      "outputModes": ["text/plain", "application/json"],
+      "tags": ["legal", "contract", "penalty", "risk"]
+    }
+  ]
+}]]></a2a:json>
+        </a2a:agent-card>
+    </a2a:server-config>
+
+    <http:request-config name="LLM_Request_config" basePath="/" responseTimeout="${llm.timeout}">
+        <http:request-connection host="openai-proxy.demos.mulesoft.com"
+                                 port="443"
+                                 protocol="HTTPS"/>
+        <http:default-headers>
+            <http:default-header key="Authorization" value="Basic ${llm.token}"/>
+            <http:default-header key="Content-Type" value="application/json; charset=utf-8"/>
+        </http:default-headers>
+    </http:request-config>
+
+    <http:request-config name="Contract_MCP_Request_config" basePath="/">
+        <http:request-connection host="${mcp.contract.host}"
+                                 port="${mcp.contract.port}"
+                                 protocol="${mcp.contract.protocol}"/>
+    </http:request-config>
+
+    <http:request-config name="MDM_MCP_Request_config" basePath="/">
+        <http:request-connection host="${mcp.mdm.host}"
+                                 port="${mcp.mdm.port}"
+                                 protocol="${mcp.mdm.protocol}"/>
+    </http:request-config>
+
+    <jmx:config name="JMX_Config" logBufferSize="5000"/>
+
+    <!-- ============================================================
+         A2A task listener — sync entry point. Atelier sends message/send,
+         we run the LLM tool-use loop and respond with vars.taskJson.
+         ============================================================ -->
+    <flow name="legalAgentTaskFlow">
+        <a2a:task-listener config-ref="A2A_Server_config">
+            <a2a:response>
+                <a2a:response>#[vars.taskJson]</a2a:response>
+            </a2a:response>
+        </a2a:task-listener>
+
+        <logger level="INFO"
+                message="#['atelier-legal-agent A2A task received. method=' ++ (attributes.jsonRpcMethod default '?') ++ ' taskId=' ++ (attributes.taskId default '?')]"/>
+
+        <ee:transform doc:name="extract user text + task ids">
+            <ee:variables>
+                <ee:set-variable variableName="taskId"><![CDATA[%dw 2.0
+output application/java
+---
+((attributes.taskId default (now() as String)) as String)]]></ee:set-variable>
+                <ee:set-variable variableName="contextId"><![CDATA[%dw 2.0
+output application/java
+---
+((attributes.contextId default "") as String)]]></ee:set-variable>
+                <ee:set-variable variableName="userText"><![CDATA[%dw 2.0
+output application/java
+var msg = if (payload is String) read(payload, "application/json") else payload
+---
+(((msg.message.parts default [])[0].text default "") as String)]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <try doc:name="agent loop (best effort)">
+            <flow-ref name="initAgentStateFlow"/>
+            <flow-ref name="agentLoopFlow"/>
+            <error-handler>
+                <on-error-continue type="ANY">
+                    <logger level="WARN"
+                            message="#['Agent loop failed: ' ++ (error.description default error.message default 'unknown')]"/>
+                    <ee:transform doc:name="build error text">
+                        <ee:variables>
+                            <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"⚠️ atelier-legal-agent: Agent ループ中にエラーが発生しました。\n" ++
+"  " ++ ((error.description default (error.message default "unknown")) as String)]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                </on-error-continue>
+            </error-handler>
+        </try>
+
+        <ee:transform doc:name="prepare reply text">
+            <ee:variables>
+                <ee:set-variable variableName="replyText"><![CDATA[%dw 2.0
+output application/java
+var t = ((vars.finalText default "") as String)
+---
+if (t == "")
+  "ℹ️ atelier-legal-agent: 結論を生成できませんでした (loops=" ++ ((vars.loopCount default 0) as String) ++ ")"
+else t]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <ee:transform doc:name="build A2A Task response">
+            <ee:variables>
+                <ee:set-variable variableName="taskJson"><![CDATA[%dw 2.0
+output application/json
+---
+{
+  id: vars.taskId,
+  contextId: vars.contextId,
+  kind: "task",
+  status: {
+    state: "completed",
+    message: {
+      role: "agent",
+      kind: "message",
+      messageId: (now() as String) ++ "-" ++ vars.taskId,
+      parts: [
+        { kind: "text", text: vars.replyText default "" }
+      ]
+    },
+    timestamp: now() as String { format: "yyyy-MM-dd'T'HH:mm:ss'Z'" }
+  }
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+    </flow>
+
+    <!-- Health -->
+    <flow name="healthFlow">
+        <http:listener config-ref="HTTP_Listener_config" path="/health"/>
+        <ee:transform>
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ status: "UP", app: "atelier-legal-agent" }]]></ee:set-payload></ee:message>
+        </ee:transform>
+    </flow>
+
+    <flow name="debugLogsFlow">
+        <http:listener config-ref="HTTP_Listener_config" path="/debug/logs"/>
+        <jmx:get-recent-logs config-ref="JMX_Config"
+                             lines="#[(attributes.queryParams.lines default 200) as Number]"
+                             level="#[attributes.queryParams.level default null]"
+                             pattern="#[attributes.queryParams.pattern default null]"/>
+    </flow>
+
+    <!-- ============================================================
+         initAgentStateFlow — seed messages[] + tools[] + counters
+         (sysPrompt and tools are identical to step2/legal-agent;
+         the user message is vars.userText from the A2A part instead of
+         vars.evText from a Slack envelope.)
+         ============================================================ -->
+    <sub-flow name="initAgentStateFlow">
+        <ee:transform doc:name="seed messages, tools, counters">
+            <ee:variables>
+                <ee:set-variable variableName="loopCount"><![CDATA[%dw 2.0
+output application/java
+---
+0]]></ee:set-variable>
+                <ee:set-variable variableName="finishReason"><![CDATA[%dw 2.0
+output application/java
+---
+""]]></ee:set-variable>
+                <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+""]]></ee:set-variable>
+                <ee:set-variable variableName="actionsLog"><![CDATA[%dw 2.0
+output application/java
+---
+[]]]></ee:set-variable>
+                <ee:set-variable variableName="messages"><![CDATA[%dw 2.0
+output application/java
+var sysPrompt =
+"あなたは法務担当の AI アシスタント (atelier-legal-agent) です。\n" ++
+"ユーザーから来たインシデント連絡をもとに、必要に応じて以下のツールを呼び出し、法務対応を完了させてください:\n" ++
+"  1) resolve_supplier (mdm-mcp): サプライヤー名 → ゴールデン ID\n" ++
+"  2) get_supplier_relations (mdm-mcp): 過去インシデント・取引先関係\n" ++
+"  3) get_quality_agreement (contract-mcp): 品質保証協定書 (条項・ペナルティ上限)\n" ++
+"  4) generate_return_request (contract-mcp): 返品要求書 (requestId 採番)\n" ++
+"  5) send_penalty_notice (contract-mcp): ペナルティ通知書 (noticeId 採番)\n" ++
+"  6) update_supplier_risk_score (mdm-mcp): リスクスコア更新 (品質問題が確認できたら 0..1 で上げる)\n" ++
+"  7) update_ontology (mdm-mcp): KG にトリプル記録\n\n" ++
+"進め方:\n" ++
+"  1. resolve_supplier で取引先をゴールデン ID に解決\n" ++
+"  2. get_quality_agreement で品質保証協定書の該当条項を確認\n" ++
+"  3. 必要なら generate_return_request + send_penalty_notice を実行 (協定書のペナルティ上限を超えないこと)\n" ++
+"  4. 品質問題が裏付けられたら update_supplier_risk_score でリスクを引き上げる\n" ++
+"  5. 最後に update_ontology で経緯をトリプル記録\n\n" ++
+"全ての必要ツールを呼び終えたら、Atelier に返す統合サマリ (Markdown 短文・5〜10 行) を返してください。\n" ++
+"次のフォーマットで:\n" ++
+"  ⚖️ legal-agent: <一言サマリ>\n" ++
+"  - 取引先: <name> (<goldenId>)\n" ++
+"  - 該当条項: <clause> (上限 ¥<penaltyCap>)\n" ++
+"  - 返品要求: <requestId>\n" ++
+"  - ペナルティ通知: <noticeId> ¥<amount>\n" ++
+"  - リスクスコア更新: <previous> → <new>"
+---
+[
+  { role: "system", content: sysPrompt },
+  { role: "user",   content: (vars.userText default "") as String }
+]]]></ee:set-variable>
+                <ee:set-variable variableName="tools"><![CDATA[%dw 2.0
+output application/java
+---
+[
+  { "type": "function", "function": {
+      name: "resolve_supplier",
+      description: "サプライヤー名/ヒントから ゴールデン ID を解決する",
+      parameters: {
+        "type": "object",
+        properties: {
+          supplierName: { "type": "string" },
+          hint:         { "type": "string" }
+        },
+        required: ["supplierName"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "get_supplier_relations",
+      description: "ゴールデン ID から親会社・子会社・過去インシデント・代替部品候補を取得",
+      parameters: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          depth:            { "type": "integer" }
+        },
+        required: ["supplierGoldenId"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "update_supplier_risk_score",
+      description: "サプライヤーのリスクスコア (0..1) を更新する",
+      parameters: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          riskScore:        { "type": "number" },
+          reason:           { "type": "string" },
+          incidentId:       { "type": "string" }
+        },
+        required: ["supplierGoldenId", "riskScore"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "update_ontology",
+      description: "KG に subject/predicate/object のトリプルを記録",
+      parameters: {
+        "type": "object",
+        properties: {
+          subject:    { "type": "string" },
+          predicate:  { "type": "string" },
+          "object":   { "type": "string" },
+          incidentId: { "type": "string" }
+        },
+        required: ["subject", "predicate", "object"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "get_quality_agreement",
+      description: "サプライヤーの品質保証協定書サマリ (条項・ペナルティ上限) を取得",
+      parameters: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          partNumber:       { "type": "string" }
+        },
+        required: ["supplierGoldenId"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "generate_return_request",
+      description: "返品要求書を生成する。requestId を返す",
+      parameters: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          partNumber:       { "type": "string" },
+          incidentId:       { "type": "string" },
+          quantity:         { "type": "integer" },
+          reason:           { "type": "string" }
+        },
+        required: ["supplierGoldenId", "partNumber", "incidentId"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "send_penalty_notice",
+      description: "ペナルティ通知書を送付する。noticeId を返す",
+      parameters: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          incidentId:       { "type": "string" },
+          amount:           { "type": "number" },
+          currency:         { "type": "string" }
+        },
+        required: ["supplierGoldenId", "incidentId", "amount"]
+      }
+  }}
+]]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+    </sub-flow>
+
+    <!-- ============================================================
+         agentLoopFlow — bounded foreach (max_loops iterations).
+         ============================================================ -->
+    <sub-flow name="agentLoopFlow">
+        <ee:transform doc:name="seed loop range">
+            <ee:variables>
+                <ee:set-variable variableName="loopRange"><![CDATA[%dw 2.0
+output application/java
+---
+1 to (p('agent.max_loops') as Number)]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <foreach collection="#[vars.loopRange]" doc:name="bounded loop">
+            <choice doc:name="terminate early?">
+                <when expression="#[(vars.finishReason default '') == 'stop' or (vars.finishReason default '') == 'length' or (vars.finishReason default '') == 'content_filter']">
+                    <logger level="INFO" message="#['Skipping iter ' ++ (payload as String) ++ ' (finishReason=' ++ (vars.finishReason default '') ++ ')']"/>
+                </when>
+                <otherwise>
+                    <ee:transform doc:name="loopCount = current iteration">
+                        <ee:variables>
+                            <ee:set-variable variableName="loopCount"><![CDATA[%dw 2.0
+output application/java
+---
+((payload default 0) - 1) as Number]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                    <flow-ref name="agentInferenceFlow"/>
+                    <flow-ref name="agentExecuteToolsFlow"/>
+                </otherwise>
+            </choice>
+        </foreach>
+        <logger level="INFO" message="#['Agent loop done. iterations=' ++ (vars.loopCount as String) ++ ' finishReason=' ++ (vars.finishReason default '')]"/>
+    </sub-flow>
+
+    <!-- ============================================================
+         agentInferenceFlow — POST /chat/completions, capture assistant
+         ============================================================ -->
+    <sub-flow name="agentInferenceFlow">
+        <ee:transform doc:name="build chat/completions body">
+            <ee:variables>
+                <ee:set-variable variableName="llmBody"><![CDATA[%dw 2.0
+output application/json
+---
+{
+  model:       (p('llm.model') default "gpt-5-mini") as String,
+  max_completion_tokens:  (p('llm.max_tokens') default 2048) as Number,
+  messages:    vars.messages default [],
+  tools:       vars.tools default [],
+  tool_choice: "auto"
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <http:request method="POST" path="/openai/v1/chat/completions" config-ref="LLM_Request_config" doc:name="POST LLM /chat/completions">
+            <http:body>#[vars.llmBody]</http:body>
+            <http:response-validator>
+                <http:success-status-code-validator values="0..599"/>
+            </http:response-validator>
+        </http:request>
+
+        <ee:transform doc:name="capture assistant + finishReason">
+            <ee:variables>
+                <ee:set-variable variableName="assistantMsg"><![CDATA[%dw 2.0
+output application/java
+---
+(((payload default {}).choices default [])[0].message) default { role: "assistant", content: "" }]]></ee:set-variable>
+                <ee:set-variable variableName="finishReason"><![CDATA[%dw 2.0
+output application/java
+---
+((((payload default {}).choices default [])[0].finish_reason) default "") as String]]></ee:set-variable>
+                <ee:set-variable variableName="messages"><![CDATA[%dw 2.0
+output application/java
+---
+(vars.messages default []) ++ [(((payload default {}).choices default [])[0].message) default { role: "assistant", content: "" }]]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <choice doc:name="finished?">
+            <when expression="#[(vars.finishReason default '') == 'stop']">
+                <ee:transform doc:name="capture final text">
+                    <ee:variables>
+                        <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+((vars.assistantMsg.content default "") as String)]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </when>
+            <otherwise>
+                <logger level="INFO" message="#['Loop iter=' ++ (vars.loopCount as String) ++ ' finishReason=' ++ (vars.finishReason default '') ++ ' tool_calls=' ++ ((sizeOf(vars.assistantMsg.tool_calls default []) as String))]"/>
+            </otherwise>
+        </choice>
+    </sub-flow>
+
+    <!-- ============================================================
+         agentExecuteToolsFlow — call MCP for each tool_call
+         ============================================================ -->
+    <sub-flow name="agentExecuteToolsFlow">
+        <choice doc:name="any tool_calls?">
+            <when expression="#[sizeOf((vars.assistantMsg.tool_calls default [])) == 0]">
+                <logger level="INFO" message="No tool_calls in assistant message"/>
+            </when>
+            <otherwise>
+                <foreach collection="#[vars.assistantMsg.tool_calls default []]" doc:name="for each tool_call">
+                    <ee:transform doc:name="capture tool_call">
+                        <ee:variables>
+                            <ee:set-variable variableName="toolCallId"><![CDATA[%dw 2.0
+output application/java
+---
+((payload."id" default "") as String)]]></ee:set-variable>
+                            <ee:set-variable variableName="toolName"><![CDATA[%dw 2.0
+output application/java
+---
+((payload.function.name default "") as String)]]></ee:set-variable>
+                            <ee:set-variable variableName="toolArgsRaw"><![CDATA[%dw 2.0
+output application/java
+---
+((payload.function.arguments default "{}") as String)]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                    <ee:transform doc:name="parse args + map MCP">
+                        <ee:variables>
+                            <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+---
+read((vars.toolArgsRaw default "{}") as String, "application/json")]]></ee:set-variable>
+                            <ee:set-variable variableName="mcpKind"><![CDATA[%dw 2.0
+output application/java
+var n = (vars.toolName default "") as String
+---
+if (n == "resolve_supplier" or n == "get_supplier_relations" or n == "update_supplier_risk_score" or n == "update_ontology") "mdm"
+else if (n == "get_quality_agreement" or n == "generate_return_request" or n == "send_penalty_notice") "contract"
+else "unknown"]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                    <flow-ref name="callMcpExecuteFlow"/>
+                    <ee:transform doc:name="append tool result message">
+                        <ee:variables>
+                            <ee:set-variable variableName="messages"><![CDATA[%dw 2.0
+output application/java
+---
+(vars.messages default []) ++ [{
+  role: "tool",
+  tool_call_id: (vars.toolCallId default "") as String,
+  content: write((vars.toolResult default {}), "application/json") as String
+}]]]></ee:set-variable>
+                            <ee:set-variable variableName="actionsLog"><![CDATA[%dw 2.0
+output application/java
+---
+(vars.actionsLog default []) ++ [{
+  tool: (vars.toolName default "") as String,
+  result: (vars.toolResult default {})
+}]]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                </foreach>
+            </otherwise>
+        </choice>
+    </sub-flow>
+
+    <!-- ============================================================
+         callMcpExecuteFlow — POST /mcp/execute on the right MCP backend
+         ============================================================ -->
+    <sub-flow name="callMcpExecuteFlow">
+        <ee:transform doc:name="build /mcp/execute body">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  toolName: (vars.toolName default "") as String,
+  "input":  (vars.toolArgs default {})
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+
+        <try>
+            <choice doc:name="dispatch by mcpKind">
+                <when expression="#[(vars.mcpKind default '') == 'mdm']">
+                    <http:request method="POST" path="/mcp/execute" config-ref="MDM_MCP_Request_config" doc:name="POST mdm-mcp /mcp/execute">
+                        <http:body>#[payload]</http:body>
+                        <http:response-validator>
+                            <http:success-status-code-validator values="0..599"/>
+                        </http:response-validator>
+                    </http:request>
+                </when>
+                <when expression="#[(vars.mcpKind default '') == 'contract']">
+                    <http:request method="POST" path="/mcp/execute" config-ref="Contract_MCP_Request_config" doc:name="POST contract-mcp /mcp/execute">
+                        <http:body>#[payload]</http:body>
+                        <http:response-validator>
+                            <http:success-status-code-validator values="0..599"/>
+                        </http:response-validator>
+                    </http:request>
+                </when>
+                <otherwise>
+                    <ee:transform doc:name="UNKNOWN_TOOL synth">
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ status: "error", tool: (vars.toolName default "") as String, result: { code: "UNKNOWN_TOOL", message: "no MCP for tool: " ++ (vars.toolName default "") } }]]></ee:set-payload>
+                        </ee:message>
+                    </ee:transform>
+                </otherwise>
+            </choice>
+            <error-handler>
+                <on-error-continue type="ANY">
+                    <ee:transform>
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ status: "error", tool: (vars.toolName default "") as String, result: { code: "MCP_CALL_FAILED", message: (error.description default error.message default "unknown") as String } }]]></ee:set-payload>
+                        </ee:message>
+                    </ee:transform>
+                    <logger level="WARN"
+                            message="#['MCP call failed kind=' ++ (vars.mcpKind default '') ++ ' tool=' ++ (vars.toolName default '') ++ ' err=' ++ (error.description default error.message default 'unknown')]"/>
+                </on-error-continue>
+            </error-handler>
+        </try>
+
+        <ee:transform doc:name="capture toolResult">
+            <ee:variables>
+                <ee:set-variable variableName="toolResult"><![CDATA[%dw 2.0
+output application/java
+fun safeReadJson(s: String) =
+  if (s == null or trim(s) == "") {}
+  else read(s, "application/json")
+---
+if (payload == null) {}
+else if (payload is Binary) safeReadJson(payload as String { encoding: "UTF-8" })
+else if (payload is String) safeReadJson(payload as String)
+else payload]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+    </sub-flow>
+
+</mule>
