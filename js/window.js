@@ -19,6 +19,10 @@ export class AgentWindow {
     this.protoLabel = adapter.constructor.label;
     this.name = adapter.config.name || adapter.config.url || "Unnamed";
 
+    // restore (persisted snapshot or import) の場合、 config.name は意図して付けられた値
+    // (ユーザ編集 or import の display name)。 AgentCard 取得時に上書きしないよう lock。
+    if (this.restore && adapter.config.name) this._nameLocked = true;
+
     this.debugFrames = [];
     this.debugPaused = false;
     this.startedAt = Date.now();
@@ -113,6 +117,13 @@ export class AgentWindow {
 
     // Settings pane content (static for now)
     this._renderSettings();
+
+    // 右下リサイズグリップ
+    const grip = document.createElement("div");
+    grip.className = "aw-resize-grip";
+    grip.title = "Drag to resize";
+    grip.addEventListener("mousedown", (e) => this._beginResize(e));
+    node.appendChild(grip);
 
     this.layer.appendChild(node);
     this.focus();
@@ -257,6 +268,36 @@ export class AgentWindow {
     window.addEventListener("mouseup", onUp);
   }
 
+  // 右下グリップでリサイズ。 mousedown 時の rect を起点にして delta で width/height を伸縮。
+  _beginResize(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    this.focus();
+    const startX = e.clientX, startY = e.clientY;
+    const startW = this.el.offsetWidth;
+    const startH = this.el.offsetHeight;
+    const minW = parseInt(getComputedStyle(this.el).minWidth, 10) || 380;
+    const minH = parseInt(getComputedStyle(this.el).minHeight, 10) || 320;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "nwse-resize";
+
+    const onMove = (ev) => {
+      const w = Math.max(minW, startW + (ev.clientX - startX));
+      const h = Math.max(minH, startH + (ev.clientY - startY));
+      this.el.style.width  = w + "px";
+      this.el.style.height = h + "px";
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      this.onChange?.();
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
   // ───────────────────────────────────────────
   // Chat
   // ───────────────────────────────────────────
@@ -269,10 +310,14 @@ export class AgentWindow {
     this.sendProgrammatic(text);
   }
 
-  // Script から呼び出される。chat-stream を空にする
+  // Script から呼び出される。chat-stream を空にする + adapter の contextId を reroll
+  // (= サーバ側 memory との紐付けを切って、次のターンから初対面扱い)
   clearChat() {
     const stream = this.el.querySelector(".chat-stream");
     if (stream) stream.innerHTML = "";
+    if (typeof this.adapter.resetContext === "function") {
+      this.adapter.resetContext();
+    }
   }
 
   // Script から呼び出される。返り値は adapter.send の Promise
@@ -348,7 +393,10 @@ export class AgentWindow {
     if (last?.classList.contains("msg-agent") && last?.dataset.streaming === "1") {
       body = last.querySelector(".msg-body");
     } else {
-      const node = this._renderMsg("agent", this.adapter.agentCard?.name || this.name, "");
+      // display name (this.name) を優先。ユーザが import / settings で付けた日本語名が
+      // あればそれを使い、無い時だけ AgentCard.name にフォールバック。
+      const author = this.name || this.adapter.agentCard?.name || "agent";
+      const node = this._renderMsg("agent", author, "");
       node.dataset.streaming = "1";
       stream.appendChild(node);
       body = node.querySelector(".msg-body");
@@ -369,12 +417,17 @@ export class AgentWindow {
       // Slack: typewriter 完了後に mrkdwn を HTML 化
       if (final && this.protoId === "slack") {
         body.innerHTML = mrkdwnToHtml(fullText);
+        body.dataset.md = "1";
       }
       // a2a: Markdown (GFM) を HTML 化
+      // breaks:false にして "\n" 1 つは段落内改行扱い (= 詰める)、空行のみ段落分け。
+      // pre-wrap と <br> の二重改行を避けるため md 完了で data-md=1 を立てて
+      // white-space: normal に切替 (CSS 側で扱う)。
       else if (final && this.protoId === "a2a" && window.marked) {
         try {
-          window.marked.setOptions({ gfm: true, breaks: true });
+          window.marked.setOptions({ gfm: true, breaks: false });
           body.innerHTML = window.marked.parse(fullText);
+          body.dataset.md = "1";
         } catch (e) {
           // fallback to plain text on parse error
           console.warn("[window] marked.parse failed:", e);
@@ -409,27 +462,43 @@ export class AgentWindow {
     tick();
   }
 
-  // user 側の typewriter (agent と同じ感覚で少し速め)
+  // user 側の typewriter (agent と同じ感覚で少し速め)。 typewriter 中は textContent
+  // (literal \n を含む input が改行に見えるよう pre-line で表示) で逐次表示し、 完了後に
+  // protocol に応じた markdown / mrkdwn 整形を innerHTML で適用する。
   _typewriteUser(body, fullText) {
     if (this._userTypeTimer) {
       clearTimeout(this._userTypeTimer);
       this._userTypeTimer = null;
     }
+    // literal "\n" sequence (script DSL から渡る "\\n") を実改行に正規化
+    const normalized = String(fullText).replace(/\\n/g, "\n");
     body.parentElement.dataset.typing = "1";
     let i = 0;
-    const total = fullText.length;
+    const total = normalized.length;
     const stepSize = total > 400 ? 3 : total > 120 ? 2 : 1;
     const interval = 26;
-    const tick = () => {
-      if (i >= total) {
-        body.parentElement.dataset.typing = "0";
-        if (this.protoId === "slack") body.innerHTML = mrkdwnToHtml(fullText);
-        this._userTypeTimer = null;
-        this._scrollChat();
-        return;
+    const finalize = () => {
+      body.parentElement.dataset.typing = "0";
+      this._userTypeTimer = null;
+      // protocol に応じた整形
+      if (this.protoId === "slack") {
+        body.innerHTML = mrkdwnToHtml(normalized);
+        body.dataset.md = "1";
+      } else if (this.protoId === "a2a" && window.marked) {
+        try {
+          window.marked.setOptions({ gfm: true, breaks: false });
+          body.innerHTML = window.marked.parse(normalized);
+          body.dataset.md = "1";
+        } catch (e) {
+          console.warn("[window] marked.parse (user) failed:", e);
+        }
       }
+      this._scrollChat();
+    };
+    const tick = () => {
+      if (i >= total) { finalize(); return; }
       const next = Math.min(i + stepSize, total);
-      body.textContent = fullText.slice(0, next);
+      body.textContent = normalized.slice(0, next);
       i = next;
       this._scrollChat();
       this._userTypeTimer = setTimeout(tick, interval);

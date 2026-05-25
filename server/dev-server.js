@@ -107,6 +107,11 @@ function serveStatic(req, res) {
       res.setHeader("Content-Type", MIME[ext] || "application/octet-stream");
       res.setHeader("Content-Length", st2.size);
       setCors(res); setNoCache(res);
+      if (req.method === "HEAD") {
+        res.end();
+        log(req, 200, p.replace(ROOT, "") + " (head)");
+        return;
+      }
       const stream = fs.createReadStream(p);
       stream.on("error", () => { try { res.end(); } catch {} });
       stream.pipe(res);
@@ -203,7 +208,7 @@ const server = http.createServer(async (req, res) => {
   if (req.url.startsWith("/proxy")) {
     return handleProxy(req, res);
   }
-  if (req.method === "GET") return serveStatic(req, res);
+  if (req.method === "GET" || req.method === "HEAD") return serveStatic(req, res);
   sendError(req, res, 404, "not found");
 });
 

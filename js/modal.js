@@ -81,6 +81,63 @@ export function modalAlert(opts) {
   return _show({ kind: "alert", ...opts });
 }
 
+// modalChoice — 複数選択モーダル
+//   await modalChoice({ title, message?, choices: [{ id, label, description?, danger? }] })
+//     → 選択した choice.id (Cancel/Esc は null)
+export function modalChoice({ title, message, choices = [], cancelLabel } = {}) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement("div");
+    wrap.className = "modal-backdrop";
+    const buttons = choices.map((c, i) => `
+      <button type="button" class="primary-btn modal-choice${c.danger ? " is-danger" : ""}" data-choice-id="${escapeHtml(c.id)}" data-choice-idx="${i}">
+        <span class="modal-choice-main">
+          <span class="modal-choice-label">${escapeHtml(c.label)}</span>
+          ${c.description ? `<span class="modal-choice-desc">${escapeHtml(c.description)}</span>` : ""}
+        </span>
+        <span class="arrow">→</span>
+      </button>
+    `).join("");
+    wrap.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true">
+        <header class="modal-head">
+          <span class="modal-eyebrow">choose</span>
+          <h3 class="modal-title">${escapeHtml(title || "Choose an option")}</h3>
+        </header>
+        ${message ? `<div class="modal-body"><p class="modal-msg">${escapeHtml(message)}</p></div>` : ""}
+        <footer class="modal-foot modal-foot-stack">
+          <div class="modal-choices">${buttons}</div>
+          <div class="modal-foot-actions">
+            <button type="button" class="ghost-btn modal-cancel">${escapeHtml(cancelLabel || "Cancel")}</button>
+          </div>
+        </footer>
+      </div>
+    `;
+    document.body.appendChild(wrap);
+    requestAnimationFrame(() => wrap.classList.add("is-open"));
+
+    const close = (result) => {
+      wrap.classList.remove("is-open");
+      setTimeout(() => wrap.remove(), 220);
+      if (_stackKeyHandler === onKey) {
+        document.removeEventListener("keydown", onKey, true);
+        _stackKeyHandler = null;
+      }
+      resolve(result);
+    };
+    wrap.querySelectorAll(".modal-choice").forEach(btn => {
+      btn.addEventListener("click", () => close(btn.dataset.choiceId));
+    });
+    wrap.querySelector(".modal-cancel").addEventListener("click", () => close(null));
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(null); }
+    };
+    document.addEventListener("keydown", onKey, true);
+    _stackKeyHandler = onKey;
+
+    setTimeout(() => wrap.querySelector(".modal-choice")?.focus(), 50);
+  });
+}
+
 // modalPrompt — 1 行入力モーダル
 //   await modalPrompt({ title, label?, placeholder?, defaultValue?, confirmLabel? })
 //     → 入力文字列 (Cancel/Esc は null)

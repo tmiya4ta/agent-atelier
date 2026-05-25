@@ -22,6 +22,16 @@ export class A2AAdapter extends ProtocolAdapter {
     this.endpoint = normalizeUrl(config.url);
     this.rpcUrl   = null;
     this.turn = 0;
+    // contextId — A2A 0.3 の会話 ID。 サーバ側で会話履歴 (memory) を保つ識別子。
+    // clearChat で reroll することで「忘れる」を表現する。
+    this.contextId = uuid();
+  }
+
+  // 履歴クリアからのフック (window.js から呼ぶ)。 contextId を新しい値に振り直すと
+  // サーバ側の memory が紐付かなくなり、 次のターンから初対面扱いになる。
+  resetContext() {
+    this.contextId = uuid();
+    this.turn = 0;
   }
 
   async connect() {
@@ -87,7 +97,8 @@ export class A2AAdapter extends ProtocolAdapter {
           kind: "message",                    // A2A 0.3+ で discriminator として必須
           role: "user",
           parts: [{ kind: "text", text }],
-          messageId: uuid()
+          messageId: uuid(),
+          contextId: this.contextId           // server-side memory key
         },
         configuration: {}
       }

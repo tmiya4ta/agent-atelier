@@ -5,7 +5,7 @@
 import { PROTOCOLS, getProtocol }           from "./protocols/index.js";
 import { AgentWindow }                      from "./window.js";
 import * as persist                         from "./persist.js";
-import { modalConfirm, modalAlert, modalPrompt } from "./modal.js";
+import { modalConfirm, modalAlert, modalPrompt, modalChoice } from "./modal.js";
 import { runAuthCodeFlow, redirectUri }     from "./oauth.js";
 import { parseScript, ScriptRunner }        from "./script.js";
 
@@ -319,6 +319,7 @@ function renderTabs() {
     if (ws.id === state.activeWs) tab.classList.add("is-active");
     if (ws.windows.length > 0)    tab.classList.add("has-windows");
     tab.dataset.wsId = ws.id;
+    tab.title = "Double-click to rename";
     tab.innerHTML = `
       <span class="ws-tab-dot"></span>
       <span class="ws-tab-name">${escapeHtml(ws.name)}</span>
@@ -333,7 +334,10 @@ function renderTabs() {
         removeWorkspace(ws.id);
         return;
       }
-      switchWorkspace(ws.id);
+      // 既に active な tab を click した場合は switchWorkspace を呼ばない。
+      // 呼ぶと renderTabs() が走って tab DOM が再生成され、 続く dblclick が
+      // 発火しなくなるため (dblclick は同一 DOM への 2 連 click を要求)。
+      if (ws.id !== state.activeWs) switchWorkspace(ws.id);
     });
     tab.addEventListener("dblclick", (e) => {
       if (e.target.closest(".ws-tab-close")) return;
@@ -2196,7 +2200,21 @@ function wireBackup() {
     }
   });
 
-  $("#btnImport").addEventListener("click", () => $("#importFile").click());
+  $("#btnImport").addEventListener("click", async () => {
+    const choice = await modalChoice({
+      title: "Import scenario",
+      message: "Load a saved snapshot. This replaces the current connections, catalogs and scripts.",
+      choices: [
+        { id: "file", label: "From file…", description: "Pick a .json file from this device" },
+        { id: "url",  label: "From URL…",  description: "Fetch a JSON snapshot over HTTP(S)" }
+      ]
+    });
+    if (choice === "file") {
+      $("#importFile").click();
+    } else if (choice === "url") {
+      await importFromUrlFlow();
+    }
+  });
 
   $("#importFile").addEventListener("change", async (e) => {
     const file = e.target.files?.[0];
@@ -2219,6 +2237,59 @@ function wireBackup() {
   });
 }
 
+// ─── URL から import ─────────────────────────────────────
+const IMPORT_URL_HISTORY_KEY = "atelier:importUrlHistory:v1";
+function loadImportUrlHistory() {
+  try { return JSON.parse(localStorage.getItem(IMPORT_URL_HISTORY_KEY) || "[]"); }
+  catch { return []; }
+}
+function saveImportUrlHistory(list) {
+  try { localStorage.setItem(IMPORT_URL_HISTORY_KEY, JSON.stringify(list.slice(0, 5))); } catch {}
+}
+async function importFromUrlFlow() {
+  const history = loadImportUrlHistory();
+  const placeholder = history[0] || "https://example.com/scenarios/scrs-step2.json";
+  const url = await modalPrompt({
+    title:        "Import from URL",
+    label:        "JSON snapshot URL",
+    placeholder,
+    defaultValue: history[0] || "",
+    confirmLabel: "Fetch"
+  });
+  if (!url) return;
+  if (!/^https?:\/\//i.test(url)) {
+    await modalAlert({ title: "Invalid URL", message: "URL は http:// または https:// で始めてください。" });
+    return;
+  }
+  const ok = await modalConfirm({
+    title:        "Import this URL?",
+    message:      `Replace current connections, catalogs and scripts with the snapshot at "${url}"? The page will reload.`,
+    confirmLabel: "Import",
+    danger:       true
+  });
+  if (!ok) return;
+  try {
+    // 同一オリジン (=relative path / dev-server 上の /scenarios/...) は直接 fetch、
+    // 外部オリジンは dev-server の /proxy?url=... 経由で CORS を回避。
+    let target = url;
+    try {
+      const u = new URL(url, location.href);
+      if (u.origin !== location.origin) target = `/proxy?url=${encodeURIComponent(u.toString())}`;
+      else target = u.pathname + u.search;
+    } catch {}
+    const res = await fetch(target, { headers: { Accept: "application/json" } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    // 軽い sanity チェック
+    JSON.parse(text);
+    persist.importJson(text);
+    saveImportUrlHistory([url, ...history.filter(u => u !== url)]);
+    location.reload();
+  } catch (err) {
+    await modalAlert({ title: "Import failed", message: err?.message || String(err) });
+  }
+}
+
 function loadDemo() {
   updateEmptyState();
   DEMO_AGENTS.forEach((a, i) => {
@@ -2229,25 +2300,106 @@ function loadDemo() {
   setTimeout(tileWindows, DEMO_AGENTS.length * 180 + 200);
 }
 
+// Tiling: 現在の各ウインドウの サイズと位置を見て、 もっとも自然な配置に揃える。
+//
+// アルゴリズム選択:
+//   1. ウインドウが 1 個 → 全画面
+//   2. main + stack: 1 つだけ突出して大きく、 かつ左寄りなら左 main + 右 stack
+//   3. fallback: 等分グリッド (n=2:1x2, n=3:1x3, n>=4:2 行 col=ceil(n/2))
+//
+// stack の上下順序は、 元の y 座標が小さい (上にある) ものから採用。
+// 最終的に各ウインドウの el.style.{left,top,width,height} を更新し dirty() で永続化。
 function tileWindows() {
   const ws = activeWorkspace();
-  const layer = ws.layer;
+  if (!ws) return;
   const rect = $("#windowsLayer").getBoundingClientRect();
   const n = ws.windows.length;
   if (n === 0) return;
 
+  const gap = 16;
+  const W = rect.width, H = rect.height;
+
+  // --- 1) 単独 → 全画面 ---
+  if (n === 1) {
+    applyTile([{ win: ws.windows[0], x: gap, y: gap, w: W - 2*gap, h: H - 2*gap }]);
+    return;
+  }
+
+  // --- 2) main + stack 判定 ---
+  const wins = ws.windows.map(win => {
+    const x = parseFloat(win.el.style.left)   || 0;
+    const y = parseFloat(win.el.style.top)    || 0;
+    const w = win.el.offsetWidth  || 0;
+    const h = win.el.offsetHeight || 0;
+    return { win, x, y, w, h, area: w * h, cx: x + w/2 };
+  });
+  const sorted = [...wins].sort((a, b) => b.area - a.area);
+  const main = sorted[0];
+  const others = sorted.slice(1);
+  const otherAvgArea = others.reduce((s, x) => s + x.area, 0) / others.length;
+  const isMainBig    = main.area >= otherAvgArea * 1.3;
+  const isMainLeft   = main.cx < W * 0.5;
+  const isMainRight  = main.cx >= W * 0.5;
+
+  if (isMainBig && isMainLeft) {
+    // 左 main + 右 stack
+    const colW = Math.floor((W - 3 * gap) / 2);
+    const stackSorted = others.sort((a, b) => a.y - b.y);
+    const stackH = Math.floor((H - (stackSorted.length + 1) * gap) / stackSorted.length);
+    const placements = [
+      { win: main.win, x: gap, y: gap, w: colW, h: H - 2 * gap }
+    ];
+    stackSorted.forEach((o, i) => {
+      placements.push({
+        win: o.win,
+        x: gap + colW + gap,
+        y: gap + i * (stackH + gap),
+        w: colW,
+        h: stackH
+      });
+    });
+    applyTile(placements);
+    return;
+  }
+  if (isMainBig && isMainRight) {
+    // 右 main + 左 stack (mirror)
+    const colW = Math.floor((W - 3 * gap) / 2);
+    const stackSorted = others.sort((a, b) => a.y - b.y);
+    const stackH = Math.floor((H - (stackSorted.length + 1) * gap) / stackSorted.length);
+    const placements = [
+      { win: main.win, x: gap + colW + gap, y: gap, w: colW, h: H - 2 * gap }
+    ];
+    stackSorted.forEach((o, i) => {
+      placements.push({
+        win: o.win,
+        x: gap,
+        y: gap + i * (stackH + gap),
+        w: colW,
+        h: stackH
+      });
+    });
+    applyTile(placements);
+    return;
+  }
+
+  // --- 3) fallback grid ---
   const cols = n <= 3 ? n : Math.ceil(n / 2);
   const rows = Math.ceil(n / cols);
-  const gap = 16;
-  const w = Math.floor((rect.width  - gap * (cols + 1)) / cols);
-  const h = Math.floor((rect.height - gap * (rows + 1)) / rows);
-
-  ws.windows.forEach((win, i) => {
+  const w = Math.floor((W - gap * (cols + 1)) / cols);
+  const h = Math.floor((H - gap * (rows + 1)) / rows);
+  const placements = ws.windows.map((win, i) => {
     const col = i % cols;
     const row = Math.floor(i / cols);
+    return { win, x: gap + col * (w + gap), y: gap + row * (h + gap), w, h };
+  });
+  applyTile(placements);
+}
+
+function applyTile(placements) {
+  placements.forEach(({ win, x, y, w, h }) => {
     win.el.style.transition = "left .3s ease, top .3s ease, width .3s ease, height .3s ease";
-    win.el.style.left   = (gap + col * (w + gap)) + "px";
-    win.el.style.top    = (gap + row * (h + gap)) + "px";
+    win.el.style.left   = x + "px";
+    win.el.style.top    = y + "px";
     win.el.style.width  = w + "px";
     win.el.style.height = h + "px";
     setTimeout(() => win.el.style.transition = "", 320);
