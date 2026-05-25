@@ -1,36 +1,37 @@
 /* ═══════════════════════════════════════════════════════
    ATELIER · Agent Workbench
-   Editorial minimal · warm-white · ink + electric blue
+   Anypoint Platform palette · cool white · navy ink + MuleSoft blue
+   (色トークンのみ Anypoint 風に差し替え。レイアウト/フォントは編集デザインのまま)
    ═══════════════════════════════════════════════════════ */
 
 :root {
-  /* ─── Color tokens ─── */
-  --paper:       #F5F3EE;
-  --paper-2:     #EFECE3;
+  /* ─── Color tokens (Anypoint-flavored) ─── */
+  --paper:       #F5F7FA;       /* cool white — Anypoint workspace bg */
+  --paper-2:     #ECEFF3;
   --panel:       #FFFFFF;
-  --panel-soft:  #FBFAF6;
-  --ink:         #0E0E0C;
-  --ink-2:       #2A2A26;
-  --ink-3:       #6B6862;
-  --ink-4:       #A19D93;
-  --line:        #E1DDD2;
-  --line-2:      #ECE8DE;
-  --line-3:      #F2EFE6;
-  --accent:      #2D4BFF;       /* electric editorial blue */
-  --accent-ink:  #1A2E99;
-  --accent-soft: #EEF0FF;
-  /* 黒の代替 — 主要 CTA / バブル用、 ink より柔らかいネイビー */
-  --ink-navy:    #1F2A4A;       /* deep navy, ~paper の上で温かみあり */
-  --ink-navy-2:  #2A3760;       /* hover で明るく */
-  --you-soft:    #EEF1F8;       /* 一致した薄い navy ボーダー用 */
-  --warn:        #C9421C;       /* warm sharp red-orange */
-  --warn-soft:   #FCEDE6;
-  --ok:          #1F7A4D;
-  --ok-soft:     #E7F2EC;
+  --panel-soft:  #F9FBFD;
+  --ink:         #00164A;       /* MuleSoft / Salesforce deep navy */
+  --ink-2:       #1F2A4A;
+  --ink-3:       #5C6987;
+  --ink-4:       #94A0B8;
+  --line:        #DBE1E8;
+  --line-2:      #E6EAF0;
+  --line-3:      #EEF1F5;
+  --accent:      #00A0DF;       /* MuleSoft blue */
+  --accent-ink:  #0079A8;
+  --accent-soft: #E0F4FB;
+  /* 主要 CTA / バブル用 ink alt — Anypoint navy */
+  --ink-navy:    #00164A;
+  --ink-navy-2:  #1F2A4A;       /* hover */
+  --you-soft:    #E5EAF3;       /* 薄い navy ボーダー */
+  --warn:        #BA0517;       /* Anypoint error red */
+  --warn-soft:   #FCE8EA;
+  --ok:          #0D8245;       /* Anypoint success green */
+  --ok-soft:     #E0F2E8;
 
-  /* user message tint — 柔らかいネイビー */
-  --you:         #1F2A4A;
-  --you-ink:     #F5F3EE;
+  /* user message tint */
+  --you:         #00164A;
+  --you-ink:     #F5F7FA;
 
   /* ─── Typography ─── */
   --f-display: "Source Serif 4", "Iowan Old Style", "Hiragino Mincho ProN", serif;
@@ -45,9 +46,10 @@
   --radius-lg:  10px;
   --radius-xl:  14px;
 
-  --shadow-sm: 0 1px 0 rgba(14,14,12,.04), 0 1px 2px rgba(14,14,12,.04);
-  --shadow-md: 0 10px 24px -8px rgba(14,14,12,.10), 0 2px 4px rgba(14,14,12,.05), 0 0 0 1px rgba(14,14,12,.06);
-  --shadow-lg: 0 30px 60px -15px rgba(14,14,12,.18), 0 10px 20px -10px rgba(14,14,12,.08), 0 0 0 1px rgba(14,14,12,.07);
+  /* shadows tinted with navy ink so they sit naturally on the cool-white paper */
+  --shadow-sm: 0 1px 0 rgba(0,22,74,.04), 0 1px 2px rgba(0,22,74,.05);
+  --shadow-md: 0 10px 24px -8px rgba(0,22,74,.10), 0 2px 4px rgba(0,22,74,.05), 0 0 0 1px rgba(0,22,74,.06);
+  --shadow-lg: 0 30px 60px -15px rgba(0,22,74,.18), 0 10px 20px -10px rgba(0,22,74,.08), 0 0 0 1px rgba(0,22,74,.07);
 }
 
 /* ─── Reset ─── */
@@ -117,7 +119,7 @@ body.is-sidebar-collapsed .asset-drawer { left: 0; }
   align-items: center;
   padding: 0 18px 0 22px;
   border-bottom: 1px solid var(--line);
-  background: linear-gradient(180deg, #FBFAF6 0%, var(--paper) 100%);
+  background: linear-gradient(180deg, #F9FBFD 0%, var(--paper) 100%);
   position: relative;
   z-index: 30;
 }
@@ -258,7 +260,7 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   font-size: calc(10px * var(--fs, 1));
   color: var(--ink-4);
   margin-left: 4px;
-  border-left: 1px solid #333;
+  border-left: 1px solid var(--ink-3);
   padding-left: 8px;
 }
 .primary-btn .arrow { color: var(--ink-4); transition: transform 0.2s ease; }
@@ -563,11 +565,11 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 /* ─── Sign in CTA (Auth Code flow) ─── */
 .primary-btn.is-oauth {
   padding: 9px 16px 9px 8px;
-  background: linear-gradient(135deg, #1A2E99 0%, #0E0E0C 100%);
+  background: linear-gradient(135deg, #0079A8 0%, #00164A 100%);
   font-weight: 500;
 }
 .primary-btn.is-oauth:hover {
-  background: linear-gradient(135deg, #2D4BFF 0%, #1A2E99 100%);
+  background: linear-gradient(135deg, #00A0DF 0%, #0079A8 100%);
   box-shadow: 0 6px 16px -4px rgba(45,75,255,0.35);
 }
 .primary-btn.is-oauth .primary-btn-glyph {
@@ -964,7 +966,7 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   margin: 4px 0 4px 44px;   /* branch + num + gap分インデント */
   padding: 8px 12px;
   background: var(--panel);
-  border: 1px solid #DDE1FF;
+  border: 1px solid #BFE7F5;
   border-left: 2px solid var(--accent);
   border-radius: 4px;
   font-size: calc(11px * var(--fs, 1));
@@ -1102,7 +1104,7 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .asset-tag.is-accent {
   color: var(--accent-ink);
   background: var(--accent-soft);
-  border-color: #DDE1FF;
+  border-color: #BFE7F5;
 }
 
 .drawer-empty {
@@ -1175,7 +1177,7 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   border-radius: 6px;
 }
 .cat-provider-card[data-type="anypoint"] .cpc-icon {
-  background: linear-gradient(135deg, #1A2E99 0%, #0E0E0C 100%);
+  background: linear-gradient(135deg, #0079A8 0%, #00164A 100%);
 }
 .cpc-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .cpc-name {
@@ -1316,7 +1318,7 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .catalog-item:hover { background: var(--panel); border-color: var(--line); }
 .catalog-item.is-active {
   background: var(--accent-soft);
-  border-color: #DDE1FF;
+  border-color: #BFE7F5;
 }
 .catalog-meta {
   display: inline-flex; align-items: center; gap: 6px;
@@ -1359,7 +1361,7 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .script-item:hover { border-color: var(--ink-3); }
 .script-item.is-active {
   background: var(--accent-soft);
-  border-color: #DDE1FF;
+  border-color: #BFE7F5;
 }
 .script-name {
   font-size: calc(13px * var(--fs, 1));
@@ -1411,7 +1413,7 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .script-run:hover { color: var(--ink-2); border-color: var(--line); background: var(--paper); }
 .script-loop.is-on {
   color: var(--accent-ink);
-  border-color: #DDE1FF;
+  border-color: #BFE7F5;
   background: var(--accent-soft);
 }
 .script-loop.is-on.is-running {
@@ -1421,7 +1423,7 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .script-run svg { display: block; }
 .script-run.is-running {
   color: var(--accent-ink);
-  border-color: #DDE1FF;
+  border-color: #BFE7F5;
   background: var(--accent-soft);
   animation: pulse-soft 1.2s ease-in-out infinite;
   cursor: default;
@@ -1482,7 +1484,7 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .agent-item.is-expanded .bm-count {
   color: var(--accent-ink);
   background: var(--accent-soft);
-  border-color: #DDE1FF;
+  border-color: #BFE7F5;
 }
 
 /* + 新規接続ボタン */
@@ -1550,7 +1552,7 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .bookmark-child:hover {
   background: var(--accent-soft);
   color: var(--accent-ink);
-  border-color: #DDE1FF;
+  border-color: #BFE7F5;
 }
 .bookmark-child.is-active {
   background: var(--accent-soft);
@@ -1897,7 +1899,7 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   border-radius: 3px;
   text-transform: uppercase;
 }
-.aw-proto-badge[data-proto="a2a"]    { color: var(--accent-ink); background: var(--accent-soft); border-color: #DDE1FF; }
+.aw-proto-badge[data-proto="a2a"]    { color: var(--accent-ink); background: var(--accent-soft); border-color: #BFE7F5; }
 .aw-proto-badge[data-proto="mcp"]    { color: var(--warn); background: var(--warn-soft); border-color: #F4D5C6; }
 .aw-proto-badge[data-proto="openai"] { color: var(--ok); background: var(--ok-soft); border-color: #CFE5D9; }
 
@@ -2146,7 +2148,7 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 }
 .msg-system .msg-body {
   background: var(--accent-soft);
-  border-color: #DDE1FF;
+  border-color: #BFE7F5;
   color: var(--accent-ink);
   font-family: var(--f-mono);
   font-size: calc(11.5px * var(--fs, 1));
@@ -2466,8 +2468,8 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   grid-column: 1 / -1;
   margin-top: 6px;
   padding: 10px 12px;
-  background: #0E0E0C;
-  color: #DDD9CE;
+  background: #0A1B3F;
+  color: #D6E0F0;
   border-radius: 4px;
   font-size: calc(10.5px * var(--fs, 1));
   line-height: 1.55;
@@ -2782,7 +2784,7 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
 .swc-chip:hover { border-color: var(--ink); background: var(--paper); color: var(--ink); }
 .swc-chip.is-match {
   background: var(--accent-soft);
-  border-color: #DDE1FF;
+  border-color: #BFE7F5;
   color: var(--accent-ink);
 }
 .swc-chip-id {
@@ -2899,7 +2901,7 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
   margin-right: 4px;
   white-space: nowrap;
 }
-.script-status.is-running { color: var(--accent-ink); border-color: #DDE1FF; background: var(--accent-soft); }
+.script-status.is-running { color: var(--accent-ink); border-color: #BFE7F5; background: var(--accent-soft); }
 .script-status.is-err     { color: var(--warn);       border-color: var(--warn);   background: var(--warn-soft); }
 .script-status.is-done    { color: var(--ok);         border-color: var(--ok);     background: var(--ok-soft, transparent); }
 
@@ -3003,8 +3005,8 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
   color: #fff;
 }
 .primary-btn.is-danger:hover {
-  background: #A33419;
-  box-shadow: 0 6px 16px -4px rgba(201,66,28,0.35);
+  background: #8C0413;
+  box-shadow: 0 6px 16px -4px rgba(186,5,23,0.35);
 }
 .primary-btn.is-danger .arrow { color: rgba(255,255,255,0.7); }
 
@@ -3189,7 +3191,7 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
 *::-webkit-scrollbar-thumb:hover { background: var(--ink-4); background-clip: padding-box; border: 2px solid transparent; }
 
 /* Selection state on focus */
-.agent-window.is-focused .aw-head { background: linear-gradient(180deg, #FFFFFF 0%, #FAF8F2 100%); }
+.agent-window.is-focused .aw-head { background: linear-gradient(180deg, #FFFFFF 0%, #F2F6FB 100%); }
 
 /* ═══════════════════════════════════════════════════════
    NARROW VIEWPORT (zoom in や 狭い chrome --app ウインドウ)
