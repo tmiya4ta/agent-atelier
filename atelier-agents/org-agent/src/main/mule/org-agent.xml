@@ -2,6 +2,7 @@
 <mule xmlns="http://www.mulesoft.org/schema/mule/core"
       xmlns:http="http://www.mulesoft.org/schema/mule/http"
       xmlns:a2a="http://www.mulesoft.org/schema/mule/a2a"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
       xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
       xmlns:jmx="http://www.mulesoft.org/schema/mule/jmx"
       xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
@@ -10,6 +11,7 @@
           http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
           http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
           http://www.mulesoft.org/schema/mule/a2a http://www.mulesoft.org/schema/mule/a2a/current/mule-a2a.xsd
+          http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
           http://www.mulesoft.org/schema/mule/jmx http://www.mulesoft.org/schema/mule/jmx/current/mule-jmx.xsd
           http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
 
@@ -68,6 +70,12 @@
 
     <jmx:config name="JMX_Config" logBufferSize="5000"/>
 
+    <os:object-store name="MEMORY_STORE"
+                     entryTtl="1" entryTtlUnit="HOURS"
+                     expirationInterval="5" expirationIntervalUnit="MINUTES"
+                     maxEntries="500"
+                     persistent="false"/>
+
     <flow name="orgAgentTaskFlow">
         <a2a:task-listener config-ref="A2A_Server_config">
             <a2a:response>
@@ -78,23 +86,32 @@
         <logger level="INFO"
                 message="#['atelier-org-agent A2A task received. method=' ++ (attributes.jsonRpcMethod default '?') ++ ' taskId=' ++ (attributes.taskId default '?')]"/>
 
-        <ee:transform>
+        <ee:transform doc:name="extract user text + task ids + contextId">
             <ee:variables>
                 <ee:set-variable variableName="taskId"><![CDATA[%dw 2.0
 output application/java
 ---
 ((attributes.taskId default (now() as String)) as String)]]></ee:set-variable>
+                <ee:set-variable variableName="msgObj"><![CDATA[%dw 2.0
+output application/java
+---
+if (payload is String) read(payload, "application/json") else payload]]></ee:set-variable>
                 <ee:set-variable variableName="contextId"><![CDATA[%dw 2.0
 output application/java
+var p = if (payload is String) read(payload, "application/json") else payload
+var fromAttr = (attributes.contextId default "") as String
+var fromMsg  = (p.message.contextId default "") as String
 ---
-((attributes.contextId default "") as String)]]></ee:set-variable>
+if (fromAttr != "") fromAttr else fromMsg]]></ee:set-variable>
                 <ee:set-variable variableName="userText"><![CDATA[%dw 2.0
 output application/java
-var msg = if (payload is String) read(payload, "application/json") else payload
+var p = if (payload is String) read(payload, "application/json") else payload
 ---
-(((msg.message.parts default [])[0].text default "") as String)]]></ee:set-variable>
+(((p.message.parts default [])[0].text default "") as String)]]></ee:set-variable>
             </ee:variables>
         </ee:transform>
+
+        <flow-ref name="loadMemoryFlow"/>
 
         <try>
             <flow-ref name="initAgentStateFlow"/>
@@ -127,6 +144,8 @@ if (t == "")
 else t]]></ee:set-variable>
             </ee:variables>
         </ee:transform>
+
+        <flow-ref name="saveMemoryFlow"/>
 
         <ee:transform>
             <ee:variables>
@@ -195,6 +214,9 @@ output application/java
 output application/java
 var sysPrompt =
 "あなたは組織/人事担当の AI アシスタント (atelier-org-agent) です。\n" ++
+"\n" ++
+"最重要原則: ユーザの最後の user メッセージに登場する固有名詞 (会社名・インシデントID) を tool 引数にそのまま使うこと。「unknown」「placeholder」などの仮名は絶対に使わない。 user 発話に「関西部品」とあれば必ず supplierName=\"関西部品\" を渡す。\n" ++
+"\n" ++
 "ユーザーから来たインシデント連絡をもとに、必要に応じて以下のツールを呼び出し、" ++
 "最適な調達担当者を見つけて承認依頼を送るところまでを完了させてください:\n" ++
 "  1) resolve_supplier (mdm-mcp): サプライヤー名 → ゴールデン ID\n" ++
@@ -203,11 +225,27 @@ var sysPrompt =
 "  4) send_approval_request (hr-mcp): 承認依頼を Slack DM で送信 (approverId は EmployeeId__c, 例 E-1287)\n" ++
 "  5) update_supplier_risk_score (mdm-mcp): リスクスコア更新\n" ++
 "  6) update_ontology (mdm-mcp): KG にトリプル記録\n\n" ++
+"重要: 各 tool の返り値は次のように JSON ネストされて返ります。\n" ++
+"  - resolve_supplier → result.supplier.goldenId / result.supplier.name (matched=false でも success)\n" ++
+"  - find_best_buyer → result.buyers[i].employeeId / .employeeName / .category / .region\n" ++
+"  - send_approval_request → result.approvalRequestId / result.dueAt\n" ++
+"  - update_supplier_risk_score → result.previousScore / result.newScore\n" ++
+"  - update_ontology → result.tripleId\n" ++
+"\n" ++
 "進め方:\n" ++
-"  1. 必要なら resolve_supplier で取引先をゴールデン ID に解決\n" ++
-"  2. find_best_buyer で適任バイヤーを検索 (categoryやregionが分からなければ未指定で全件)\n" ++
-"  3. 候補が複数あれば最上位を採用し、send_approval_request で承認依頼を発出 (subject / dueAt 必須)\n" ++
-"  4. 最後に update_ontology で経緯をトリプル記録\n\n" ++
+"  1. ユーザがサプライヤー名 (例「関西部品」) を出していれば resolve_supplier(supplierName) で goldenId を取得して保持。\n" ++
+"  2. find_best_buyer(category=部品カテゴリ, region=サプライヤー所在地域) で候補を検索。category/region が分からなければ未指定で全件取得。\n" ++
+"  3. 結果の result.buyers[0] (最上位) を採用し、send_approval_request(approverId=employeeId, subject=承認内容, dueAt=ISO8601 時刻, requesterId=\"SCRS-BROKER\", incidentId=INC ID, details=詳細)。\n" ++
+"  4. 最後に update_ontology(subject=incidentId, predicate=\"hasApprovalRequest\", object=approvalRequestId, incidentId)。\n" ++
+"\n" ++
+"重要ルール:\n" ++
+"  - ユーザに情報を聞き返さない。サプライヤー名 / incidentId のうち何か一つでも分かれば、即 resolve_supplier または find_best_buyer から始めて tool 連鎖を進めること。\n" ++
+"  - category / region が不明なら無指定で find_best_buyer を呼ぶ。dueAt は ISO8601 で +4 日後の 09:00 JST を default 使う。「情報下さい」フォームは出力しない。\n" ++
+"  - tool が status=success で返したら必ず result.* の中身を読み、「取得できませんでした」と書かない。\n" ++
+"\n" ++
+"会話履歴について:\n" ++
+"  - 以前のターンが含まれる場合は参照し、解決済みの supplierGoldenId / バイヤー employeeId / approvalRequestId を覚えていれば後続では再呼び出しせず即答すること。\n" ++
+"\n" ++
 "全ての必要ツールを呼び終えたら、Atelier に返す統合サマリ (Markdown 短文・5〜10 行) を返してください。\n" ++
 "次のフォーマットで:\n" ++
 "  👥 org-agent: <一言サマリ>\n" ++
@@ -215,10 +253,13 @@ var sysPrompt =
 "  - 担当者候補: <employeeName> (<employeeId>) - <category>/<region>\n" ++
 "  - 承認依頼: <approvalRequestId> 期限 <dueAt>"
 ---
-[
-  { role: "system", content: sysPrompt },
-  { role: "user",   content: (vars.userText default "") as String }
-]]]></ee:set-variable>
+if ((vars.priorMessages default []) != [])
+  (vars.priorMessages default []) ++ [{ role: "user", content: (vars.userText default "") as String }]
+else
+  [
+    { role: "system", content: sysPrompt },
+    { role: "user",   content: (vars.userText default "") as String }
+  ]]]></ee:set-variable>
                 <ee:set-variable variableName="tools"><![CDATA[%dw 2.0
 output application/java
 ---
@@ -530,6 +571,81 @@ else if (payload is String) safeReadJson(payload as String)
 else payload]]></ee:set-variable>
             </ee:variables>
         </ee:transform>
+    </sub-flow>
+
+    <sub-flow name="loadMemoryFlow">
+        <choice>
+            <when expression="#[(vars.contextId default '') == '']">
+                <ee:transform>
+                    <ee:variables>
+                        <ee:set-variable variableName="priorMessages"><![CDATA[%dw 2.0
+output application/java
+---
+[]]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </when>
+            <otherwise>
+                <try>
+                    <os:retrieve key="#[vars.contextId]" objectStore="MEMORY_STORE" target="priorRaw"/>
+                    <ee:transform>
+                        <ee:variables>
+                            <ee:set-variable variableName="priorMessages"><![CDATA[%dw 2.0
+output application/java
+fun parseList(s) = if (s == null or s == "") [] else read(s, "application/json")
+---
+if (vars.priorRaw == null) []
+else if (vars.priorRaw is String) parseList(vars.priorRaw as String)
+else (vars.priorRaw default [])]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                    <error-handler>
+                        <on-error-continue type="OS:KEY_NOT_FOUND, OS:STORE_NOT_AVAILABLE, ANY">
+                            <ee:transform>
+                                <ee:variables>
+                                    <ee:set-variable variableName="priorMessages"><![CDATA[%dw 2.0
+output application/java
+---
+[]]]></ee:set-variable>
+                                </ee:variables>
+                            </ee:transform>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+            </otherwise>
+        </choice>
+        <logger level="INFO"
+                message="#['memory load: contextId=' ++ (vars.contextId default '') ++ ' priorMessages=' ++ (sizeOf(vars.priorMessages default []) as String)]"/>
+    </sub-flow>
+
+    <sub-flow name="saveMemoryFlow">
+        <choice>
+            <when expression="#[(vars.contextId default '') == '']">
+                <logger level="INFO" message="memory save skipped (no contextId)"/>
+            </when>
+            <otherwise>
+                <try>
+                    <ee:transform>
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+write((vars.messages default []), "application/json") as String]]></ee:set-payload>
+                        </ee:message>
+                    </ee:transform>
+                    <os:store key="#[vars.contextId]" objectStore="MEMORY_STORE">
+                        <os:value>#[payload]</os:value>
+                    </os:store>
+                    <logger level="INFO"
+                            message="#['memory save: contextId=' ++ (vars.contextId default '') ++ ' messages=' ++ (sizeOf(vars.messages default []) as String)]"/>
+                    <error-handler>
+                        <on-error-continue type="ANY">
+                            <logger level="WARN" message="#['memory save failed: ' ++ (error.description default error.message default 'unknown')]"/>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+            </otherwise>
+        </choice>
     </sub-flow>
 
 </mule>

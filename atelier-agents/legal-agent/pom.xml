@@ -6,7 +6,7 @@
 
     <groupId>fe1db8fb-8261-4b5c-a591-06fea582f980</groupId>
     <artifactId>atelier-legal-agent</artifactId>
-    <version>1.0.1</version>
+    <version>1.1.4</version>
     <packaging>mule-application</packaging>
 
     <name>atelier-legal-agent</name>
@@ -75,6 +75,12 @@
             <groupId>com.demo-group</groupId>
             <artifactId>mule-jmx-module</artifactId>
             <version>0.1.0</version>
+            <classifier>mule-plugin</classifier>
+        </dependency>
+        <dependency>
+            <groupId>org.mule.connectors</groupId>
+            <artifactId>mule-objectstore-connector</artifactId>
+            <version>1.2.4</version>
             <classifier>mule-plugin</classifier>
         </dependency>
     </dependencies>
