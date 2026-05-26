@@ -82,9 +82,12 @@ export function modalAlert(opts) {
 }
 
 // modalChoice — 複数選択モーダル
-//   await modalChoice({ title, message?, choices: [{ id, label, description?, danger? }] })
-//     → 選択した choice.id (Cancel/Esc は null)
-export function modalChoice({ title, message, choices = [], cancelLabel } = {}) {
+//   await modalChoice({ title, message?, choices: [{ id, label, description?, danger? }],
+//                       extras?: [{ id, label, description?, defaultChecked? }] })
+//     → 戻り値:
+//        - extras 指定なし: 選択した choice.id (Cancel/Esc は null) ← 後方互換
+//        - extras 指定あり: { id, extras: { <extraId>: boolean, ... } } (Cancel/Esc は null)
+export function modalChoice({ title, message, choices = [], extras, cancelLabel } = {}) {
   return new Promise((resolve) => {
     const wrap = document.createElement("div");
     wrap.className = "modal-backdrop";
@@ -97,6 +100,19 @@ export function modalChoice({ title, message, choices = [], cancelLabel } = {}) 
         <span class="arrow">→</span>
       </button>
     `).join("");
+    const extrasHtml = Array.isArray(extras) && extras.length ? `
+      <div class="modal-extras">
+        ${extras.map(x => `
+          <label class="modal-extra" data-extra-id="${escapeHtml(x.id)}">
+            <input type="checkbox" ${x.defaultChecked ? "checked" : ""} />
+            <span class="modal-extra-main">
+              <span class="modal-extra-label">${escapeHtml(x.label)}</span>
+              ${x.description ? `<span class="modal-extra-desc">${escapeHtml(x.description)}</span>` : ""}
+            </span>
+          </label>
+        `).join("")}
+      </div>
+    ` : "";
     wrap.innerHTML = `
       <div class="modal" role="dialog" aria-modal="true">
         <header class="modal-head">
@@ -106,6 +122,7 @@ export function modalChoice({ title, message, choices = [], cancelLabel } = {}) 
         ${message ? `<div class="modal-body"><p class="modal-msg">${escapeHtml(message)}</p></div>` : ""}
         <footer class="modal-foot modal-foot-stack">
           <div class="modal-choices">${buttons}</div>
+          ${extrasHtml}
           <div class="modal-foot-actions">
             <button type="button" class="ghost-btn modal-cancel">${escapeHtml(cancelLabel || "Cancel")}</button>
           </div>
@@ -114,6 +131,17 @@ export function modalChoice({ title, message, choices = [], cancelLabel } = {}) 
     `;
     document.body.appendChild(wrap);
     requestAnimationFrame(() => wrap.classList.add("is-open"));
+
+    const readExtras = () => {
+      const out = {};
+      wrap.querySelectorAll(".modal-extra").forEach(lab => {
+        const id = lab.dataset.extraId;
+        const cb = lab.querySelector("input[type=checkbox]");
+        if (id && cb) out[id] = !!cb.checked;
+      });
+      return out;
+    };
+    const wantExtras = Array.isArray(extras) && extras.length > 0;
 
     const close = (result) => {
       wrap.classList.remove("is-open");
@@ -125,7 +153,10 @@ export function modalChoice({ title, message, choices = [], cancelLabel } = {}) 
       resolve(result);
     };
     wrap.querySelectorAll(".modal-choice").forEach(btn => {
-      btn.addEventListener("click", () => close(btn.dataset.choiceId));
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.choiceId;
+        close(wantExtras ? { id, extras: readExtras() } : id);
+      });
     });
     wrap.querySelector(".modal-cancel").addEventListener("click", () => close(null));
     const onKey = (e) => {

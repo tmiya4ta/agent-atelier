@@ -98,9 +98,11 @@ export const STRINGS = {
     "dlg.connect.protocol":     "protocol",
     "dlg.connect.protocol.hint":"transport protocol",
     "dlg.connect.endpoint":     "endpoint",
-    "dlg.connect.endpoint.hint":"HTTP(S) URL · AgentCard or RPC base",
-    "dlg.connect.url.ph.a2a":   "http://127.0.0.1:5180  ·  https://api.example.com/.well-known/agent.json",
+    "dlg.connect.endpoint.hint":"HTTP(S) URL · base or AgentCard URL",
+    "dlg.connect.url.ph.a2a":   "https://api.example.com",
     "dlg.connect.url.ph.slack": "https://slack.com   ·   https://slack.example.com   (compatible server)",
+    "dlg.connect.url.tip.a2a":  "Base URL is fine — Atelier appends /.well-known/agent-card.json automatically (falls back to /.well-known/agent.json for the legacy spec).",
+    "dlg.connect.url.tip.slack":"",
     "dlg.connect.name":         "display name",
     "dlg.connect.name.hint":    "optional",
     "dlg.connect.name.ph":      "e.g. Research Agent",
@@ -324,6 +326,9 @@ export const STRINGS = {
     "chat.compose.ph":  "メッセージを送信…",
     "chat.connecting":  "{name} に接続中…",
     "chat.connected":   "接続済み · エージェントカード取得済み",
-    "chat.disconnected":"切断しました。"
+    "chat.disconnected":"切断しました。",
+    "dlg.connect.endpoint.hint":"HTTP(S) URL · ベース URL または AgentCard URL",
+    "dlg.connect.url.tip.a2a":  "ベース URL のままで OK — Atelier が自動で /.well-known/agent-card.json (旧仕様の場合は /.well-known/agent.json) を付けて取得します。",
+    "dlg.connect.url.tip.slack":""
   }
 };

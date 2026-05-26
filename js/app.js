@@ -74,7 +74,7 @@ const state = {
   workspaces: [],     // [{ id, name, windows: [], events: 0, layer: <div> }]
   activeWs: null,
   selectedProto: "a2a",
-  selectedCatalogFlow: "authcode",
+  selectedCatalogFlow: "cc",
   zoom: 1.0,
   sidebarCollapsed: false,
   catalogs: [],       // [{ id, name, flow, baseUrl, orgId, envId, clientId, clientSecret?, scopes, status, createdAt }]
@@ -150,11 +150,18 @@ function init() {
   wireWorkspaceBlur();
   wireScriptPanel();
   wireBackup();
+  wireConnToggleAll();
   applyZoom();   // 復元値を反映
   applySidebar();
   applyScriptPanel();   // 復元値を反映
   updateStatusLine();
   updateEmptyState();
+
+  // import 直後 (reload を挟む) は restore 後にウインドウを tile する
+  if (sessionStorage.getItem("atelier:tileAfterImport")) {
+    sessionStorage.removeItem("atelier:tileAfterImport");
+    setTimeout(tileWindows, 350);
+  }
 
   // ?demo or #demo で自動的にデモエージェントをロード
   if (location.search.includes("demo") || location.hash.includes("demo")) {
@@ -237,6 +244,8 @@ function wireWorkspaceBlur() {
     if (e.target === layer || e.target.classList?.contains("ws-layer")) {
       document.querySelectorAll(".agent-window.is-focused")
         .forEach(n => n.classList.remove("is-focused"));
+      // script editor が開いていたらキャンバスクリックでクローズ
+      if (state.scriptPanelOpen) closeScriptPanel();
     }
   });
 }
@@ -452,7 +461,7 @@ function renderBookmarks() {
   state.bookmarks.forEach(b => {
     const wins = winsByKey.get(b.key) || [];
     const hasMulti = wins.length > 1;
-    if (state._connExpanded[b.key] === undefined) state._connExpanded[b.key] = true;
+    if (state._connExpanded[b.key] === undefined) state._connExpanded[b.key] = false;
     const expanded = !!state._connExpanded[b.key];
 
     // ウインドウから取れる最新 display name を優先 (settings での編集を反映)
@@ -460,14 +469,18 @@ function renderBookmarks() {
     const host = hostFromUrl(b.url) || b.url || "";
 
     const li = document.createElement("li");
+    const canExpand = wins.length > 0;
     li.className = "agent-item conn-group"
-      + (hasMulti ? " is-expandable" : "")
-      + (expanded ? " is-expanded" : "")
+      + (canExpand ? " is-expandable" : "")
+      + (expanded && canExpand ? " is-expanded" : "")
       + (wins.length === 0 ? " is-disconnected" : "");
     li.title = wins.length
       ? `${host}  ·  ${wins.length} window(s)`
       : `${host}  ·  no open window — click + to open`;
     li.innerHTML = `
+      <button class="conn-toggle" aria-label="${expanded ? 'collapse' : 'expand'} window list" title="${canExpand ? (expanded ? 'collapse' : 'expand') : 'no open windows'}" ${canExpand ? '' : 'disabled'}>
+        <svg viewBox="0 0 12 12" width="9" height="9"><polyline points="3,4.5 6,8 9,4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
       <span class="agent-name">${escapeHtml(displayName)}</span>
       <span class="bm-count" title="${wins.length} window(s)">${wins.length}</span>
       <button class="bookmark-new" title="${wins.length ? 'Open another window to the same agent' : 'Open a window'}" aria-label="new window">
@@ -510,6 +523,15 @@ function renderBookmarks() {
         }, { lockName: true });
         return;
       }
+      if (e.target.closest(".conn-toggle")) {
+        e.stopPropagation();
+        if (!canExpand) return;
+        const cur  = state._connExpanded[b.key] !== false;
+        const next = !cur;
+        state._connExpanded[b.key] = next;
+        animateConnExpand(b.key, next);
+        return;
+      }
       if (e.target.closest(".agent-name, .bm-count")) {
         if (wins.length === 0) {
           // 閉じている bookmark をクリック → 開く
@@ -524,16 +546,22 @@ function renderBookmarks() {
           if (ws.id !== state.activeWs) { switchWorkspace(ws.id); setTimeout(() => win.focus(), 50); }
           else win.focus();
         } else {
-          state._connExpanded[b.key] = !expanded;
-          renderBookmarks();
+          const cur  = state._connExpanded[b.key] !== false;
+          const next = !cur;
+          state._connExpanded[b.key] = next;
+          animateConnExpand(b.key, next);
         }
       }
     });
     root.appendChild(li);
 
-    if (expanded && wins.length > 0) {
+    if (wins.length > 0) {
       const sub = document.createElement("li");
-      sub.className = "bookmark-children";
+      sub.className = "bookmark-children" + (expanded ? "" : " is-collapsed");
+      sub.dataset.connKey = b.key;
+      const inner = document.createElement("div");
+      inner.className = "bm-children-inner";
+      sub.appendChild(inner);
       wins.forEach(({ win, ws }, i) => {
         const isLast = i === wins.length - 1;
         const isActiveWs = ws.id === state.activeWs;
@@ -562,7 +590,7 @@ function renderBookmarks() {
             win.focus();
           }
         });
-        sub.appendChild(btn);
+        inner.appendChild(btn);
       });
       root.appendChild(sub);
     }
@@ -571,6 +599,58 @@ function renderBookmarks() {
   const total = state.bookmarks.length;
   $("#savedCount").textContent = String(total);
   empty.classList.toggle("is-hidden", total > 0);
+
+  // Expand/collapse-all toggle button — show only when at least one connection has open windows
+  const toggleAllBtn = $("#connToggleAll");
+  if (toggleAllBtn) {
+    const expandable = state.bookmarks.filter(b => (winsByKey.get(b.key) || []).length > 0);
+    if (expandable.length === 0) {
+      toggleAllBtn.hidden = true;
+    } else {
+      toggleAllBtn.hidden = false;
+      const allExpanded = expandable.every(b => state._connExpanded[b.key] !== false);
+      toggleAllBtn.classList.toggle("is-all-expanded", allExpanded);
+      toggleAllBtn.title = allExpanded ? "Collapse all" : "Expand all";
+    }
+  }
+}
+
+function wireConnToggleAll() {
+  const btn = $("#connToggleAll");
+  if (!btn) return;
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    state._connExpanded = state._connExpanded || {};
+    // 開いているウインドウがある connection だけ対象
+    const openWinKeys = new Set();
+    state.workspaces.forEach(ws => ws.windows.forEach(win => {
+      openWinKeys.add(bookmarkKey(win.protoId, win.adapter.config.url));
+    }));
+    const targets = state.bookmarks.filter(b => openWinKeys.has(b.key));
+    if (targets.length === 0) return;
+    const allExpanded = targets.every(b => state._connExpanded[b.key] !== false);
+    const next = !allExpanded;
+    targets.forEach(b => {
+      state._connExpanded[b.key] = next;
+      animateConnExpand(b.key, next);
+    });
+    btn.classList.toggle("is-all-expanded", next);
+    btn.title = next ? "Collapse all" : "Expand all";
+  });
+}
+
+// connection の sub-list を class トグルで開閉アニメーション
+function animateConnExpand(connKey, expanded) {
+  const sub = document.querySelector(`.bookmark-children[data-conn-key="${CSS.escape(connKey)}"]`);
+  if (sub) sub.classList.toggle("is-collapsed", !expanded);
+  // 親 .agent-item の chevron 回転 / bm-count ハイライト用クラスも更新
+  const items = document.querySelectorAll("#savedAgents .agent-item.conn-group");
+  items.forEach(it => {
+    const sib = it.nextElementSibling;
+    if (sib && sib.classList.contains("bookmark-children") && sib.dataset.connKey === connKey) {
+      it.classList.toggle("is-expanded", expanded);
+    }
+  });
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1402,7 +1482,7 @@ function refreshCatalogDialog() {
 
 function openCatalogDialog(editing) {
   $("#catalogDialog").hidden = false;
-  state.selectedCatalogFlow = editing?.flow || "authcode";
+  state.selectedCatalogFlow = editing?.flow || "cc";
   state._editingCatalogId   = editing?.id   || null;
 
   $("#catName").value         = editing?.name        || "";
@@ -1505,6 +1585,17 @@ function wireCatalogDialog() {
   $("#catClose").addEventListener("click", closeCatalogDialog);
   $("#catCancel").addEventListener("click", closeCatalogDialog);
   $("#catSubmit").addEventListener("click", submitCatalogDialog);
+
+  const secretInput  = $("#catClientSecret");
+  const secretToggle = $("#catSecretToggle");
+  if (secretToggle && secretInput) {
+    secretToggle.addEventListener("click", () => {
+      const showing = secretInput.type === "text";
+      secretInput.type = showing ? "password" : "text";
+      secretToggle.setAttribute("aria-pressed", showing ? "false" : "true");
+      secretToggle.classList.toggle("is-revealed", !showing);
+    });
+  }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1595,9 +1686,30 @@ function renderScripts() {
     li.className = "script-item";
     if (s.id === state.selectedScriptId) li.classList.add("is-active");
     li.dataset.scriptId = s.id;
-    const lineCount = (s.body || "").split(/\r?\n/).filter(l => l.trim() && !l.trim().startsWith("#")).length;
-    const ageSec = Math.max(0, Math.round((Date.now() - (s.updatedAt || s.createdAt)) / 1000));
-    li.title = `${lineCount} ops · edited ${formatAge(ageSec)}${s.autoLoop ? " · auto loop ON" : ""}`;
+    const lines = (s.body || "").split(/\r?\n/);
+    const lineCount = lines.filter(l => l.trim() && !l.trim().startsWith("#")).length;
+    // body の先頭コメント (連続する `# …` 行) を description として拾う。
+    // 見出し風の罫線 (`# ────`, `# ====` など) や空 `#` 行はスキップ。
+    const descLines = [];
+    for (const ln of lines) {
+      const t = ln.trim();
+      if (!t) { if (descLines.length) break; else continue; }
+      if (!t.startsWith("#")) break;
+      const stripped = t.replace(/^#+\s*/, "").trim();
+      if (!stripped) { if (descLines.length) break; else continue; }
+      if (/^[─-▟=\-_*]{3,}$/.test(stripped)) continue; // 罫線
+      descLines.push(stripped);
+      if (descLines.length >= 3) break;
+    }
+    const desc = descLines.join("  ");
+    const ts = (typeof s.updatedAt === "number") ? s.updatedAt
+             : (s.updatedAt ? Date.parse(s.updatedAt) : 0)
+             || (typeof s.createdAt === "number" ? s.createdAt : Date.parse(s.createdAt || ""));
+    const ageSec = (Number.isFinite(ts) && ts > 0)
+      ? Math.max(0, Math.round((Date.now() - ts) / 1000))
+      : null;
+    const meta = `${lineCount} ops${ageSec != null ? ` · edited ${formatAge(ageSec)}` : ""}${s.autoLoop ? " · auto loop ON" : ""}`;
+    li.title = desc ? `${desc}\n\n${meta}` : meta;
     const isRunningThis = !!(state._script && state._script.loopScriptId === s.id);
     li.innerHTML = `
       <span class="script-name">${escapeHtml(s.name)}</span>
@@ -1728,7 +1840,10 @@ function applyProtoSpecificFields() {
   if (urlInput) {
     urlInput.placeholder = isSlack
       ? "https://slack.com   ·   https://slack.example.com   (compatible server)"
-      : "http://127.0.0.1:5180  ·  https://api.example.com/.well-known/agent.json";
+      : "https://api.example.com";
+    urlInput.title = isSlack
+      ? ""
+      : "Base URL is fine — Atelier appends /.well-known/agent-card.json automatically (falls back to /.well-known/agent.json for the legacy spec).";
   }
   if (authInput) {
     authInput.placeholder = isSlack
@@ -1741,8 +1856,10 @@ function applyProtoSpecificFields() {
 function wireRail() {
   $("#btnConnect").addEventListener("click", openDialog);
   $("#btnConnectEmpty").addEventListener("click", openDialog);
-  $("#btnDemo").addEventListener("click", loadDemo);
-  $("#btnLayout").addEventListener("click", tileWindows);
+  $("#btnDemo").addEventListener("click", openImportPicker);
+  $("#btnLayout").addEventListener("click", cycleTileMode);
+  const btnSnap = $("#btnSnap");
+  if (btnSnap) btnSnap.addEventListener("click", () => tileWindows("fit"));
   $("#scriptAdd").addEventListener("click", () => createScript({}));
 }
 
@@ -1866,7 +1983,15 @@ function loadActiveScriptIntoPanel() {
     return;
   }
   editor.value = s.body || "";
-  $("#scriptSavedAt").textContent = `${s.name} · saved ${formatAge(Math.max(0, Math.round((Date.now() - s.updatedAt) / 1000)))}`;
+  const ts = (typeof s.updatedAt === "number") ? s.updatedAt
+           : (s.updatedAt ? Date.parse(s.updatedAt) : 0)
+           || (typeof s.createdAt === "number" ? s.createdAt : Date.parse(s.createdAt || ""));
+  const ageSec = (Number.isFinite(ts) && ts > 0)
+    ? Math.max(0, Math.round((Date.now() - ts) / 1000))
+    : null;
+  $("#scriptSavedAt").textContent = ageSec != null
+    ? `${s.name} · saved ${formatAge(ageSec)}`
+    : s.name;
   setScriptStatus("", "");
   updateScriptHighlight();
 }
@@ -2266,24 +2391,53 @@ function wireScriptPanel() {
 // ═══════════════════════════════════════════════════════
 // BACKUP — export / import the full saved snapshot
 // ═══════════════════════════════════════════════════════
+async function openImportPicker() {
+  const choice = await modalChoice({
+    title: "Import configuration",
+    message: "Load a saved snapshot. This replaces the current connections, catalogs and scripts.",
+    choices: [
+      { id: "file", label: "From file…", description: "Pick a .json file from this device" },
+      { id: "url",  label: "From URL…",  description: "Fetch a JSON snapshot over HTTP(S)" },
+      { id: "repo", label: "From repos…", description: "Pick from snapshots bundled with this app" }
+    ]
+  });
+  if (choice === "file") {
+    $("#importFile").click();
+  } else if (choice === "url") {
+    await importFromUrlFlow();
+  } else if (choice === "repo") {
+    await importFromRepositoryFlow();
+  }
+}
+
 function wireBackup() {
   $("#btnExport").addEventListener("click", async () => {
     const ok = await modalConfirm({
       title:        "Export configuration?",
       message:      "The file will contain connections, catalogs and scripts — including OAuth client secrets and access tokens. Treat it as sensitive.",
-      confirmLabel: "Export"
+      confirmLabel: "Continue"
     });
     if (!ok) return;
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const defaultName = `atelier-export-${stamp}`;
+    const inputName = await modalPrompt({
+      title:        "Name this export",
+      label:        "File name (.json appended automatically)",
+      placeholder:  defaultName,
+      defaultValue: defaultName,
+      confirmLabel: "Export"
+    });
+    if (!inputName) return;
+    const safe = inputName.replace(/\.json$/i, "").replace(/[\\/:*?"<>|]+/g, "_").trim() || defaultName;
     try {
       // Ensure pending debounced save is flushed so the export reflects the latest state
       persist.save(state);
       const json = persist.exportJson();
-      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const blob = new Blob([json], { type: "application/json" });
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement("a");
       a.href     = url;
-      a.download = `atelier-export-${stamp}.json`;
+      a.download = `${safe}.json`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -2293,41 +2447,122 @@ function wireBackup() {
     }
   });
 
-  $("#btnImport").addEventListener("click", async () => {
-    const choice = await modalChoice({
-      title: "Import scenario",
-      message: "Load a saved snapshot. This replaces the current connections, catalogs and scripts.",
-      choices: [
-        { id: "file", label: "From file…", description: "Pick a .json file from this device" },
-        { id: "url",  label: "From URL…",  description: "Fetch a JSON snapshot over HTTP(S)" }
-      ]
+  $("#btnReset").addEventListener("click", async () => {
+    const ok = await modalConfirm({
+      title:        "Reset all settings?",
+      message:      "Connections, catalogs, scripts, workspaces をすべて消去し、ページを再読み込みします。Undo できません。",
+      confirmLabel: "Reset",
+      danger:       true
     });
-    if (choice === "file") {
-      $("#importFile").click();
-    } else if (choice === "url") {
-      await importFromUrlFlow();
+    if (!ok) return;
+    try {
+      // localStorage の atelier:* と sessionStorage の atelier:* をすべて削除
+      const lsKeys = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith("atelier:")) lsKeys.push(k);
+      }
+      lsKeys.forEach(k => localStorage.removeItem(k));
+      const ssKeys = [];
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const k = sessionStorage.key(i);
+        if (k && k.startsWith("atelier:")) ssKeys.push(k);
+      }
+      ssKeys.forEach(k => sessionStorage.removeItem(k));
+    } catch (e) {
+      console.warn("reset failed:", e);
     }
+    location.reload();
   });
+
+  $("#btnImport").addEventListener("click", openImportPicker);
 
   $("#importFile").addEventListener("change", async (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";   // reset so picking the same file twice re-triggers
     if (!file) return;
-    const ok = await modalConfirm({
-      title:        "Import configuration?",
-      message:      `Replace current connections, catalogs and scripts with “${file.name}”? The page will reload.`,
-      confirmLabel: "Import",
-      danger:       true
-    });
-    if (!ok) return;
     try {
       const text = await file.text();
-      persist.importJson(text);
-      location.reload();
+      await applyImport(text, `“${file.name}”`);
     } catch (err) {
       await modalAlert({ title: "Import failed", message: err?.message || String(err) });
     }
   });
+}
+
+// ─── shared import dispatcher ───────────────────────────
+// Ask user for scope (all / scripts-only) and apply.
+async function chooseImportScope() {
+  return await modalChoice({
+    title:   "What to import?",
+    message: "Pick the scope of this import.",
+    choices: [
+      { id: "all",     label: "Everything",     description: "Replace connections, catalogs and scenarios — page will reload" },
+      { id: "scripts", label: "Scenarios only", description: "Merge scenarios into the current set — no reload, current connections kept" }
+    ]
+  });
+}
+
+// Returns true if import happened (so caller can persist URL history etc.).
+async function applyImport(text, sourceLabel) {
+  const scope = await chooseImportScope();
+  if (!scope) return false;
+  if (scope === "all") {
+    const ok = await modalConfirm({
+      title:        "Replace everything?",
+      message:      `Replace current connections, catalogs and scenarios with ${sourceLabel}? The page will reload.`,
+      confirmLabel: "Replace",
+      danger:       true
+    });
+    if (!ok) return false;
+    persist.importJson(text);
+    sessionStorage.setItem("atelier:tileAfterImport", "1");
+    location.reload();
+    return true;
+  }
+  if (scope === "scripts") {
+    const n = importScriptsOnly(text);
+    await modalAlert({
+      title:   "Scenarios imported",
+      message: `${n} scenario${n === 1 ? "" : "s"} added from ${sourceLabel}.`
+    });
+    return true;
+  }
+  return false;
+}
+
+// Merge `scripts[]` from a snapshot into state.scripts without touching anything else.
+// 名前が衝突したら "name (2)", "name (3)" ... と suffix を付ける。
+function importScriptsOnly(text) {
+  const parsed = JSON.parse(text);
+  if (!parsed || typeof parsed !== "object") throw new Error("Invalid JSON: not an object");
+  const inner = parsed.state ?? parsed;
+  const incoming = Array.isArray(inner?.scripts) ? inner.scripts : [];
+  if (!incoming.length) throw new Error("No scenarios found in the snapshot");
+  const taken = new Set(state.scripts.map(s => s.name));
+  const uniqueName = (n) => {
+    if (!taken.has(n)) return n;
+    let i = 2;
+    while (taken.has(`${n} (${i})`)) i++;
+    return `${n} (${i})`;
+  };
+  let added = 0;
+  for (const sc of incoming) {
+    const name = uniqueName(sc.name || `imported scenario ${scriptCounter + 1}`);
+    taken.add(name);
+    const id = `scr-${++scriptCounter}`;
+    state.scripts.push({
+      id, name,
+      body:      typeof sc.body === "string" ? sc.body : "",
+      autoLoop:  false,
+      createdAt: typeof sc.createdAt === "number" ? sc.createdAt : Date.now(),
+      updatedAt: Date.now()
+    });
+    added++;
+  }
+  renderScripts();
+  dirty();
+  return added;
 }
 
 // ─── URL から import ─────────────────────────────────────
@@ -2354,13 +2589,6 @@ async function importFromUrlFlow() {
     await modalAlert({ title: "Invalid URL", message: "URL は http:// または https:// で始めてください。" });
     return;
   }
-  const ok = await modalConfirm({
-    title:        "Import this URL?",
-    message:      `Replace current connections, catalogs and scripts with the snapshot at "${url}"? The page will reload.`,
-    confirmLabel: "Import",
-    danger:       true
-  });
-  if (!ok) return;
   try {
     // 同一オリジン (=relative path / dev-server 上の /scenarios/...) は直接 fetch、
     // 外部オリジンは dev-server の /proxy?url=... 経由で CORS を回避。
@@ -2373,11 +2601,68 @@ async function importFromUrlFlow() {
     const res = await fetch(target, { headers: { Accept: "application/json" } });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const text = await res.text();
-    // 軽い sanity チェック
-    JSON.parse(text);
-    persist.importJson(text);
-    saveImportUrlHistory([url, ...history.filter(u => u !== url)]);
-    location.reload();
+    JSON.parse(text);   // sanity
+    const ok = await applyImport(text, `"${url}"`);
+    if (ok) saveImportUrlHistory([url, ...history.filter(u => u !== url)]);
+  } catch (err) {
+    await modalAlert({ title: "Import failed", message: err?.message || String(err) });
+  }
+}
+
+// ─── Repository (mule-app に同梱された scenarios/index.json) から import ───
+async function importFromRepositoryFlow() {
+  // index は **同一オリジンの相対パス** を前提 (atelier-static が静的配信する)。
+  // dev-server / atelier-static どちらでも /scenarios/index.json で取れる。
+  let items;
+  try {
+    const res = await fetch("/scenarios/index.json", { headers: { Accept: "application/json" } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const idx = await res.json();
+    items = Array.isArray(idx?.items) ? idx.items : [];
+  } catch (err) {
+    await modalAlert({
+      title:   "Repository not available",
+      message: `/scenarios/index.json を取得できませんでした (${err?.message || err})。dev-server / atelier-static 越しに開いていますか?`
+    });
+    return;
+  }
+  if (!items.length) {
+    await modalAlert({ title: "Repository is empty", message: "Bundled snapshot がありません。" });
+    return;
+  }
+  const result = await modalChoice({
+    title:   "Import from repository",
+    message: "Pick a snapshot to import.",
+    choices: items.map(it => ({
+      id:          it.url,
+      label:       it.name || it.id || it.url,
+      description: it.description || it.url
+    })),
+    extras: [
+      { id: "scriptsOnly", label: "Scenarios only",
+        description: "Skip connections / catalogs — merge scenarios into the current set",
+        defaultChecked: false }
+    ]
+  });
+  if (!result) return;
+  const pick = result.id;
+  const scriptsOnly = !!result.extras?.scriptsOnly;
+  try {
+    const res = await fetch(pick, { headers: { Accept: "application/json" } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    JSON.parse(text);   // sanity
+    const picked = items.find(it => it.url === pick);
+    const label = picked?.name || picked?.id || pick;
+    if (scriptsOnly) {
+      const n = importScriptsOnly(text);
+      await modalAlert({
+        title:   "Scenarios imported",
+        message: `${n} scenario${n === 1 ? "" : "s"} added from "${label}".`
+      });
+      return;
+    }
+    await applyImport(text, `"${label}"`);
   } catch (err) {
     await modalAlert({ title: "Import failed", message: err?.message || String(err) });
   }
@@ -2402,7 +2687,24 @@ function loadDemo() {
 //
 // stack の上下順序は、 元の y 座標が小さい (上にある) ものから採用。
 // 最終的に各ウインドウの el.style.{left,top,width,height} を更新し dirty() で永続化。
-function tileWindows() {
+// tile ボタンで cycle するのは「ユーザの配置を上書きする」3 モードだけ。
+// fit モード ("snap to current") は別ボタンに分離 — 既存配置を尊重するので意味が逆。
+const TILE_MODES = ["smart", "uniform", "columns"];
+let _tileModeIdx = -1;
+function cycleTileMode() {
+  _tileModeIdx = (_tileModeIdx + 1) % TILE_MODES.length;
+  const mode = TILE_MODES[_tileModeIdx];
+  tileWindows(mode);
+  flashTileLabel(mode);
+}
+function flashTileLabel(mode) {
+  const btn = $("#btnLayout");
+  if (!btn) return;
+  btn.dataset.tileMode = mode;
+  btn.title = `Layout: ${mode} (click to cycle)`;
+}
+
+function tileWindows(mode) {
   const ws = activeWorkspace();
   if (!ws) return;
   const rect = $("#windowsLayer").getBoundingClientRect();
@@ -2412,9 +2714,69 @@ function tileWindows() {
   const gap = 16;
   const W = rect.width, H = rect.height;
 
+  if (mode === "uniform") return tileUniform(ws, W, H, gap);
+  if (mode === "columns") return tileColumns(ws, W, H, gap);
+  if (mode === "fit")     return tileFit(ws, W, H, gap);
+  // mode === "smart" or undefined → 既存ロジック
+
   // --- 1) 単独 → 全画面 ---
   if (n === 1) {
     applyTile([{ win: ws.windows[0], x: gap, y: gap, w: W - 2*gap, h: H - 2*gap }]);
+    return;
+  }
+
+  // --- 1.5) 5 windows → 2x3 grid + feature cell (tile2.png pattern) ---
+  if (n === 5) {
+    const measured = ws.windows.map(win => {
+      const x = parseFloat(win.el.style.left) || 0;
+      const y = parseFloat(win.el.style.top)  || 0;
+      const w = win.el.offsetWidth  || 0;
+      const h = win.el.offsetHeight || 0;
+      return { win, x, y, w, h, area: w*h, cx: x + w/2, cy: y + h/2 };
+    });
+    const main   = [...measured].sort((a, b) => b.area - a.area)[0];
+    const others = measured.filter(o => o !== main);
+
+    const cellW = Math.floor((W - 4 * gap) / 3);
+    const cellH = Math.floor((H - 3 * gap) / 2);
+    const cell  = (row, col, rowSpan = 1, colSpan = 1) => ({
+      x: gap + col * (cellW + gap),
+      y: gap + row * (cellH + gap),
+      w: colSpan * cellW + (colSpan - 1) * gap,
+      h: rowSpan * cellH + (rowSpan - 1) * gap
+    });
+
+    const inTop  = main.cy < H * 0.5;
+    const inLeft = main.cx < W * 0.5;
+
+    let mainCell, smallCells;
+    if (inTop && inLeft) {
+      // Feature TL: 上段 [LARGE×2, small] / 下段 [s, s, s]
+      mainCell   = cell(0, 0, 1, 2);
+      smallCells = [cell(0, 2), cell(1, 0), cell(1, 1), cell(1, 2)];
+    } else if (inTop && !inLeft) {
+      // Feature TR: 上段 [small, LARGE×2] / 下段 [s, s, s]
+      mainCell   = cell(0, 1, 1, 2);
+      smallCells = [cell(0, 0), cell(1, 0), cell(1, 1), cell(1, 2)];
+    } else if (!inTop && inLeft) {
+      // Feature BL: 上段 [s, s, s] / 下段 [LARGE×2, small]
+      mainCell   = cell(1, 0, 1, 2);
+      smallCells = [cell(0, 0), cell(0, 1), cell(0, 2), cell(1, 2)];
+    } else {
+      // Feature BR (tile2.png デフォルト): 上段 [s, s, s] / 下段 [small, LARGE×2]
+      mainCell   = cell(1, 1, 1, 2);
+      smallCells = [cell(0, 0), cell(0, 1), cell(0, 2), cell(1, 0)];
+    }
+
+    // 残りウインドウは現在位置の reading order (上→下、左→右) で割り当て
+    others.sort((a, b) => {
+      if (Math.abs(a.cy - b.cy) > 60) return a.cy - b.cy;
+      return a.cx - b.cx;
+    });
+
+    const placements = [{ win: main.win, ...mainCell }];
+    others.forEach((o, i) => placements.push({ win: o.win, ...smallCells[i] }));
+    applyTile(placements);
     return;
   }
 
@@ -2484,6 +2846,117 @@ function tileWindows() {
     const col = i % cols;
     const row = Math.floor(i / cols);
     return { win, x: gap + col * (w + gap), y: gap + row * (h + gap), w, h };
+  });
+  applyTile(placements);
+}
+
+// すべてのウインドウを同じサイズで grid 配置 (画面全体を均等に埋める)
+function tileUniform(ws, W, H, gap) {
+  const n = ws.windows.length;
+  // 縦横比に近い分割を選ぶ (cols × rows >= n を満たす中で w/h が画面比に近いもの)
+  const aspect = W / H;
+  let bestCols = 1, bestScore = -Infinity;
+  for (let cols = 1; cols <= n; cols++) {
+    const rows = Math.ceil(n / cols);
+    const w = (W - gap * (cols + 1)) / cols;
+    const h = (H - gap * (rows + 1)) / rows;
+    if (w <= 0 || h <= 0) continue;
+    const cellAspect = w / h;
+    // 画面のアスペクトに近いほど高得点 (1 に近いほど square cell)
+    const score = -Math.abs(Math.log(cellAspect / aspect));
+    if (score > bestScore) { bestScore = score; bestCols = cols; }
+  }
+  const cols = bestCols;
+  const rows = Math.ceil(n / cols);
+  const w = Math.floor((W - gap * (cols + 1)) / cols);
+  const h = Math.floor((H - gap * (rows + 1)) / rows);
+  const placements = ws.windows.map((win, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    return { win, x: gap + col * (w + gap), y: gap + row * (h + gap), w, h };
+  });
+  applyTile(placements);
+}
+
+// 既存ウインドウの位置・サイズを尊重して、行/列構造に snap する fit モード
+//   - 縦方向に行を検出（cy が上下範囲に重なるなら同じ row）
+//   - 各 row 内は X 順、widths は現在幅に比例させて画面幅いっぱいに伸ばす
+//   - 行の高さは row 最大高に比例（高い行はそのまま大きく、低い行は小さく）
+function tileFit(ws, W, H, gap) {
+  const items = ws.windows.map(win => {
+    const x = parseFloat(win.el.style.left) || 0;
+    const y = parseFloat(win.el.style.top)  || 0;
+    const w = win.el.offsetWidth  || 0;
+    const h = win.el.offsetHeight || 0;
+    return { win, x, y, w, h, cx: x + w/2, cy: y + h/2, top: y, bottom: y + h };
+  });
+  if (items.length === 0) return;
+
+  // ── 行クラスタリング: cy 順に走査して、現 row の範囲に center-y が入れば同じ row へ ──
+  const byY = [...items].sort((a, b) => a.cy - b.cy);
+  const rows = [];
+  byY.forEach(it => {
+    const cur = rows[rows.length - 1];
+    if (cur) {
+      const rowTop    = Math.min(...cur.map(p => p.top));
+      const rowBottom = Math.max(...cur.map(p => p.bottom));
+      const overlapTol = 24; // 多少のずれは許容
+      if (it.cy < rowBottom - overlapTol && it.cy > rowTop - overlapTol) {
+        cur.push(it);
+        return;
+      }
+    }
+    rows.push([it]);
+  });
+
+  // 行高は「row 内の最大 h」に比例配分
+  const rowHeights = rows.map(r => Math.max(...r.map(p => p.h)));
+  const sumH = rowHeights.reduce((s, h) => s + h, 0) || 1;
+  const availH = H - gap * (rows.length + 1);
+
+  let yCursor = gap;
+  const placements = [];
+  rows.forEach((row, ri) => {
+    row.sort((a, b) => a.cx - b.cx);
+    const cellH = (ri === rows.length - 1)
+      ? (H - gap - yCursor)                        // 最終行は端数を吸収
+      : Math.floor(availH * rowHeights[ri] / sumH);
+    const sumW = row.reduce((s, p) => s + p.w, 0) || 1;
+    const availW = W - gap * (row.length + 1);
+    let xCursor = gap;
+    row.forEach((it, ci) => {
+      const cellW = (ci === row.length - 1)
+        ? (W - gap - xCursor)                      // 行内の最後は端数吸収
+        : Math.floor(availW * it.w / sumW);
+      placements.push({ win: it.win, x: xCursor, y: yCursor, w: cellW, h: cellH });
+      xCursor += cellW + gap;
+    });
+    yCursor += cellH + gap;
+  });
+  applyTile(placements);
+}
+
+// 縦に並べる column 配置 — N 個の縦長カラムに均等配分
+function tileColumns(ws, W, H, gap) {
+  const n = ws.windows.length;
+  const cols = Math.min(n, Math.max(2, Math.round(W / 380)));
+  const colW = Math.floor((W - gap * (cols + 1)) / cols);
+  // 各カラムへの割り振り (left-to-right)
+  const per = Array.from({ length: cols }, () => []);
+  ws.windows.forEach((win, i) => per[i % cols].push(win));
+  const placements = [];
+  per.forEach((col, ci) => {
+    const k = col.length;
+    const cellH = Math.floor((H - gap * (k + 1)) / k);
+    col.forEach((win, ri) => {
+      placements.push({
+        win,
+        x: gap + ci * (colW + gap),
+        y: gap + ri * (cellH + gap),
+        w: colW,
+        h: cellH
+      });
+    });
   });
   applyTile(placements);
 }

@@ -23,22 +23,47 @@ export class A2AAdapter extends ProtocolAdapter {
     this.rpcUrl   = null;
     this.turn = 0;
     // contextId — A2A 0.3 の会話 ID。 サーバ側で会話履歴 (memory) を保つ識別子。
-    // clearChat で reroll することで「忘れる」を表現する。
-    this.contextId = uuid();
+    // 初回は null にしておき、 サーバから返ってきた contextId をそのまま使う。
+    // (MAF broker のように「先に read、 無ければ 500」と実装された server を救うため。
+    //  client 側で生成すると broker の ObjectStore に存在しないキーを送ることになり、
+    //  Object with key [...] does not exist in store ... というエラーで死ぬ。)
+    this.contextId = null;
   }
 
-  // 履歴クリアからのフック (window.js から呼ぶ)。 contextId を新しい値に振り直すと
-  // サーバ側の memory が紐付かなくなり、 次のターンから初対面扱いになる。
+  // 履歴クリアからのフック (window.js から呼ぶ)。 contextId を null に戻すと
+  // 次のターンは初対面扱いとなり、 サーバが新しい contextId を採番してくれる。
   resetContext() {
-    this.contextId = uuid();
+    this.contextId = null;
     this.turn = 0;
   }
 
   async connect() {
     this._setState("connecting");
 
-    const candidates = candidateCardUrls(this.endpoint);
+    // ── キャッシュヒット時は即 open し、 裏で revalidate (stale-while-revalidate) ──
+    const cached = readCardCache(this.endpoint);
+    if (cached) {
+      this.agentCard = cached.card;
+      this.rpcUrl    = cached.card.url || trimSlash(this.endpoint);
+      this._emit("rpc", {
+        dir: "in",
+        method: `cache HIT · agent card · ${shortPath(cached.cardUrl)}`,
+        payload: cached.card,
+        raw: JSON.stringify(cached.card, null, 2)
+      });
+      this._setState("open");
+      this.startedAt = Date.now();
+      this._emit("open", { card: cached.card });
+      // 裏で再検証 (失敗しても open は維持; card が更新されたら state.agentCard を差し替え)
+      this._revalidateCard().catch(() => {});
+      return;
+    }
 
+    await this._fetchCard({ emitOpen: true });
+  }
+
+  async _fetchCard({ emitOpen = false } = {}) {
+    const candidates = candidateCardUrls(this.endpoint);
     let card = null, cardUrl = null, lastErr = null;
     for (const cu of candidates) {
       this._emit("rpc", { dir: "out", method: `GET ${cu}`, raw: `GET ${cu}\nAccept: application/json` });
@@ -48,7 +73,7 @@ export class A2AAdapter extends ProtocolAdapter {
         const res = await fetch(proxify(cu), { headers });
         if (res.status === 404) {
           this._emit("rpc", { dir: "err", method: "404 not found", raw: cu });
-          continue; // 次のパスを試す
+          continue;
         }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         card = await res.json();
@@ -61,23 +86,34 @@ export class A2AAdapter extends ProtocolAdapter {
     }
 
     if (!card) {
-      this._setState("error");
-      const err = lastErr || new Error(`AgentCard not found at ${candidates.join(", ")}`);
-      this._emit("error", err);
-      throw err;
+      if (emitOpen) {
+        this._setState("error");
+        const err = lastErr || new Error(`AgentCard not found at ${candidates.join(", ")}`);
+        this._emit("error", err);
+        throw err;
+      }
+      // revalidate 失敗 → open のままで握り潰す
+      return;
     }
 
     this.agentCard = card;
-    this.rpcUrl = card.url || trimSlash(this.endpoint);
+    this.rpcUrl    = card.url || trimSlash(this.endpoint);
+    writeCardCache(this.endpoint, card, cardUrl);
 
     this._emit("rpc", {
       dir: "in", method: `200 OK · agent card · ${shortPath(cardUrl)}`,
       payload: card, raw: JSON.stringify(card, null, 2)
     });
 
-    this._setState("open");
-    this.startedAt = Date.now();
-    this._emit("open", { card });
+    if (emitOpen) {
+      this._setState("open");
+      this.startedAt = Date.now();
+      this._emit("open", { card });
+    }
+  }
+
+  async _revalidateCard() {
+    return this._fetchCard({ emitOpen: false });
   }
 
   async send(text, opts = {}) {
@@ -88,20 +124,21 @@ export class A2AAdapter extends ProtocolAdapter {
     const useStream = !!(opts.stream && this.agentCard?.capabilities?.streaming);
     const method = useStream ? "message/stream" : "message/send";
 
+    const message = {
+      kind: "message",                        // A2A 0.3+ で discriminator として必須
+      role: "user",
+      parts: [{ kind: "text", text }],
+      messageId: uuid()
+    };
+    // 既存セッションがあるときだけ contextId を付ける。
+    // 初回 (this.contextId === null) は server に採番させる。
+    if (this.contextId) message.contextId = this.contextId;
+
     const body = {
       jsonrpc: "2.0",
       id: reqId,
       method,
-      params: {
-        message: {
-          kind: "message",                    // A2A 0.3+ で discriminator として必須
-          role: "user",
-          parts: [{ kind: "text", text }],
-          messageId: uuid(),
-          contextId: this.contextId           // server-side memory key
-        },
-        configuration: {}
-      }
+      params: { message, configuration: {} }
     };
 
     this._emit("rpc", {
@@ -123,8 +160,17 @@ export class A2AAdapter extends ProtocolAdapter {
 
       if (data.error) throw new Error(`RPC error: ${data.error.message || data.error.code}`);
 
+      // server が採番した contextId を保持 (A2A 0.3 で task.contextId / message.contextId の
+      // どちらにも乗ってくる可能性があるので両方見る)
+      const result = data.result || {};
+      const ctx = result.contextId
+        || result.task?.contextId
+        || result.message?.contextId
+        || result.status?.contextId;
+      if (ctx && !this.contextId) this.contextId = ctx;
+
       // A2A 0.3 互換: 応答が様々な形を取りうるため、テキストパートを掘り出す
-      const messages = collectMessages(data.result || {});
+      const messages = collectMessages(result);
       // LLM-like "thinking" delay: simulate think time before surfacing the reply
       // (scriptRunner の `< Agent` wait もこの emit を待つので、順序が保たれる)
       const delayMs = 1500 + Math.random() * 2000;
@@ -139,6 +185,35 @@ export class A2AAdapter extends ProtocolAdapter {
       throw e;
     }
   }
+}
+
+// ─── agent-card cache (stale-while-revalidate) ────────
+// localStorage に保存。 entry あれば即 connect → 裏で revalidate。
+//   key:   atelier:a2aCard:<normalized endpoint>
+//   value: { card, cardUrl, savedAt }
+const CARD_CACHE_PREFIX = "atelier:a2aCard:";
+const CARD_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;  // 7d 経ったら捨てる
+
+function readCardCache(endpoint) {
+  try {
+    const raw = localStorage.getItem(CARD_CACHE_PREFIX + endpoint);
+    if (!raw) return null;
+    const ent = JSON.parse(raw);
+    if (!ent?.card || !ent?.savedAt) return null;
+    if (Date.now() - ent.savedAt > CARD_CACHE_TTL_MS) {
+      localStorage.removeItem(CARD_CACHE_PREFIX + endpoint);
+      return null;
+    }
+    return ent;
+  } catch { return null; }
+}
+function writeCardCache(endpoint, card, cardUrl) {
+  try {
+    localStorage.setItem(
+      CARD_CACHE_PREFIX + endpoint,
+      JSON.stringify({ card, cardUrl, savedAt: Date.now() })
+    );
+  } catch { /* quota / private mode は無視 */ }
 }
 
 // ─── helpers ────────────────────────────────────────

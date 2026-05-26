@@ -4,9 +4,9 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.atelier</groupId>
+    <groupId>fe1db8fb-8261-4b5c-a591-06fea582f980</groupId>
     <artifactId>atelier-static</artifactId>
-    <version>1.0.5</version>
+    <version>1.0.17</version>
     <packaging>mule-application</packaging>
 
     <name>atelier-static</name>
@@ -51,6 +51,7 @@
                                         <include>js/**</include>
                                         <include>oauth/**</include>
                                         <include>assets/**</include>
+                                        <include>scenarios/**</include>
                                     </includes>
                                 </resource>
                             </resources>
@@ -95,6 +96,15 @@
             <classifier>mule-plugin</classifier>
         </dependency>
     </dependencies>
+
+    <distributionManagement>
+        <repository>
+            <id>anypoint-exchange-v3</id>
+            <name>Anypoint Exchange v3</name>
+            <url>https://maven.anypoint.mulesoft.com/api/v3/organizations/fe1db8fb-8261-4b5c-a591-06fea582f980/maven</url>
+            <layout>default</layout>
+        </repository>
+    </distributionManagement>
 
     <repositories>
         <repository>
