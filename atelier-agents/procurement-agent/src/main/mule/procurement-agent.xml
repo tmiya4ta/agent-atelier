@@ -27,7 +27,7 @@
             <a2a:json><![CDATA[{
   "protocolVersion": "0.3.0",
   "name": "atelier-procurement-agent",
-  "description": "調達担当 AI エージェント (Atelier 用 同期 A2A 版)。代替部品検索 / 在庫予約 / 発注ドラフト / サプライヤー通知 / リスクスコア更新を LLM tool-use ループで実施し、統合サマリを返す。",
+  "description": "調達担当 AI エージェント (Atelier 用 同期 A2A 版)。代替部品検索 / 在庫予約 / 発注ドラフト / サプライヤー通知を LLM tool-use ループで実施し、統合サマリを返す。サプライヤーリスクスコア更新・KG 記録は対象外 (legal-agent 経路)。",
   "url": "${agent.public.url}",
   "version": "1.0.0",
   "preferredTransport": "JSONRPC",
@@ -38,7 +38,7 @@
     {
       "id": "procurement_handle_incident",
       "name": "調達インシデント対応 (LLM tool-use)",
-      "description": "サプライヤー品質インシデント連絡を自然文で受け取り、代替部品検索 / 在庫照会 / 在庫予約 / 発注ドラフト / 通知 / リスクスコア更新 / KG 記録を tool-use ループで実施し、Slack 投稿フォーマットの統合サマリを返す。",
+      "description": "サプライヤー品質インシデント連絡を自然文で受け取り、代替部品検索 / 在庫照会 / 在庫予約 / 発注ドラフト / 通知 を tool-use ループで実施し、Slack 投稿フォーマットの統合サマリを返す。",
       "examples": [
         "関西部品 G-KANSAI-PARTS-001 の P-2024-KAN-001 で不良率15% (500個 HIGH)。INC-2026-0521。代替部品で調達対応してほしい。"
       ],
@@ -141,10 +141,20 @@ output application/java
                 <ee:set-variable variableName="replyText"><![CDATA[%dw 2.0
 output application/java
 var t = ((vars.finalText default "") as String)
+// 最後の assistant メッセージの content (途中まで考えた内容) を拾う。
+// vars.messages の末尾を辿り、 role=="assistant" で content が空でないものを採用。
+var msgs = (vars.messages default [])
+var lastAssistant = (msgs filter ((m) -> ((m.role default "") as String) == "assistant" and ((m.content default "") as String) != ""))
+var lastAssistantContent = if (sizeOf(lastAssistant) > 0) ((lastAssistant[-1].content default "") as String) else ""
+var fallbackByReason =
+  if ((vars.finishReason default "") as String == "length")
+    "ℹ️ 調達 (atelier-procurement-agent) です。\n\n回答が文字数上限に達しました。\nサプライヤー名・部品番号・必要数のいずれかを指定して再度お試しください。"
+  else
+    "ℹ️ 調達 (atelier-procurement-agent) です。\n\n**実行可能な操作**\n- 取引先のゴールデン ID 解決\n- 過去インシデント・取引先関係の照会\n- 代替部品候補の取得\n- 部品在庫の照会\n- 在庫の仮確保\n- 発注ドラフトの作成\n- 取引先への通知メッセージ送付\n\n**対象外** (依頼されても実施しません): サプライヤーリスクスコア更新 / KG (オントロジー) 記録 / 法務契約照会 / 承認依頼送信 / インシデント採番。\n\nお手数ですがサプライヤー名・部品番号・必要数のいずれかを指定してください。"
 ---
-if (t == "")
-  "ℹ️ atelier-procurement-agent: 結論を生成できませんでした (loops=" ++ ((vars.loopCount default 0) as String) ++ ")"
-else t]]></ee:set-variable>
+if (t != "") t
+else if (lastAssistantContent != "") lastAssistantContent
+else fallbackByReason]]></ee:set-variable>
             </ee:variables>
         </ee:transform>
 
@@ -216,59 +226,92 @@ output application/java
                 <ee:set-variable variableName="messages"><![CDATA[%dw 2.0
 output application/java
 var sysPrompt =
-"あなたは調達担当の AI アシスタント (atelier-procurement-agent) です。\n" ++
+"あなたは調達・在庫担当の AI アドバイザ (atelier-procurement-agent) です。Atelier から人間が直接相談しに来るチャネルです。\n" ++
 "\n" ++
-"最重要原則: ユーザの最後の user メッセージに登場する固有名詞 (会社名・部品番号・必要数・インシデントID) を tool 引数にそのまま使うこと。「unknown supplier」「GENERIC-001」「placeholder」などの仮名は絶対に使わない。 user 発話に「関西部品」とあれば必ず supplierName=\"関西部品\" を渡す。\n" ++
+"動作モード: ADVISORY (相談・提案モード)\n" ++
+"  - あなたの基本姿勢は「状況を調べて、 何をすべきか提案する」。 副作用のある tool (在庫の仮確保/発注書ドラフト作成/サプライヤーへの ORDER 通知) は **ユーザが明示的に指示したときだけ** 呼んでください。\n" ++
+"  - 例: 「関西工業の部品で問題が出ました。 何をすればいいですか?」 → read-only の tool だけで状況を把握し、 推奨アクションを箇条書きで返す。 勝手に在庫を仮確保したり PO ドラフトを作成してはいけない。\n" ++
+"  - 例: 「代替部品で在庫を確保して PO ドラフトを作成してください」のような明示の指示があったら、 対応する副作用 tool を実行する。\n" ++
 "\n" ++
-"ユーザーから来たインシデント連絡をもとに、必要に応じて以下のツールを呼び出し、調達対応を完了させてください:\n" ++
-"  1) resolve_supplier (mdm-mcp): サプライヤー名 → ゴールデン ID\n" ++
-"  2) get_supplier_relations (mdm-mcp): 過去インシデント・代替部品候補\n" ++
-"  3) get_alternative_parts (procurement-mcp): 代替部品の互換スコア\n" ++
-"  4) check_inventory (inventory-mcp): 在庫数量\n" ++
-"  5) reserve_inventory (inventory-mcp): 在庫を仮確保\n" ++
-"  6) create_purchase_order_draft (procurement-mcp): 発注書ドラフト作成 (代替元の supplierGoldenId が必要)\n" ++
-"  7) notify_supplier (procurement-mcp): サプライヤーへ ORDER 通知\n" ++
-"  8) update_supplier_risk_score (mdm-mcp): リスクスコア更新 (品質問題が確認できたら 0..1 で上げる)\n" ++
-"  9) update_ontology (mdm-mcp): KG にトリプル記録\n\n" ++
-"重要: 各 tool の返り値は次のように JSON ネストされて返ります。\n" ++
+"最重要原則: ユーザの最後の user メッセージに登場する固有名詞 (会社名・部品番号・必要数・インシデントID) を tool 引数にそのまま使うこと。「unknown supplier」「GENERIC-001」「placeholder」などの仮名は絶対に使わない。 user 発話に「関西工業」とあれば必ず supplierName=\"関西工業\" を渡す。\n" ++
+"\n" ++
+"利用可能なツール:\n" ++
+"  [READ-ONLY — 相談時に使ってよい]\n" ++
+"    1) resolve_supplier (mdm-mcp): サプライヤー名 → ゴールデン ID\n" ++
+"    2) get_supplier_relations (mdm-mcp): 過去インシデント・代替部品候補\n" ++
+"    3) get_alternative_parts (procurement-mcp): 代替部品の互換スコア\n" ++
+"    4) check_inventory (inventory-mcp): 在庫数量\n" ++
+"  [WRITE / 副作用あり — ユーザの明示指示時のみ]\n" ++
+"    5) reserve_inventory (inventory-mcp): 在庫を仮確保\n" ++
+"    6) create_purchase_order_draft (procurement-mcp): 発注書ドラフト作成\n" ++
+"    7) notify_supplier (procurement-mcp): サプライヤーへ ORDER 通知\n\n" ++
+"  [対象外 — 依頼されても実行しない]\n" ++
+"    - サプライヤーリスクスコア更新 / KG オントロジー記録 (legal-agent 経路で実施)\n" ++
+"    - 法務契約照会 / 返品要求書発行 / ペナルティ通知 (legal-agent)\n" ++
+"    - 承認依頼 Slack DM 送信 (org-agent)\n" ++
+"    - インシデント採番 / ステータス更新 (incident-agent)\n\n" ++
+"tool の返り値の読み方:\n" ++
 "  - resolve_supplier → result.supplier.goldenId / result.supplier.name (matched=false でも success ステータス)\n" ++
 "  - get_alternative_parts → result.alternatives[i].partNumber / .compatibility / .supplierGoldenId / .supplierName\n" ++
 "  - check_inventory → result.quantityOnHand / result.available / result.warehouse\n" ++
 "  - reserve_inventory → result.reservationId / result.ttlSeconds\n" ++
 "  - create_purchase_order_draft → result.draftId / result.totalAmount\n" ++
 "  - notify_supplier → result.notificationId\n" ++
-"  - update_supplier_risk_score → result.previousScore / result.newScore\n" ++
-"  - update_ontology → result.tripleId\n" ++
 "\n" ++
-"進め方 (各 tool の返り値から次の引数へ値を引き継ぐ):\n" ++
-"  1. resolve_supplier(supplierName=ユーザの言ったサプライヤー名) を呼ぶ。返り値の result.supplier.goldenId を取引先ゴールデン ID として保持。\n" ++
-"     入力に「関西部品」「中部マテリアル」のような名前があれば必ずこの tool を呼ぶこと。matched=false でもサプライヤー名の正規化候補が返るので諦めない。\n" ++
-"  2. get_alternative_parts(partNumber=元の部品番号) で代替部品候補を取得。result.alternatives[0] の partNumber と supplierGoldenId を採用 (互換スコア降順で並んでいる)。\n" ++
-"  3. check_inventory(partNumber=代替部品番号, requiredQuantity=必要数) で在庫を確認。\n" ++
-"  4. result.available が true なら以下を続けて実行:\n" ++
-"     a. reserve_inventory(partNumber=代替, quantity=必要数, incidentId=ユーザ提示の INC ID, ttlSeconds=86400)\n" ++
-"     b. create_purchase_order_draft(partNumber=代替, quantity=必要数, supplierGoldenId=代替の supplierGoldenId, incidentId=INC ID)\n" ++
-"     c. notify_supplier(supplierGoldenId=代替の supplierGoldenId, type=\"ORDER\", message=注文内容, incidentId=INC ID)\n" ++
-"  5. 元サプライヤーの品質問題が裏付けられたら update_supplier_risk_score(supplierGoldenId=ステップ 1 で得たゴールデン ID, riskScore=0.85, reason=理由, incidentId=INC ID)。\n" ++
-"  6. 最後に update_ontology(subject=INC ID, predicate=\"hasResolution\", object=draftId, incidentId=INC ID)。\n" ++
+"相談 (ADVISORY) の進め方:\n" ++
+"  1. resolve_supplier(supplierName=ユーザの言ったサプライヤー名) を呼ぶ。 matched=false でもサプライヤー名の正規化候補が返るので諦めない。\n" ++
+"  2. 必要なら get_supplier_relations で過去インシデントを参照。\n" ++
+"  3. 部品番号があれば get_alternative_parts で代替候補一覧を取得。\n" ++
+"  4. 必要数や具体的な部品が決まれば check_inventory で在庫数量を確認。\n" ++
+"  5. ここで止め、 「現状はこう」「次はこういうアクションが必要 (在庫の仮確保/PO ドラフト作成/サプライヤー通知)」 を Markdown で提案する。 副作用 tool は呼ばない。\n" ++
+"  6. ユーザが「では仮確保と PO ドラフトをお願いします」のように指示したら、 そのときだけ副作用 tool を実行する。\n" ++
 "\n" ++
 "重要ルール:\n" ++
-"  - ユーザに情報を聞き返さない。サプライヤー名 / 部品番号 / 必要数 / incidentId のうち何か一つでも分かれば、即 resolve_supplier から始めて tool 連鎖を進めること。\n" ++
-"  - 数量や severity が不明なら quantity=500 / severity=\"MEDIUM\" / reason=\"unspecified\" などの妥当な default で先に進める。「情報下さい」フォームは出力しない。\n" ++
+"  - ユーザに無闇に情報を聞き返さない。 サプライヤー名 / 部品番号 のどちらか一つでも分かれば、 read-only tool で調査を開始する。\n" ++
 "  - tool が status=success で返したら必ず result.* の中身を読み、「取得できませんでした」と書かない。\n" ++
+"  - WRITE tool を勝手に呼ばない。 ユーザが「対応して」「実行して」「確保して」「発注して」「通知して」「更新して」 のような実行指示を出したときだけ呼ぶ。\n" ++
 "\n" ++
 "会話履歴について:\n" ++
-"  - 以前のターンが含まれる場合は参照し、解決済みの supplierGoldenId / 代替部品 / reservationId / draftId を覚えていれば後続では再呼び出しせず即答すること。\n" ++
+"  - 以前のターンが含まれる場合は参照し、 解決済みの supplierGoldenId / 代替部品 / 在庫数量 を覚えていれば再呼び出しせず即答する。\n" ++
 "\n" ++
-"全ての必要ツールを呼び終えたら、Atelier に返す統合サマリ (Markdown 短文・5〜10 行) を返してください。\n" ++
-"次のフォーマットで:\n" ++
-"  ✅ procurement-agent: <一言サマリ>\n" ++
-"  - 取引先: <name> (<goldenId>)\n" ++
-"  - 代替部品: <partNumber> 互換 <%>\n" ++
-"  - 在庫: <quantityOnHand> 個\n" ++
-"  - 発注ドラフト: <draftId> ¥<totalAmount>\n" ++
-"  - 通知: <notificationId>\n" ++
-"  - リスクスコア更新: <previous> → <new>"
+"私が対応できない / 情報が足りない時の応答ルール:\n" ++
+"  - 上記 9 つの tool で扱えない自由検索や、 サプライヤー名・部品番号のいずれも分からない場合、 必ず以下のテンプレートで Markdown 4〜8 行返してください:\n" ++
+"\n" ++
+"    ℹ️ 調達 (atelier-procurement-agent) です。\n" ++
+"\n" ++
+"    **実行可能な操作**\n" ++
+"    - 取引先のゴールデン ID 解決\n" ++
+"    - 過去インシデント・取引先関係の照会\n" ++
+"    - 代替部品候補の取得\n" ++
+"    - 部品在庫の照会\n" ++
+"    - 在庫の仮確保\n" ++
+"    - 発注ドラフトの作成\n" ++
+"    - 取引先への通知メッセージ送付\n" ++
+"\n" ++
+"    **対象外** (依頼されても実施しません): サプライヤーリスクスコア更新 / KG (オントロジー) 記録 / 法務契約照会 / 承認依頼送信 / インシデント採番。\n" ++
+"\n" ++
+"    お手数ですがサプライヤー名・部品番号・必要数のいずれかを指定してください。\n" ++
+"\n" ++
+"出力フォーマット:\n" ++
+"  [ADVISORY 回答 — 副作用 tool を呼ばない場合]\n" ++
+"    ✅ procurement-agent: <一言サマリ>\n" ++
+"    - 取引先: <name> (<goldenId>)\n" ++
+"    - 代替部品: <partNumber> 互換 <%> (供給元 <supplierName>)\n" ++
+"    - 在庫: <quantityOnHand> 個\n" ++
+"    - 推奨アクション:\n" ++
+"      - 代替部品 <X 個> の在庫仮確保\n" ++
+"      - 代替供給元への発注ドラフト作成\n" ++
+"      - サプライヤーへの ORDER 通知\n" ++
+"    💬 上記を実行する場合は「実行してください」「在庫確保と発注をお願い」のようにご指示ください。\n" ++
+"\n" ++
+"  [EXECUTE 完了 — ユーザ指示で副作用 tool を呼んだ場合]\n" ++
+"    ✅ procurement-agent: <実行サマリ>\n" ++
+"    - 取引先: <name> (<goldenId>)\n" ++
+"    - 代替部品: <partNumber> 互換 <%>\n" ++
+"    - 在庫: <quantityOnHand> 個\n" ++
+"    - 仮確保: <reservationId>\n" ++
+"    - 発注ドラフト: <draftId> ¥<totalAmount>\n" ++
+"    - 通知: <notificationId>"
 ---
 if ((vars.priorMessages default []) != [])
   (vars.priorMessages default []) ++ [{ role: "user", content: (vars.userText default "") as String }]
@@ -303,34 +346,6 @@ output application/java
           depth:            { "type": "integer" }
         },
         required: ["supplierGoldenId"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "update_supplier_risk_score",
-      description: "サプライヤーのリスクスコア (0..1) を更新する",
-      parameters: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string" },
-          riskScore:        { "type": "number" },
-          reason:           { "type": "string" },
-          incidentId:       { "type": "string" }
-        },
-        required: ["supplierGoldenId", "riskScore"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "update_ontology",
-      description: "KG に subject/predicate/object のトリプルを記録",
-      parameters: {
-        "type": "object",
-        properties: {
-          subject:    { "type": "string" },
-          predicate:  { "type": "string" },
-          "object":   { "type": "string" },
-          incidentId: { "type": "string" }
-        },
-        required: ["subject", "predicate", "object"]
       }
   }},
   { "type": "function", "function": {
@@ -532,7 +547,7 @@ read((vars.toolArgsRaw default "{}") as String, "application/json")]]></ee:set-v
 output application/java
 var n = (vars.toolName default "") as String
 ---
-if (n == "resolve_supplier" or n == "get_supplier_relations" or n == "update_supplier_risk_score" or n == "update_ontology") "mdm"
+if (n == "resolve_supplier" or n == "get_supplier_relations") "mdm"
 else if (n == "check_inventory" or n == "reserve_inventory" or n == "cancel_inventory_reservation") "inventory"
 else if (n == "get_alternative_parts" or n == "create_purchase_order_draft" or n == "notify_supplier") "procurement"
 else "unknown"]]></ee:set-variable>

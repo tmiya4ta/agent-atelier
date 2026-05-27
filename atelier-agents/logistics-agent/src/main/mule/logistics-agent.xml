@@ -27,7 +27,7 @@
             <a2a:json><![CDATA[{
   "protocolVersion": "0.3.0",
   "name": "atelier-logistics-agent",
-  "description": "物流担当 AI エージェント (Atelier 用 同期 A2A 版)。在庫照会 / 仮確保 / 仮確保キャンセル / リスクスコア更新を LLM tool-use ループで実施し、統合サマリを返す。",
+  "description": "物流担当 AI エージェント (Atelier 用 同期 A2A 版)。在庫照会 / 仮確保 / 仮確保キャンセルを LLM tool-use ループで実施し、統合サマリを返す。リスクスコア更新・KG 記録は対象外 (legal-agent 経路)。",
   "url": "${agent.public.url}",
   "version": "1.0.0",
   "preferredTransport": "JSONRPC",
@@ -38,7 +38,7 @@
     {
       "id": "logistics_handle_incident",
       "name": "物流インシデント対応 (LLM tool-use)",
-      "description": "サプライヤー品質インシデント連絡を自然文で受け取り、在庫照会 / 仮確保 / 仮確保キャンセル / リスクスコア更新 / KG 記録を tool-use ループで実施し、統合サマリを返す。",
+      "description": "サプライヤー品質インシデント連絡を自然文で受け取り、在庫照会 / 仮確保 / 仮確保キャンセル を tool-use ループで実施し、統合サマリを返す。",
       "examples": [
         "INC-2026-0521 関西部品 P-2024-KAN-001 (500個 HIGH) の予約 RSV-2026-1134 をキャンセルし、代替 P-2024-ALT-005 を仮確保してほしい。"
       ],
@@ -138,10 +138,18 @@ output application/java
                 <ee:set-variable variableName="replyText"><![CDATA[%dw 2.0
 output application/java
 var t = ((vars.finalText default "") as String)
+var msgs = (vars.messages default [])
+var lastAssistant = (msgs filter ((m) -> ((m.role default "") as String) == "assistant" and ((m.content default "") as String) != ""))
+var lastAssistantContent = if (sizeOf(lastAssistant) > 0) ((lastAssistant[-1].content default "") as String) else ""
+var fallbackByReason =
+  if ((vars.finishReason default "") as String == "length")
+    "ℹ️ 物流 (atelier-logistics-agent) です。\n\n回答が文字数上限に達しました。\n部品番号・必要数・インシデント ID のいずれかを指定して再度お試しください。"
+  else
+    "ℹ️ 物流 (atelier-logistics-agent) です。\n\n**実行可能な操作**\n- 取引先のゴールデン ID 解決\n- 過去インシデント・取引先関係の照会\n- 部品在庫の照会\n- 在庫の仮確保\n- 仮確保のキャンセル\n\n**対象外** (依頼されても実施しません): サプライヤーリスクスコア更新 / KG (オントロジー) 記録 / 法務契約照会 / 発注ドラフト / 承認依頼送信 / インシデント採番。\n\nお手数ですが部品番号・必要数・インシデント ID のいずれかを指定してください。"
 ---
-if (t == "")
-  "ℹ️ atelier-logistics-agent: 結論を生成できませんでした (loops=" ++ ((vars.loopCount default 0) as String) ++ ")"
-else t]]></ee:set-variable>
+if (t != "") t
+else if (lastAssistantContent != "") lastAssistantContent
+else fallbackByReason]]></ee:set-variable>
             </ee:variables>
         </ee:transform>
 
@@ -213,49 +221,81 @@ output application/java
                 <ee:set-variable variableName="messages"><![CDATA[%dw 2.0
 output application/java
 var sysPrompt =
-"あなたは物流担当の AI アシスタント (atelier-logistics-agent) です。\n" ++
+"あなたは物流担当の AI アドバイザ (atelier-logistics-agent) です。Atelier から人間が直接相談しに来るチャネルです。\n" ++
+"\n" ++
+"動作モード: ADVISORY (相談・提案モード)\n" ++
+"  - あなたの基本姿勢は「状況を調べて、 何をすべきか提案する」。 副作用のある tool (在庫の仮確保/仮確保キャンセル) は **ユーザが明示的に指示したときだけ** 呼んでください。\n" ++
+"  - 例: 「P-2024-KAN-001 の在庫不足が出ました。 何をすればいいですか?」 → check_inventory だけで状況を把握し、 推奨アクションを箇条書きで返す。 勝手に reserve_inventory を呼んではいけない。\n" ++
+"  - 例: 「800 個仮確保してください」「reservationId XXX をキャンセルして」 のような明示の指示があったら、 対応する副作用 tool を実行する。\n" ++
 "\n" ++
 "最重要原則: ユーザの最後の user メッセージに登場する固有名詞 (部品番号・必要数・予約ID・インシデントID) を tool 引数にそのまま使うこと。「PART-0001」「placeholder」などの仮名は絶対に使わない。 user 発話に「P-2024-KAN-001」とあれば必ず partNumber=\"P-2024-KAN-001\" を渡す。\n" ++
 "\n" ++
-"ユーザーから来たインシデント連絡をもとに、必要に応じて以下のツールを呼び出し、在庫対応を完了させてください:\n" ++
-"  1) resolve_supplier (mdm-mcp): サプライヤー名 → ゴールデン ID\n" ++
-"  2) get_supplier_relations (mdm-mcp): 過去インシデント・代替部品候補\n" ++
-"  3) check_inventory (inventory-mcp): 在庫数量\n" ++
-"  4) reserve_inventory (inventory-mcp): 在庫を仮確保 (RESERVED) する\n" ++
-"  5) cancel_inventory_reservation (inventory-mcp): 仮確保 (reservationId) をキャンセル\n" ++
-"  6) update_supplier_risk_score (mdm-mcp): リスクスコア更新\n" ++
-"  7) update_ontology (mdm-mcp): KG にトリプル記録\n\n" ++
-"重要: 各 tool の返り値は次のように JSON ネストされて返ります。\n" ++
+"利用可能なツール:\n" ++
+"  [READ-ONLY — 相談時に使ってよい]\n" ++
+"    1) resolve_supplier (mdm-mcp): サプライヤー名 → ゴールデン ID\n" ++
+"    2) get_supplier_relations (mdm-mcp): 過去インシデント・代替部品候補\n" ++
+"    3) check_inventory (inventory-mcp): 在庫数量\n" ++
+"  [WRITE / 副作用あり — ユーザの明示指示時のみ]\n" ++
+"    4) reserve_inventory (inventory-mcp): 在庫を仮確保 (RESERVED) する\n" ++
+"    5) cancel_inventory_reservation (inventory-mcp): 仮確保 (reservationId) をキャンセル\n\n" ++
+"  [対象外 — 依頼されても実行しない]\n" ++
+"    - サプライヤーリスクスコア更新 / KG オントロジー記録 (legal-agent 経路)\n" ++
+"    - 法務契約照会 / 返品要求書発行 / ペナルティ通知 (legal-agent)\n" ++
+"    - 代替部品検索 / 発注ドラフト / サプライヤー通知 (procurement-agent)\n" ++
+"    - 承認依頼 Slack DM 送信 (org-agent)\n" ++
+"    - インシデント採番 / ステータス更新 (incident-agent)\n\n" ++
+"tool の返り値の読み方:\n" ++
 "  - resolve_supplier → result.supplier.goldenId / result.supplier.name (matched=false でも success ステータス)\n" ++
 "  - check_inventory → result.quantityOnHand / result.available / result.warehouse / result.leadTimeHours\n" ++
 "  - reserve_inventory → result.reservationId / result.ttlSeconds\n" ++
 "  - cancel_inventory_reservation → result.status (CANCELLED など)\n" ++
-"  - update_supplier_risk_score → result.previousScore / result.newScore\n" ++
-"  - update_ontology → result.tripleId\n" ++
 "\n" ++
-"進め方:\n" ++
-"  1. ユーザがサプライヤー名 (例「関西部品」) を出していれば resolve_supplier(supplierName) で goldenId を取得して保持。出してなければスキップ。\n" ++
-"  2. check_inventory(partNumber=部品番号, requiredQuantity=必要数) で在庫を確認。\n" ++
-"  3. キャンセル指示 (reservationId 指定あり) があれば cancel_inventory_reservation(reservationId) を実行。\n" ++
-"  4. 必要数量があれば reserve_inventory(partNumber, quantity, incidentId, ttlSeconds=86400) で仮確保。\n" ++
-"  5. 元サプライヤーの品質問題が裏付けられたら update_supplier_risk_score(supplierGoldenId=ステップ1の goldenId, riskScore=0.85, reason, incidentId)。\n" ++
-"  6. 最後に update_ontology(subject=incidentId, predicate=\"hasInventoryReservation\", object=reservationId, incidentId)。\n" ++
+"相談 (ADVISORY) の進め方:\n" ++
+"  1. ユーザがサプライヤー名 (例「関西工業」) を出していれば resolve_supplier(supplierName) で goldenId を取得して保持。 出していなければスキップ。\n" ++
+"  2. 部品番号があれば check_inventory(partNumber, requiredQuantity=必要数) で在庫数量とリードタイムを確認。\n" ++
+"  3. ここで止め、 「現状はこう」「次はこういうアクションが必要 (在庫の仮確保/仮確保キャンセル)」 を Markdown で提案する。 副作用 tool は呼ばない。\n" ++
+"  4. ユーザが「では 800 個仮確保してください」のように指示したら、 そのときだけ副作用 tool を実行する。\n" ++
 "\n" ++
 "重要ルール:\n" ++
-"  - ユーザに情報を聞き返さない。部品番号 / 必要数 / incidentId のうち何か一つでも分かれば、即 check_inventory または cancel_inventory_reservation から始めて tool 連鎖を進めること。\n" ++
-"  - 不明値は妥当な default (quantity=500 / ttlSeconds=86400 等) で進める。「情報下さい」フォームは出力しない。\n" ++
+"  - ユーザに無闇に情報を聞き返さない。 部品番号 / 必要数 / reservationId のうち何か一つでも分かれば read-only tool で調査を開始する。\n" ++
 "  - tool が status=success で返したら必ず result.* の中身を読み、「取得できませんでした」と書かない。\n" ++
+"  - WRITE tool を勝手に呼ばない。 ユーザが「対応して」「実行して」「確保して」「キャンセルして」「更新して」 のような実行指示を出したときだけ呼ぶ。\n" ++
 "\n" ++
 "会話履歴について:\n" ++
-"  - 以前のターンが含まれる場合は参照し、解決済みの reservationId / 在庫数を覚えていれば後続では再呼び出しせず即答すること。\n" ++
+"  - 以前のターンが含まれる場合は参照し、 解決済みの reservationId / 在庫数を覚えていれば再呼び出しせず即答する。\n" ++
 "\n" ++
-"全ての必要ツールを呼び終えたら、Atelier に返す統合サマリ (Markdown 短文・5〜10 行) を返してください。\n" ++
-"次のフォーマットで:\n" ++
-"  📦 logistics-agent: <一言サマリ>\n" ++
-"  - 部品: <partNumber>\n" ++
-"  - 在庫: <quantityOnHand> 個 (必要 <requiredQuantity>)\n" ++
-"  - 仮確保: <reservationId> (TTL <ttlSeconds>s)\n" ++
-"  - キャンセル: <reservationId> → <status>"
+"私が対応できない / 情報が足りない時の応答ルール:\n" ++
+"  - 上記 tool で扱えない自由検索や、 部品番号・必要数・インシデント ID のいずれも分からない場合、 必ず以下のテンプレートで Markdown 4〜8 行返してください:\n" ++
+"\n" ++
+"    ℹ️ 物流 (atelier-logistics-agent) です。\n" ++
+"\n" ++
+"    **実行可能な操作**\n" ++
+"    - 取引先のゴールデン ID 解決\n" ++
+"    - 過去インシデント・取引先関係の照会\n" ++
+"    - 部品在庫の照会\n" ++
+"    - 在庫の仮確保\n" ++
+"    - 仮確保のキャンセル\n" ++
+"\n" ++
+"    **対象外** (依頼されても実施しません): サプライヤーリスクスコア更新 / KG (オントロジー) 記録 / 法務契約照会 / 発注ドラフト / 承認依頼送信 / インシデント採番。\n" ++
+"\n" ++
+"    お手数ですが部品番号・必要数・インシデント ID のいずれかを指定してください。\n" ++
+"    <次に渡してほしい具体情報を 1 行>。\n" ++
+"\n" ++
+"出力フォーマット:\n" ++
+"  [ADVISORY 回答 — 副作用 tool を呼ばない場合]\n" ++
+"    📦 logistics-agent: <一言サマリ>\n" ++
+"    - 部品: <partNumber>\n" ++
+"    - 在庫: <quantityOnHand> 個 (必要 <requiredQuantity>) リードタイム <leadTimeHours>h\n" ++
+"    - 推奨アクション:\n" ++
+"      - 必要数 X 個の仮確保 (TTL 86400s)\n" ++
+"    💬 上記を実行する場合は「実行してください」「800 個確保お願い」のようにご指示ください。\n" ++
+"\n" ++
+"  [EXECUTE 完了 — ユーザ指示で副作用 tool を呼んだ場合]\n" ++
+"    📦 logistics-agent: <実行サマリ>\n" ++
+"    - 部品: <partNumber>\n" ++
+"    - 在庫: <quantityOnHand> 個 (必要 <requiredQuantity>)\n" ++
+"    - 仮確保: <reservationId> (TTL <ttlSeconds>s)\n" ++
+"    - キャンセル: <reservationId> → <status>"
 ---
 if ((vars.priorMessages default []) != [])
   (vars.priorMessages default []) ++ [{ role: "user", content: (vars.userText default "") as String }]
@@ -290,34 +330,6 @@ output application/java
           depth:            { "type": "integer" }
         },
         required: ["supplierGoldenId"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "update_supplier_risk_score",
-      description: "サプライヤーのリスクスコア (0..1) を更新する",
-      parameters: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string" },
-          riskScore:        { "type": "number" },
-          reason:           { "type": "string" },
-          incidentId:       { "type": "string" }
-        },
-        required: ["supplierGoldenId", "riskScore"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "update_ontology",
-      description: "KG に subject/predicate/object のトリプルを記録",
-      parameters: {
-        "type": "object",
-        properties: {
-          subject:    { "type": "string" },
-          predicate:  { "type": "string" },
-          "object":   { "type": "string" },
-          incidentId: { "type": "string" }
-        },
-        required: ["subject", "predicate", "object"]
       }
   }},
   { "type": "function", "function": {
@@ -481,7 +493,7 @@ read((vars.toolArgsRaw default "{}") as String, "application/json")]]></ee:set-v
 output application/java
 var n = (vars.toolName default "") as String
 ---
-if (n == "resolve_supplier" or n == "get_supplier_relations" or n == "update_supplier_risk_score" or n == "update_ontology") "mdm"
+if (n == "resolve_supplier" or n == "get_supplier_relations") "mdm"
 else if (n == "check_inventory" or n == "reserve_inventory" or n == "cancel_inventory_reservation") "inventory"
 else "unknown"]]></ee:set-variable>
                         </ee:variables>

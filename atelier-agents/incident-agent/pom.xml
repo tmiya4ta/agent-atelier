@@ -5,11 +5,11 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>fe1db8fb-8261-4b5c-a591-06fea582f980</groupId>
-    <artifactId>atelier-procurement-agent</artifactId>
-    <version>1.1.8</version>
+    <artifactId>atelier-incident-agent</artifactId>
+    <version>1.0.2</version>
     <packaging>mule-application</packaging>
 
-    <name>atelier-procurement-agent</name>
+    <name>atelier-incident-agent</name>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -49,8 +49,7 @@
                         <properties>
                             <agent.public.url>${agent.public.url}</agent.public.url>
                             <llm.token>${llm.token}</llm.token>
-                            <mcp.procurement.host>${mcp.procurement.host}</mcp.procurement.host>
-                            <mcp.inventory.host>${mcp.inventory.host}</mcp.inventory.host>
+                            <mcp.incident.host>${mcp.incident.host}</mcp.incident.host>
                             <mcp.mdm.host>${mcp.mdm.host}</mcp.mdm.host>
                         </properties>
                     </cloudhub2Deployment>

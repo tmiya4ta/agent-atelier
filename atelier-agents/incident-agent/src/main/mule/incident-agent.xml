@@ -26,8 +26,8 @@
         <a2a:agent-card>
             <a2a:json><![CDATA[{
   "protocolVersion": "0.3.0",
-  "name": "atelier-legal-agent",
-  "description": "法務担当 AI エージェント (Atelier 用 同期 A2A 版)。Slack を介さず、Atelier の chat 入力をそのまま受けて LLM tool-use ループ (contract-mcp / mdm-mcp) を回し、統合サマリを A2A Task response で返す。",
+  "name": "atelier-incident-agent",
+  "description": "インシデント管理 AI アドバイザ (Atelier 用 同期 A2A 版)。Atelier の chat 入力をそのまま受け、LLM tool-use ループ (incident-mcp / mdm-mcp) で既存インシデント参照・新規採番・ステータス更新の相談に応じる。副作用 tool (register / update_status) はユーザの明示指示時のみ実行。",
   "url": "${agent.public.url}",
   "version": "1.0.0",
   "preferredTransport": "JSONRPC",
@@ -36,15 +36,16 @@
   "defaultOutputModes": ["text/plain", "application/json"],
   "skills": [
     {
-      "id": "legal_handle_incident",
-      "name": "法務インシデント対応 (LLM tool-use)",
-      "description": "サプライヤー品質インシデント連絡を自然文で受け取り、品質保証協定書照会 / 返品要求書発行 / ペナルティ通知 / リスクスコア更新 / KG 記録を LLM の tool-use ループで実施し、Slack 投稿用フォーマットの統合サマリを返す。",
+      "id": "incident_advise_or_register",
+      "name": "インシデント相談 / 登録 (LLM tool-use, ADVISORY デフォルト)",
+      "description": "サプライヤー品質インシデントの相談を自然文で受け取り、既存 incidentId の照会、必須情報の確認、新規採番方針の提案を行う。ユーザが「登録してください」「クローズしてください」と明示指示したときだけ register / update_status を実行する。",
       "examples": [
-        "関西部品 (G-KANSAI-PARTS-001) の P-2024-KAN-001 で不良率15% (500個) が出た。HIGH severity でインシデント INC-2026-0521 として法務対応してほしい。"
+        "関西部品の P-2024-KAN-001 で不良率15% 出てます。インシデント登録すべきですか?",
+        "INC-2026-0521 はどんな状態ですか? 解決済みにしてください。"
       ],
       "inputModes": ["text/plain", "application/json"],
       "outputModes": ["text/plain", "application/json"],
-      "tags": ["legal", "contract", "penalty", "risk"]
+      "tags": ["incident", "advisory", "salesforce", "intake"]
     }
   ]
 }]]></a2a:json>
@@ -61,10 +62,10 @@
         </http:default-headers>
     </http:request-config>
 
-    <http:request-config name="Contract_MCP_Request_config" basePath="/">
-        <http:request-connection host="${mcp.contract.host}"
-                                 port="${mcp.contract.port}"
-                                 protocol="${mcp.contract.protocol}"/>
+    <http:request-config name="Incident_MCP_Request_config" basePath="/">
+        <http:request-connection host="${mcp.incident.host}"
+                                 port="${mcp.incident.port}"
+                                 protocol="${mcp.incident.protocol}"/>
     </http:request-config>
 
     <http:request-config name="MDM_MCP_Request_config" basePath="/">
@@ -75,18 +76,13 @@
 
     <jmx:config name="JMX_Config" logBufferSize="5000"/>
 
-    <!-- 会話履歴 (memory) を contextId 単位で保存。 TTL 1 時間。 -->
     <os:object-store name="MEMORY_STORE"
                      entryTtl="1" entryTtlUnit="HOURS"
                      expirationInterval="5" expirationIntervalUnit="MINUTES"
                      maxEntries="500"
                      persistent="false"/>
 
-    <!-- ============================================================
-         A2A task listener — sync entry point. Atelier sends message/send,
-         we run the LLM tool-use loop and respond with vars.taskJson.
-         ============================================================ -->
-    <flow name="legalAgentTaskFlow">
+    <flow name="incidentAgentTaskFlow">
         <a2a:task-listener config-ref="A2A_Server_config">
             <a2a:response>
                 <a2a:response>#[vars.taskJson]</a2a:response>
@@ -94,17 +90,7 @@
         </a2a:task-listener>
 
         <logger level="INFO"
-                message="#['atelier-legal-agent A2A task received. method=' ++ (attributes.jsonRpcMethod default '?') ++ ' taskId=' ++ (attributes.taskId default '?')]"/>
-        <ee:transform doc:name="snapshot raw payload for diagnosis">
-            <ee:variables>
-                <ee:set-variable variableName="rawPayloadJson"><![CDATA[%dw 2.0
-output application/java
----
-write((payload default {}), "application/json") as String]]></ee:set-variable>
-            </ee:variables>
-        </ee:transform>
-        <logger level="INFO"
-                message="#['rawPayload=' ++ (vars.rawPayloadJson default '')]"/>
+                message="#['atelier-incident-agent A2A task received. method=' ++ (attributes.jsonRpcMethod default '?') ++ ' taskId=' ++ (attributes.taskId default '?')]"/>
 
         <ee:transform doc:name="extract user text + task ids + contextId">
             <ee:variables>
@@ -112,10 +98,6 @@ write((payload default {}), "application/json") as String]]></ee:set-variable>
 output application/java
 ---
 ((attributes.taskId default (now() as String)) as String)]]></ee:set-variable>
-                <ee:set-variable variableName="msgObj"><![CDATA[%dw 2.0
-output application/java
----
-if (payload is String) read(payload, "application/json") else payload]]></ee:set-variable>
                 <ee:set-variable variableName="contextId"><![CDATA[%dw 2.0
 output application/java
 var p = if (payload is String) read(payload, "application/json") else payload
@@ -131,24 +113,21 @@ var p = if (payload is String) read(payload, "application/json") else payload
             </ee:variables>
         </ee:transform>
 
-        <logger level="INFO"
-                message="#['userText='   ++ ((vars.userText default '') as String) ++ ' contextId=' ++ ((vars.contextId default '') as String)]"/>
-
         <flow-ref name="loadMemoryFlow"/>
 
-        <try doc:name="agent loop (best effort)">
+        <try>
             <flow-ref name="initAgentStateFlow"/>
             <flow-ref name="agentLoopFlow"/>
             <error-handler>
                 <on-error-continue type="ANY">
                     <logger level="WARN"
                             message="#['Agent loop failed: ' ++ (error.description default error.message default 'unknown')]"/>
-                    <ee:transform doc:name="build error text">
+                    <ee:transform>
                         <ee:variables>
                             <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
 output application/java
 ---
-"⚠️ atelier-legal-agent: Agent ループ中にエラーが発生しました。\n" ++
+"⚠️ atelier-incident-agent: Agent ループ中にエラーが発生しました。\n" ++
 "  " ++ ((error.description default (error.message default "unknown")) as String)]]></ee:set-variable>
                         </ee:variables>
                     </ee:transform>
@@ -156,7 +135,7 @@ output application/java
             </error-handler>
         </try>
 
-        <ee:transform doc:name="prepare reply text">
+        <ee:transform>
             <ee:variables>
                 <ee:set-variable variableName="replyText"><![CDATA[%dw 2.0
 output application/java
@@ -166,9 +145,9 @@ var lastAssistant = (msgs filter ((m) -> ((m.role default "") as String) == "ass
 var lastAssistantContent = if (sizeOf(lastAssistant) > 0) ((lastAssistant[-1].content default "") as String) else ""
 var fallbackByReason =
   if ((vars.finishReason default "") as String == "length")
-    "ℹ️ 法務 (atelier-legal-agent) です。\n\n回答が文字数上限に達しました。\nサプライヤー名・契約 ID・インシデント ID のいずれかを指定して再度お試しください。"
+    "ℹ️ インシデント管理 (atelier-incident-agent) です。\n\n回答が文字数上限に達しました。\nincidentId か (サプライヤー名 + 部品番号 + 不具合内容) を指定して再度お試しください。"
   else
-    "ℹ️ 法務 (atelier-legal-agent) です。\n\n**実行可能な操作**\n- 取引先のゴールデン ID 解決\n- 過去インシデント・取引先関係の照会\n- 品質保証協定書 (条項・ペナルティ上限) の確認\n- 返品要求書の発行\n- ペナルティ通知書の送付\n- サプライヤーリスクスコアの更新\n- KG (オントロジー) へのトリプル登録\n\nサプライヤー名・契約 ID・インシデント ID のいずれかを指定してください。"
+    "ℹ️ インシデント管理 (atelier-incident-agent) です。\n\n**実行可能な操作**\n- 取引先のゴールデン ID 解決\n- 過去インシデント・取引先関係の照会\n- 既存 incidentId の状態照会\n- インシデントの新規採番 (Incident__c 作成)\n- インシデントステータスの更新 (OPEN / IN_PROGRESS / RESOLVED)\n\nincidentId か (サプライヤー名 + 部品番号 + 不具合内容) を教えてください。"
 ---
 if (t != "") t
 else if (lastAssistantContent != "") lastAssistantContent
@@ -178,7 +157,7 @@ else fallbackByReason]]></ee:set-variable>
 
         <flow-ref name="saveMemoryFlow"/>
 
-        <ee:transform doc:name="build A2A Task response">
+        <ee:transform>
             <ee:variables>
                 <ee:set-variable variableName="taskJson"><![CDATA[%dw 2.0
 output application/json
@@ -204,14 +183,13 @@ output application/json
         </ee:transform>
     </flow>
 
-    <!-- Health -->
     <flow name="healthFlow">
         <http:listener config-ref="HTTP_Listener_config" path="/health"/>
         <ee:transform>
             <ee:message><ee:set-payload><![CDATA[%dw 2.0
 output application/json
 ---
-{ status: "UP", app: "atelier-legal-agent" }]]></ee:set-payload></ee:message>
+{ status: "UP", app: "atelier-incident-agent" }]]></ee:set-payload></ee:message>
         </ee:transform>
     </flow>
 
@@ -223,14 +201,8 @@ output application/json
                              pattern="#[attributes.queryParams.pattern default null]"/>
     </flow>
 
-    <!-- ============================================================
-         initAgentStateFlow — seed messages[] + tools[] + counters
-         (sysPrompt and tools are identical to step2/legal-agent;
-         the user message is vars.userText from the A2A part instead of
-         vars.evText from a Slack envelope.)
-         ============================================================ -->
     <sub-flow name="initAgentStateFlow">
-        <ee:transform doc:name="seed messages, tools, counters">
+        <ee:transform>
             <ee:variables>
                 <ee:set-variable variableName="loopCount"><![CDATA[%dw 2.0
 output application/java
@@ -251,85 +223,91 @@ output application/java
                 <ee:set-variable variableName="messages"><![CDATA[%dw 2.0
 output application/java
 var sysPrompt =
-"あなたは法務担当の AI アドバイザ (atelier-legal-agent) です。Atelier から人間が直接相談しに来るチャネルです。\n" ++
+"あなたはインシデント管理担当の AI アドバイザ (atelier-incident-agent) です。Atelier から人間が直接相談しに来るチャネルです。\n" ++
 "\n" ++
 "動作モード: ADVISORY (相談・提案モード)\n" ++
-"  - あなたの基本姿勢は「状況を調べて、 何をすべきか提案する」。 副作用のある tool (返品要求の発行/ペナルティ通知/リスクスコア更新/オントロジー記録) は **ユーザが明示的に指示したときだけ** 呼んでください。\n" ++
-"  - 例: 「関西工業の部品で問題が出ました。 何をすればいいですか?」 → read-only の tool だけで状況を把握し、 推奨アクションを箇条書きで返す。 勝手に返品要求やペナルティ通知を発行してはいけない。\n" ++
-"  - 例: 「ペナルティ通知を出してください」「返品要求を発行してください」「リスクスコアを更新してください」 のような明示の指示があったら、 対応する副作用 tool を実行する。\n" ++
+"  - ユーザの発話が「どうすべき?」「インシデント登録した方がいい?」「INC-XXX はどんな状態?」のような相談・質問なら ADVISORY モード。\n" ++
+"  - ユーザが「登録してください」「採番してください」「クローズしてください」「解決済みにしてください」と明示的に指示したときだけ EXECUTE モードに入る。\n" ++
+"  - 迷ったら ADVISORY。勝手に副作用のある書き込み tool を呼ばない。\n" ++
 "\n" ++
-"最重要原則: ユーザの最後の user メッセージに登場する固有名詞 (会社名・部品番号・インシデントID) を tool 引数にそのまま使うこと。「unknown supplier」「default」「placeholder」などの仮名は絶対に使わない。 user 発話に「関西工業」とあれば必ず supplierName=\"関西工業\" を渡す。\n" ++
+"最重要原則: ユーザの最後の user メッセージに登場する固有名詞 (会社名・部品番号・インシデントID) を tool 引数にそのまま使うこと。「unknown」「placeholder」などの仮名は絶対に使わない。 user 発話に「関西部品」とあれば必ず supplierName=\"関西部品\" を渡す。\n" ++
 "\n" ++
 "利用可能なツール:\n" ++
+"\n" ++
 "  [READ-ONLY — 相談時に使ってよい]\n" ++
-"    1) resolve_supplier (mdm-mcp): サプライヤー名 → ゴールデン ID\n" ++
-"    2) get_supplier_relations (mdm-mcp): 過去インシデント・取引先関係\n" ++
-"    3) get_quality_agreement (contract-mcp): 品質保証協定書 (条項・ペナルティ上限)\n" ++
+"  1) resolve_supplier (mdm-mcp): サプライヤー名 → ゴールデン ID\n" ++
+"  2) get_supplier_relations (mdm-mcp): 過去インシデント・取引先関係\n" ++
+"  3) lookup_incident (incident-mcp): incidentId で既存 Incident__c を 1 件取得 (404 のとき exists=false)\n" ++
+"\n" ++
 "  [WRITE / 副作用あり — ユーザの明示指示時のみ]\n" ++
-"    4) generate_return_request (contract-mcp): 返品要求書 (requestId 採番)\n" ++
-"    5) send_penalty_notice (contract-mcp): ペナルティ通知書 (noticeId 採番)\n" ++
-"    6) update_supplier_risk_score (mdm-mcp): リスクスコア更新\n" ++
-"    7) update_ontology (mdm-mcp): KG にトリプル記録\n\n" ++
-"tool の返り値の読み方:\n" ++
-"  - resolve_supplier → result.supplier.goldenId / result.supplier.name (matched=false でも success ステータス)\n" ++
-"  - get_quality_agreement → result.clause / result.penaltyCap (協定が存在しなければ result.clause が空文字)\n" ++
-"  - generate_return_request → result.requestId / result.quantity\n" ++
-"  - send_penalty_notice → result.noticeId / result.amount\n" ++
-"  - update_supplier_risk_score → result.previousScore / result.newScore\n" ++
-"  - update_ontology → result.tripleId\n" ++
+"  4) register_incident (incident-mcp): Incident__c を新規作成 (incidentId 未指定なら採番)\n" ++
+"  5) update_incident_status (incident-mcp): incidentId のステータスを OPEN/IN_PROGRESS/RESOLVED に更新\n" ++
+"\n" ++
+"tool 戻り値の構造:\n" ++
+"  - resolve_supplier → result.supplier.goldenId / result.supplier.name\n" ++
+"  - lookup_incident → result.exists / result.incident.incidentId / .supplierGoldenId / .partNumber / .severity / .status\n" ++
+"  - register_incident → result.incidentId / result.supplierGoldenId / result.partNumber\n" ++
+"  - update_incident_status → result.incidentId / result.status\n" ++
 "\n" ++
 "相談 (ADVISORY) の進め方:\n" ++
-"  1. resolve_supplier(supplierName=ユーザの言ったサプライヤー名) で取引先を解決。\n" ++
-"  2. 必要なら get_supplier_relations で過去インシデントを参照。\n" ++
-"  3. 必要なら get_quality_agreement で該当条項とペナルティ上限を確認。\n" ++
-"  4. ここで止め、 「現状はこう」「次はこういうアクションが必要 (返品要求/ペナルティ通知/リスクスコア更新)」 を Markdown で提案する。 副作用 tool は呼ばない。\n" ++
-"  5. ユーザが「ではペナルティ通知をお願いします」のように指示したら、 そのときだけ副作用 tool を実行する。\n" ++
+"  1. ユーザが incidentId (例 INC-2026-0521) を出していれば lookup_incident で現状を確認 (READ-ONLY)。\n" ++
+"  2. サプライヤー名と部品番号がある相談なら resolve_supplier → 必要なら get_supplier_relations で過去インシデントを参照 (READ-ONLY)。\n" ++
+"  3. ここまでの情報を踏まえ、推奨アクション (新規採番すべき / 既存 incident に紐付ける / クローズ可) を 箇条書きで提示する。\n" ++
+"  4. 必須情報の不足があれば missing リストとして提示する (supplierGoldenId / partNumber / severity / rawMessage)。\n" ++
+"  5. 最後に「登録/解決して良ければ『登録してください』『クローズしてください』とお伝えください」と聞き返す。WRITE tool は呼ばない。\n" ++
 "\n" ++
 "重要ルール:\n" ++
-"  - ユーザに無闇に情報を聞き返さない。 サプライヤー名と部品番号のどちらか一つでも分かれば、 read-only tool で調査を開始する。\n" ++
-"  - tool が status=success で返したら必ず result.* の中身を読み、「取得できませんでした」と書かない。\n" ++
-"  - WRITE tool を勝手に呼ばない。 ユーザが「対応して」「実行して」「発行して」「通知して」「更新して」 のような実行指示を出したときだけ呼ぶ。\n" ++
+"  - WRITE tool (register_incident / update_incident_status) はユーザの明示指示なしに呼ばない。\n" ++
+"  - トリガー語: 「登録してください」「採番してください」「インシデント化して」「クローズしてください」「解決済みにして」「IN_PROGRESS に変えて」など、明確な命令形のみ。\n" ++
+"  - tool が status=success で返したら result.* の中身を読み、「取得できませんでした」と書かない。\n" ++
+"  - register_incident の必須項目 (supplierGoldenId / partNumber / severity / rawMessage) が揃わないまま EXECUTE 指示を受けたら、不足項目を返す (WRITE は呼ばず、ADVISORY モードに戻す)。\n" ++
+"  - 以前のターンで解決済みの supplierGoldenId / incidentId は再呼び出しせず流用する。\n" ++
 "\n" ++
-"会話履歴について:\n" ++
-"  - この会話には以前のターンが含まれる場合があります。 それらを参照して文脈を保持し、 解決済みの supplierGoldenId / 条項 を覚えていれば再呼び出しせず即答する。\n" ++
+"対応できない時の応答ルール:\n" ++
+"  - incidentId も (supplierGoldenId + partNumber) も不明な場合、以下テンプレートで Markdown 4〜8 行返す。 これ以上長くしない:\n" ++
 "\n" ++
-"私が対応できない / 情報が足りない時の応答ルール:\n" ++
-"  - 上記 7 つの tool で扱えない自由検索や、 サプライヤー名・契約 ID・インシデント ID のいずれも分からない場合、 必ず以下のテンプレートで Markdown 4〜8 行返してください:\n" ++
-"\n" ++
-"    ℹ️ 法務 (atelier-legal-agent) です。\n" ++
+"    ℹ️ インシデント管理 (atelier-incident-agent) です。\n" ++
 "\n" ++
 "    **実行可能な操作**\n" ++
 "    - 取引先のゴールデン ID 解決\n" ++
 "    - 過去インシデント・取引先関係の照会\n" ++
-"    - 品質保証協定書 (条項・ペナルティ上限) の確認\n" ++
-"    - 返品要求書の発行\n" ++
-"    - ペナルティ通知書の送付\n" ++
-"    - サプライヤーリスクスコアの更新\n" ++
-"    - KG (オントロジー) へのトリプル登録\n" ++
+"    - 既存 incidentId の状態照会\n" ++
+"    - インシデントの新規採番 (Incident__c 作成)\n" ++
+"    - インシデントステータスの更新 (OPEN / IN_PROGRESS / RESOLVED)\n" ++
 "\n" ++
-"    お手数ですがサプライヤー名・契約 ID・インシデント ID のいずれかを指定してください。\n" ++
+"    お手数ですが incidentId か (サプライヤー名 + 部品番号 + 不具合内容) を教えてください。\n" ++
+"\n" ++
+"出力 Markdown ルール (必ず守る):\n" ++
+"  - 箇条書きの行頭は半角ハイフン+半角スペース (`- `) のみ。`•` `・` `*` は使わない。\n" ++
+"  - ネストリストは半角スペース 2 個 + `- ` で表現する (例: `  - 詳細`)。 全角スペースや tab を使わない。\n" ++
+"  - 強調したい固有名詞は `**foo**` で太字にする。\n" ++
+"  - セクションラベルは `**ラベル**` で 1 行書き、 中身を次の行から箇条書きする (`:` で終えて同じ行に書かない)。\n" ++
+"  - 行間に空行を入れて段落を区切る。長文の段落は 2-3 行で改行する。\n" ++
 "\n" ++
 "出力フォーマット:\n" ++
-"  [ADVISORY 回答 — 副作用 tool を呼ばない場合]\n" ++
-"    ⚖️ legal-agent: <一言サマリ>\n" ++
-"    - 取引先: <name> (<goldenId>)\n" ++
-"    - 該当条項: <clause> (上限 ¥<penaltyCap>)\n" ++
-"    - 推奨アクション:\n" ++
-"      - 返品要求の発行 (見込み数量 X 個)\n" ++
-"      - ペナルティ通知の発行 (上限 ¥<penaltyCap>)\n" ++
-"      - サプライヤーリスクスコアの引き上げ\n" ++
-"    💬 上記を実行する場合は「実行してください」「ペナルティ通知をお願い」のようにご指示ください。\n" ++
 "\n" ++
-"  [EXECUTE 完了 — ユーザ指示で副作用 tool を呼んだ場合]\n" ++
-"    ⚖️ legal-agent: <実行サマリ>\n" ++
-"    - 取引先: <name> (<goldenId>)\n" ++
-"    - 該当条項: <clause> (上限 ¥<penaltyCap>)\n" ++
-"    - 返品要求: <requestId>\n" ++
-"    - ペナルティ通知: <noticeId> ¥<amount>\n" ++
-"    - リスクスコア更新: <previous> → <new>"
+"  [ADVISORY 回答] (デフォルト)\n" ++
+"\n" ++
+"    🚨 **incident-agent (相談)**: <現状の一言サマリ>\n" ++
+"\n" ++
+"    **状況**\n" ++
+"    - 取引先: **<name>** (<goldenId>) / 部品: **<partNumber>**\n" ++
+"    - 既存 incident: **<incidentId>** status=<status>  (未登録なら「未登録」)\n" ++
+"\n" ++
+"    **推奨アクション**\n" ++
+"    - <新規採番すべき / 既存に紐付け / クローズ可 のどれか 1 行で>\n" ++
+"    - <不足している必須項目があれば 1 行で>\n" ++
+"\n" ++
+"    💬 登録 / クローズで良ければ 「登録してください」「クローズしてください」 とお知らせください。\n" ++
+"\n" ++
+"  [EXECUTE 完了] (ユーザが実行指示した場合のみ)\n" ++
+"\n" ++
+"    🚨 **incident-agent (実行完了)**: <一言サマリ>\n" ++
+"\n" ++
+"    - 採番された incident: **<incidentId>**\n" ++
+"    - 取引先: **<name>** (<goldenId>) / 部品: **<partNumber>**\n" ++
+"    - severity: <severity> / status: <status>"
 ---
-// prior messages がメモリにあれば、それに新しい user 発話を追加する。
-// 無ければ system + user で初期化する。
 if ((vars.priorMessages default []) != [])
   (vars.priorMessages default []) ++ [{ role: "user", content: (vars.userText default "") as String }]
 else
@@ -366,72 +344,44 @@ output application/java
       }
   }},
   { "type": "function", "function": {
-      name: "update_supplier_risk_score",
-      description: "サプライヤーのリスクスコア (0..1) を更新する",
+      name: "lookup_incident",
+      description: "incidentId で既存 Incident__c を 1 件取得する。404 のときは exists=false を返す",
       parameters: {
         "type": "object",
         properties: {
-          supplierGoldenId: { "type": "string" },
-          riskScore:        { "type": "number" },
-          reason:           { "type": "string" },
-          incidentId:       { "type": "string" }
-        },
-        required: ["supplierGoldenId", "riskScore"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "update_ontology",
-      description: "KG に subject/predicate/object のトリプルを記録",
-      parameters: {
-        "type": "object",
-        properties: {
-          subject:    { "type": "string" },
-          predicate:  { "type": "string" },
-          "object":   { "type": "string" },
           incidentId: { "type": "string" }
         },
-        required: ["subject", "predicate", "object"]
+        required: ["incidentId"]
       }
   }},
   { "type": "function", "function": {
-      name: "get_quality_agreement",
-      description: "サプライヤーの品質保証協定書サマリ (条項・ペナルティ上限) を取得",
+      name: "register_incident",
+      description: "Incident__c を新規作成する。incidentId 未指定なら incident-system が採番。supplierGoldenId / partNumber / severity / rawMessage は必須",
       parameters: {
         "type": "object",
         properties: {
-          supplierGoldenId: { "type": "string" },
-          partNumber:       { "type": "string" }
-        },
-        required: ["supplierGoldenId"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "generate_return_request",
-      description: "返品要求書を生成する。requestId を返す",
-      parameters: {
-        "type": "object",
-        properties: {
+          incidentId:       { "type": "string" },
           supplierGoldenId: { "type": "string" },
           partNumber:       { "type": "string" },
-          incidentId:       { "type": "string" },
           quantity:         { "type": "integer" },
-          reason:           { "type": "string" }
+          severity:         { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+          rawMessage:       { "type": "string" },
+          slackChannel:     { "type": "string" },
+          slackThreadTs:    { "type": "string" }
         },
-        required: ["supplierGoldenId", "partNumber", "incidentId"]
+        required: ["supplierGoldenId", "partNumber", "severity", "rawMessage"]
       }
   }},
   { "type": "function", "function": {
-      name: "send_penalty_notice",
-      description: "ペナルティ通知書を送付する。noticeId を返す",
+      name: "update_incident_status",
+      description: "incidentId のステータスを更新する。OPEN / IN_PROGRESS / RESOLVED",
       parameters: {
         "type": "object",
         properties: {
-          supplierGoldenId: { "type": "string" },
-          incidentId:       { "type": "string" },
-          amount:           { "type": "number" },
-          currency:         { "type": "string" }
+          incidentId: { "type": "string" },
+          status:     { "type": "string", "enum": ["OPEN", "IN_PROGRESS", "RESOLVED"] }
         },
-        required: ["supplierGoldenId", "incidentId", "amount"]
+        required: ["incidentId", "status"]
       }
   }}
 ]]]></ee:set-variable>
@@ -439,11 +389,8 @@ output application/java
         </ee:transform>
     </sub-flow>
 
-    <!-- ============================================================
-         agentLoopFlow — bounded foreach (max_loops iterations).
-         ============================================================ -->
     <sub-flow name="agentLoopFlow">
-        <ee:transform doc:name="seed loop range">
+        <ee:transform>
             <ee:variables>
                 <ee:set-variable variableName="loopRange"><![CDATA[%dw 2.0
 output application/java
@@ -451,13 +398,13 @@ output application/java
 1 to (p('agent.max_loops') as Number)]]></ee:set-variable>
             </ee:variables>
         </ee:transform>
-        <foreach collection="#[vars.loopRange]" doc:name="bounded loop">
-            <choice doc:name="terminate early?">
+        <foreach collection="#[vars.loopRange]">
+            <choice>
                 <when expression="#[(vars.finishReason default '') == 'stop' or (vars.finishReason default '') == 'length' or (vars.finishReason default '') == 'content_filter']">
                     <logger level="INFO" message="#['Skipping iter ' ++ (payload as String) ++ ' (finishReason=' ++ (vars.finishReason default '') ++ ')']"/>
                 </when>
                 <otherwise>
-                    <ee:transform doc:name="loopCount = current iteration">
+                    <ee:transform>
                         <ee:variables>
                             <ee:set-variable variableName="loopCount"><![CDATA[%dw 2.0
 output application/java
@@ -473,11 +420,8 @@ output application/java
         <logger level="INFO" message="#['Agent loop done. iterations=' ++ (vars.loopCount as String) ++ ' finishReason=' ++ (vars.finishReason default '')]"/>
     </sub-flow>
 
-    <!-- ============================================================
-         agentInferenceFlow — POST /chat/completions, capture assistant
-         ============================================================ -->
     <sub-flow name="agentInferenceFlow">
-        <ee:transform doc:name="build chat/completions body">
+        <ee:transform>
             <ee:variables>
                 <ee:set-variable variableName="llmBody"><![CDATA[%dw 2.0
 output application/json
@@ -492,14 +436,14 @@ output application/json
             </ee:variables>
         </ee:transform>
 
-        <http:request method="POST" path="/openai/v1/chat/completions" config-ref="LLM_Request_config" doc:name="POST LLM /chat/completions">
+        <http:request method="POST" path="/openai/v1/chat/completions" config-ref="LLM_Request_config">
             <http:body>#[vars.llmBody]</http:body>
             <http:response-validator>
                 <http:success-status-code-validator values="0..599"/>
             </http:response-validator>
         </http:request>
 
-        <ee:transform doc:name="capture assistant + finishReason">
+        <ee:transform>
             <ee:variables>
                 <ee:set-variable variableName="assistantMsg"><![CDATA[%dw 2.0
 output application/java
@@ -516,9 +460,9 @@ output application/java
             </ee:variables>
         </ee:transform>
 
-        <choice doc:name="finished?">
+        <choice>
             <when expression="#[(vars.finishReason default '') == 'stop']">
-                <ee:transform doc:name="capture final text">
+                <ee:transform>
                     <ee:variables>
                         <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
 output application/java
@@ -533,17 +477,14 @@ output application/java
         </choice>
     </sub-flow>
 
-    <!-- ============================================================
-         agentExecuteToolsFlow — call MCP for each tool_call
-         ============================================================ -->
     <sub-flow name="agentExecuteToolsFlow">
-        <choice doc:name="any tool_calls?">
+        <choice>
             <when expression="#[sizeOf((vars.assistantMsg.tool_calls default [])) == 0]">
                 <logger level="INFO" message="No tool_calls in assistant message"/>
             </when>
             <otherwise>
-                <foreach collection="#[vars.assistantMsg.tool_calls default []]" doc:name="for each tool_call">
-                    <ee:transform doc:name="capture tool_call">
+                <foreach collection="#[vars.assistantMsg.tool_calls default []]">
+                    <ee:transform>
                         <ee:variables>
                             <ee:set-variable variableName="toolCallId"><![CDATA[%dw 2.0
 output application/java
@@ -559,7 +500,7 @@ output application/java
 ((payload.function.arguments default "{}") as String)]]></ee:set-variable>
                         </ee:variables>
                     </ee:transform>
-                    <ee:transform doc:name="parse args + map MCP">
+                    <ee:transform>
                         <ee:variables>
                             <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
 output application/java
@@ -569,15 +510,13 @@ read((vars.toolArgsRaw default "{}") as String, "application/json")]]></ee:set-v
 output application/java
 var n = (vars.toolName default "") as String
 ---
-if (n == "resolve_supplier" or n == "get_supplier_relations" or n == "update_supplier_risk_score" or n == "update_ontology") "mdm"
-else if (n == "get_quality_agreement" or n == "generate_return_request" or n == "send_penalty_notice") "contract"
+if (n == "resolve_supplier" or n == "get_supplier_relations") "mdm"
+else if (n == "lookup_incident" or n == "register_incident" or n == "update_incident_status") "incident"
 else "unknown"]]></ee:set-variable>
                         </ee:variables>
                     </ee:transform>
-                    <logger level="INFO"
-                            message="#['tool_call: ' ++ (vars.toolName default '') ++ ' args=' ++ (vars.toolArgsRaw default '')]"/>
                     <flow-ref name="callMcpExecuteFlow"/>
-                    <ee:transform doc:name="append tool result message">
+                    <ee:transform>
                         <ee:variables>
                             <ee:set-variable variableName="messages"><![CDATA[%dw 2.0
 output application/java
@@ -601,11 +540,8 @@ output application/java
         </choice>
     </sub-flow>
 
-    <!-- ============================================================
-         callMcpExecuteFlow — POST /mcp/execute on the right MCP backend
-         ============================================================ -->
     <sub-flow name="callMcpExecuteFlow">
-        <ee:transform doc:name="build /mcp/execute body">
+        <ee:transform>
             <ee:message>
                 <ee:set-payload><![CDATA[%dw 2.0
 output application/json
@@ -616,19 +552,18 @@ output application/json
 }]]></ee:set-payload>
             </ee:message>
         </ee:transform>
-
         <try>
-            <choice doc:name="dispatch by mcpKind">
+            <choice>
                 <when expression="#[(vars.mcpKind default '') == 'mdm']">
-                    <http:request method="POST" path="/mcp/execute" config-ref="MDM_MCP_Request_config" doc:name="POST mdm-mcp /mcp/execute">
+                    <http:request method="POST" path="/mcp/execute" config-ref="MDM_MCP_Request_config">
                         <http:body>#[payload]</http:body>
                         <http:response-validator>
                             <http:success-status-code-validator values="0..599"/>
                         </http:response-validator>
                     </http:request>
                 </when>
-                <when expression="#[(vars.mcpKind default '') == 'contract']">
-                    <http:request method="POST" path="/mcp/execute" config-ref="Contract_MCP_Request_config" doc:name="POST contract-mcp /mcp/execute">
+                <when expression="#[(vars.mcpKind default '') == 'incident']">
+                    <http:request method="POST" path="/mcp/execute" config-ref="Incident_MCP_Request_config">
                         <http:body>#[payload]</http:body>
                         <http:response-validator>
                             <http:success-status-code-validator values="0..599"/>
@@ -636,7 +571,7 @@ output application/json
                     </http:request>
                 </when>
                 <otherwise>
-                    <ee:transform doc:name="UNKNOWN_TOOL synth">
+                    <ee:transform>
                         <ee:message>
                             <ee:set-payload><![CDATA[%dw 2.0
 output application/json
@@ -661,8 +596,7 @@ output application/json
                 </on-error-continue>
             </error-handler>
         </try>
-
-        <ee:transform doc:name="capture toolResult">
+        <ee:transform>
             <ee:variables>
                 <ee:set-variable variableName="toolResult"><![CDATA[%dw 2.0
 output application/java
@@ -678,10 +612,6 @@ else payload]]></ee:set-variable>
         </ee:transform>
     </sub-flow>
 
-    <!-- ============================================================
-         loadMemoryFlow — 会話履歴 (messages[]) を ObjectStore から読み込む。
-         contextId が空 or キー不在 (= 新会話) なら priorMessages = []。
-         ============================================================ -->
     <sub-flow name="loadMemoryFlow">
         <choice>
             <when expression="#[(vars.contextId default '') == '']">
@@ -727,9 +657,6 @@ output application/java
                 message="#['memory load: contextId=' ++ (vars.contextId default '') ++ ' priorMessages=' ++ (sizeOf(vars.priorMessages default []) as String)]"/>
     </sub-flow>
 
-    <!-- ============================================================
-         saveMemoryFlow — 最新 messages[] を ObjectStore に書き戻す。
-         ============================================================ -->
     <sub-flow name="saveMemoryFlow">
         <choice>
             <when expression="#[(vars.contextId default '') == '']">

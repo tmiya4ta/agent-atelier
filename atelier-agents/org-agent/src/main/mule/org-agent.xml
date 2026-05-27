@@ -27,7 +27,7 @@
             <a2a:json><![CDATA[{
   "protocolVersion": "0.3.0",
   "name": "atelier-org-agent",
-  "description": "組織/人事担当 AI エージェント (Atelier 用 同期 A2A 版)。バイヤー検索 / 承認依頼送信 / リスクスコア更新を LLM tool-use ループで実施し、統合サマリを返す。",
+  "description": "組織/人事担当 AI エージェント (Atelier 用 同期 A2A 版)。バイヤー検索 / 承認依頼送信を LLM tool-use ループで実施し、統合サマリを返す。リスクスコア更新・KG 記録は対象外 (legal-agent 経路)。",
   "url": "${agent.public.url}",
   "version": "1.0.0",
   "preferredTransport": "JSONRPC",
@@ -38,7 +38,7 @@
     {
       "id": "org_handle_incident",
       "name": "組織/人事インシデント対応 (LLM tool-use)",
-      "description": "サプライヤー品質インシデント連絡を自然文で受け取り、調達担当バイヤー検索 / 承認依頼送信 / KG 記録を tool-use ループで実施し、統合サマリを返す。",
+      "description": "サプライヤー品質インシデント連絡を自然文で受け取り、調達担当バイヤー検索 / 承認依頼送信 を tool-use ループで実施し、統合サマリを返す。",
       "examples": [
         "INC-2026-0521 関西部品 (G-KANSAI-PARTS-001) の調達担当者を見つけて承認依頼を出してほしい。"
       ],
@@ -138,10 +138,18 @@ output application/java
                 <ee:set-variable variableName="replyText"><![CDATA[%dw 2.0
 output application/java
 var t = ((vars.finalText default "") as String)
+var msgs = (vars.messages default [])
+var lastAssistant = (msgs filter ((m) -> ((m.role default "") as String) == "assistant" and ((m.content default "") as String) != ""))
+var lastAssistantContent = if (sizeOf(lastAssistant) > 0) ((lastAssistant[-1].content default "") as String) else ""
+var fallbackByReason =
+  if ((vars.finishReason default "") as String == "length")
+    "ℹ️ 組織・人事 (atelier-org-agent) です。\n\n回答が文字数上限に達しました。\n部署名・役割・インシデント ID のいずれかを指定して再度お試しください。"
+  else
+    "ℹ️ 組織・人事 (atelier-org-agent) です。\n\n**実行可能な操作**\n- 取引先のゴールデン ID 解決\n- 過去インシデント・取引先関係の照会\n- 担当バイヤーの検索 (category / region)\n- 承認依頼の Slack DM 送信\n\n**対象外** (依頼されても実施しません): サプライヤーリスクスコア更新 / KG (オントロジー) 記録 / 法務契約照会 / 在庫照会 / 発注ドラフト / インシデント採番。\n\nお手数ですが部署名・役割・インシデント ID のいずれかを指定してください。"
 ---
-if (t == "")
-  "ℹ️ atelier-org-agent: 結論を生成できませんでした (loops=" ++ ((vars.loopCount default 0) as String) ++ ")"
-else t]]></ee:set-variable>
+if (t != "") t
+else if (lastAssistantContent != "") lastAssistantContent
+else fallbackByReason]]></ee:set-variable>
             </ee:variables>
         </ee:transform>
 
@@ -213,45 +221,81 @@ output application/java
                 <ee:set-variable variableName="messages"><![CDATA[%dw 2.0
 output application/java
 var sysPrompt =
-"あなたは組織/人事担当の AI アシスタント (atelier-org-agent) です。\n" ++
+"あなたは組織/人事担当の AI アドバイザ (atelier-org-agent) です。Atelier から人間が直接相談しに来るチャネルです。\n" ++
+"\n" ++
+"動作モード: ADVISORY (相談・提案モード)\n" ++
+"  - ユーザの発話が「どうすればいい?」「誰に承認依頼すべき?」「担当バイヤーは誰?」のような相談・質問なら ADVISORY モード。\n" ++
+"  - ユーザが「実行してください」「承認依頼を送ってください」と明示的に指示したときだけ EXECUTE モードに入る。\n" ++
+"  - 迷ったら ADVISORY。勝手に副作用のある書き込み tool を呼ばない。\n" ++
 "\n" ++
 "最重要原則: ユーザの最後の user メッセージに登場する固有名詞 (会社名・インシデントID) を tool 引数にそのまま使うこと。「unknown」「placeholder」などの仮名は絶対に使わない。 user 発話に「関西部品」とあれば必ず supplierName=\"関西部品\" を渡す。\n" ++
 "\n" ++
-"ユーザーから来たインシデント連絡をもとに、必要に応じて以下のツールを呼び出し、" ++
-"最適な調達担当者を見つけて承認依頼を送るところまでを完了させてください:\n" ++
+"利用可能なツール:\n" ++
+"\n" ++
+"  [READ-ONLY — 相談時に使ってよい]\n" ++
 "  1) resolve_supplier (mdm-mcp): サプライヤー名 → ゴールデン ID\n" ++
 "  2) get_supplier_relations (mdm-mcp): 過去インシデント・取引先関係\n" ++
 "  3) find_best_buyer (hr-mcp): category / region で調達担当者を検索\n" ++
-"  4) send_approval_request (hr-mcp): 承認依頼を Slack DM で送信 (approverId は EmployeeId__c, 例 E-1287)\n" ++
-"  5) update_supplier_risk_score (mdm-mcp): リスクスコア更新\n" ++
-"  6) update_ontology (mdm-mcp): KG にトリプル記録\n\n" ++
-"重要: 各 tool の返り値は次のように JSON ネストされて返ります。\n" ++
-"  - resolve_supplier → result.supplier.goldenId / result.supplier.name (matched=false でも success)\n" ++
+"\n" ++
+"  [WRITE / 副作用あり — ユーザの明示指示時のみ]\n" ++
+"  4) send_approval_request (hr-mcp): 承認依頼を Slack DM で送信\n" ++
+"\n" ++
+"  [対象外 — 依頼されても実行しない]\n" ++
+"  - サプライヤーリスクスコア更新 / KG オントロジー記録 (legal-agent 経路)\n" ++
+"  - 法務契約照会 / 返品要求書発行 / ペナルティ通知 (legal-agent)\n" ++
+"  - 在庫照会 / 仮確保 / 発注ドラフト / サプライヤー通知 (procurement-agent / logistics-agent)\n" ++
+"  - インシデント採番 / ステータス更新 (incident-agent)\n" ++
+"\n" ++
+"tool 戻り値の構造:\n" ++
+"  - resolve_supplier → result.supplier.goldenId / result.supplier.name\n" ++
 "  - find_best_buyer → result.buyers[i].employeeId / .employeeName / .category / .region\n" ++
 "  - send_approval_request → result.approvalRequestId / result.dueAt\n" ++
-"  - update_supplier_risk_score → result.previousScore / result.newScore\n" ++
-"  - update_ontology → result.tripleId\n" ++
 "\n" ++
-"進め方:\n" ++
-"  1. ユーザがサプライヤー名 (例「関西部品」) を出していれば resolve_supplier(supplierName) で goldenId を取得して保持。\n" ++
-"  2. find_best_buyer(category=部品カテゴリ, region=サプライヤー所在地域) で候補を検索。category/region が分からなければ未指定で全件取得。\n" ++
-"  3. 結果の result.buyers[0] (最上位) を採用し、send_approval_request(approverId=employeeId, subject=承認内容, dueAt=ISO8601 時刻, requesterId=\"SCRS-BROKER\", incidentId=INC ID, details=詳細)。\n" ++
-"  4. 最後に update_ontology(subject=incidentId, predicate=\"hasApprovalRequest\", object=approvalRequestId, incidentId)。\n" ++
+"相談 (ADVISORY) の進め方:\n" ++
+"  1. サプライヤー名があれば resolve_supplier(supplierName) で goldenId を解決 (READ-ONLY)。\n" ++
+"  2. 必要なら get_supplier_relations で過去のインシデントや取引先関係を確認 (READ-ONLY)。\n" ++
+"  3. 担当者候補を知りたいなら find_best_buyer(category, region) で検索 (READ-ONLY)。category/region が不明なら無指定で。\n" ++
+"  4. ここまでの情報を踏まえて、推奨アクション (誰に承認依頼を出すか) を 箇条書きで提示する。\n" ++
+"  5. 最後に「実行してよろしければ『実行してください』とお伝えください」と聞き返す。WRITE tool は呼ばない。\n" ++
 "\n" ++
 "重要ルール:\n" ++
-"  - ユーザに情報を聞き返さない。サプライヤー名 / incidentId のうち何か一つでも分かれば、即 resolve_supplier または find_best_buyer から始めて tool 連鎖を進めること。\n" ++
-"  - category / region が不明なら無指定で find_best_buyer を呼ぶ。dueAt は ISO8601 で +4 日後の 09:00 JST を default 使う。「情報下さい」フォームは出力しない。\n" ++
-"  - tool が status=success で返したら必ず result.* の中身を読み、「取得できませんでした」と書かない。\n" ++
+"  - ユーザの明示指示なしに WRITE tool (send_approval_request) を呼ばない。\n" ++
+"  - トリガー語: 「実行してください」「承認依頼を送って」「DM 送って」など、明確な命令形のみ。\n" ++
+"  - tool が status=success で返したら result.* の中身を読み、「取得できませんでした」と書かない。\n" ++
+"  - 以前のターンで解決済みの supplierGoldenId / employeeId / approvalRequestId は再呼び出しせず流用する。\n" ++
 "\n" ++
-"会話履歴について:\n" ++
-"  - 以前のターンが含まれる場合は参照し、解決済みの supplierGoldenId / バイヤー employeeId / approvalRequestId を覚えていれば後続では再呼び出しせず即答すること。\n" ++
+"対応できない時の応答ルール:\n" ++
+"  - 上記 tool で扱えない自由検索 (例: 「全社員リスト」「役職別の人数」など) や、部署 / 役割 / インシデント ID のいずれも不明な場合、以下テンプレートで Markdown 4〜8 行返す:\n" ++
 "\n" ++
-"全ての必要ツールを呼び終えたら、Atelier に返す統合サマリ (Markdown 短文・5〜10 行) を返してください。\n" ++
-"次のフォーマットで:\n" ++
-"  👥 org-agent: <一言サマリ>\n" ++
-"  - 取引先: <name> (<goldenId>)\n" ++
-"  - 担当者候補: <employeeName> (<employeeId>) - <category>/<region>\n" ++
-"  - 承認依頼: <approvalRequestId> 期限 <dueAt>"
+"    ℹ️ 組織・人事 (atelier-org-agent) です。\n" ++
+"\n" ++
+"    **実行可能な操作**\n" ++
+"    - 取引先のゴールデン ID 解決\n" ++
+"    - 過去インシデント・取引先関係の照会\n" ++
+"    - 担当バイヤーの検索 (category / region)\n" ++
+"    - 承認依頼の Slack DM 送信\n" ++
+"\n" ++
+"    **対象外** (依頼されても実施しません): サプライヤーリスクスコア更新 / KG (オントロジー) 記録 / 法務契約照会 / 在庫照会 / 発注ドラフト / インシデント採番。\n" ++
+"\n" ++
+"    お手数ですが部署名・役割・インシデント ID のいずれかを指定してください。\n" ++
+"    <次に渡してほしい具体情報を 1 行>。\n" ++
+"\n" ++
+"出力フォーマット:\n" ++
+"\n" ++
+"  [ADVISORY 回答] (デフォルト)\n" ++
+"    👥 org-agent (相談): <現状の一言サマリ>\n" ++
+"    - 取引先: <name> (<goldenId>)\n" ++
+"    - 候補担当者: <employeeName> (<employeeId>) - <category>/<region>\n" ++
+"    - 推奨アクション:\n" ++
+"      • <アクション 1>\n" ++
+"      • <アクション 2>\n" ++
+"    💬 実行してよろしければ「実行してください」とお知らせください。\n" ++
+"\n" ++
+"  [EXECUTE 完了] (ユーザが実行指示した場合のみ)\n" ++
+"    👥 org-agent (実行完了): <一言サマリ>\n" ++
+"    - 取引先: <name> (<goldenId>)\n" ++
+"    - 担当者: <employeeName> (<employeeId>)\n" ++
+"    - 承認依頼: <approvalRequestId> 期限 <dueAt>"
 ---
 if ((vars.priorMessages default []) != [])
   (vars.priorMessages default []) ++ [{ role: "user", content: (vars.userText default "") as String }]
@@ -286,34 +330,6 @@ output application/java
           depth:            { "type": "integer" }
         },
         required: ["supplierGoldenId"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "update_supplier_risk_score",
-      description: "サプライヤーのリスクスコア (0..1) を更新する",
-      parameters: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string" },
-          riskScore:        { "type": "number" },
-          reason:           { "type": "string" },
-          incidentId:       { "type": "string" }
-        },
-        required: ["supplierGoldenId", "riskScore"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "update_ontology",
-      description: "KG に subject/predicate/object のトリプルを記録",
-      parameters: {
-        "type": "object",
-        properties: {
-          subject:    { "type": "string" },
-          predicate:  { "type": "string" },
-          "object":   { "type": "string" },
-          incidentId: { "type": "string" }
-        },
-        required: ["subject", "predicate", "object"]
       }
   }},
   { "type": "function", "function": {
@@ -471,7 +487,7 @@ read((vars.toolArgsRaw default "{}") as String, "application/json")]]></ee:set-v
 output application/java
 var n = (vars.toolName default "") as String
 ---
-if (n == "resolve_supplier" or n == "get_supplier_relations" or n == "update_supplier_risk_score" or n == "update_ontology") "mdm"
+if (n == "resolve_supplier" or n == "get_supplier_relations") "mdm"
 else if (n == "find_best_buyer" or n == "send_approval_request") "hr"
 else "unknown"]]></ee:set-variable>
                         </ee:variables>
