@@ -2,22 +2,10 @@
   "_doc": "Atelier import repository index. /scenarios/index.json で一覧を返す。各 entry の url は同一オリジン相対 path。",
   "items": [
     {
-      "id": "human-orchestrator-pain",
-      "name": "Human Orchestrator しんどい (A→B→D)",
-      "description": "前振りデモ: 4 atelier-agent を人間が手で振り回す『面倒くさい』を 3 段で見せる (fan-out / chain / conflict)。後段の broker / A2A デモへのバトン用。",
-      "url": "/scenarios/human-orchestrator-pain.json"
-    },
-    {
-      "id": "scrs-step2",
-      "name": "Step2 SCRS シナリオ — INC-2026-0521",
-      "description": "T1/Sandbox/rootps の 4 atelier-agent (法務/調達・在庫/物流/組織・人事) を一気通貫で動かす。Slack 連携なしの純 A2A 版。",
-      "url": "/scenarios/scrs-step2.json"
-    },
-    {
-      "id": "atelier-demo",
-      "name": "Atelier Demo (mock 5180-5183)",
-      "description": "ローカル mock A2A サーバ (5180-5183) を立てた状態で動かす旧デモ。Broker 経由 vs no-broker の比較や、エラーケース確認を含む 6 script。",
-      "url": "/scenarios/atelier-demo.json"
+      "id": "scrs-a",
+      "name": "SCRS — シナリオ A (正常系)",
+      "description": "インシデント起票 → 法務 / 調達・在庫 / 物流 / 組織・人事 の 4 atelier-agent に 1 タスクずつ順次依頼する happy path。Multi Agents workspace 5 ウインドウ。",
+      "url": "/scenarios/scrs-a.json"
     }
   ]
 }

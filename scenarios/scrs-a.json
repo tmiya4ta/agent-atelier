@@ -1,0 +1,173 @@
+{
+  "app": "atelier",
+  "exportedAt": "2026-05-27T00:00:00.000Z",
+  "_doc": "Step2 SCRS シナリオの A/B/C 版。mule-infa-demo-20260527-1.json (Downloads export) のウインドウ layout (5 ウインドウ Multi Agents: 法務/調達・在庫/物流/組織・人事/インシデント) と bookmarks を引き継ぎ、scripts だけ新ID体系 (A, B, C) に置き換える。シナリオ A は正常系 — インシデント agent でインシデントを起票してから、法務/調達・在庫/物流/組織・人事 の 4 agent に順番に 1 タスクずつ依頼する happy path。B/C は順次追加予定。",
+  "state": {
+    "v": 1,
+    "zoom": 1.0,
+    "sidebarCollapsed": false,
+    "catalogs": [],
+    "scripts": [
+      {
+        "id": "A",
+        "name": "A — 正常系: インシデント起票 → 4 agent 順次タスク",
+        "body": "# ────────────────────────────────────────────────────────────\n# A. 正常系シナリオ — incident-driven happy path\n#\n# 流れ:\n#   1) インシデント agent — 関西部品の品質トラブルを INC-2026-0527 として新規登録\n#   2) 法務 agent — 品質保証協定書を確認のうえ返品要求書を1通作成\n#   3) 調達・在庫 agent — 代替部品 P-2024-ALT-005 を 500 個 発注ドラフト\n#   4) 物流 agent — 元予約 RSV-2026-1134 キャンセル + 代替仮確保\n#   5) 組織・人事 agent — 関西エリア / 機構部品 の調達担当者を1名選定し承認依頼\n#\n# 各 agent は 1 タスクのみ受け取り、自分の MCP に対する LLM tool-use ループで処理する。\n# Step2 の Slack デモを Atelier に置き換えた素直な流れで、デモの導入として使う。\n# ────────────────────────────────────────────────────────────\n\nclear\nsleep 1s\n\n# 1) インシデント agent — 新規インシデント起票\n> インシデント: 関西部品 (G-KANSAI-PARTS-001) の P-2024-KAN-001 で不良率 15%、影響数量 500 個 が判明しました。インシデント ID `INC-2026-0527`、重要度 HIGH で新規登録してください。\n< インシデント 240s\nsleep 3s\n\n# 2) 法務 — 返品要求書 1 通\n> 法務: インシデント `INC-2026-0527` (関西部品 / P-2024-KAN-001 / 500 個) について、品質保証協定書を確認のうえ返品要求書を 1 通作成してください。\n< 法務 240s\nsleep 3s\n\n# 3) 調達・在庫 — 代替部品の発注ドラフト 1 件\n> 調達・在庫: インシデント `INC-2026-0527` に伴い、代替部品 P-2024-ALT-005 を 500 個 発注ドラフトを 1 件作成してください。\n< 調達・在庫 240s\nsleep 3s\n\n# 4) 物流 — 元予約キャンセル + 代替仮確保\n> 物流: インシデント `INC-2026-0527` に伴い、元予約 RSV-2026-1134 をキャンセルし、代替部品 P-2024-ALT-005 を 500 個 仮確保してください。\n< 物流 240s\nsleep 3s\n\n# 5) 組織・人事 — バイヤー選定 + 承認依頼 1 通\n> 組織・人事: インシデント `INC-2026-0527` の代替発注 (関西エリア / 機構部品) について、最適な調達担当者を 1 名選定し、承認依頼を 1 通送ってください。\n< 組織・人事 240s\n",
+        "createdAt": "2026-05-27T00:00:00.000Z",
+        "updatedAt": "2026-05-27T00:00:00.000Z"
+      }
+    ],
+    "selectedScriptId": "A",
+    "openScriptIds": [],
+    "scriptPanelOpen": false,
+    "scriptPanelHeight": 480,
+    "bookmarks": [
+      {
+        "key": "a2a::https://atelier-legal-agent-znutqp.pnwfdv.jpn-e1.cloudhub.io/",
+        "protoId": "a2a",
+        "url": "https://atelier-legal-agent-znutqp.pnwfdv.jpn-e1.cloudhub.io/",
+        "name": "法務",
+        "auth": "",
+        "persona": "",
+        "channel": ""
+      },
+      {
+        "key": "a2a::https://atelier-procurement-agent-znutqp.pnwfdv.jpn-e1.cloudhub.io/",
+        "protoId": "a2a",
+        "url": "https://atelier-procurement-agent-znutqp.pnwfdv.jpn-e1.cloudhub.io/",
+        "name": "調達・在庫",
+        "auth": "",
+        "persona": "",
+        "channel": ""
+      },
+      {
+        "key": "a2a::https://atelier-logistics-agent-znutqp.pnwfdv.jpn-e1.cloudhub.io/",
+        "protoId": "a2a",
+        "url": "https://atelier-logistics-agent-znutqp.pnwfdv.jpn-e1.cloudhub.io/",
+        "name": "物流",
+        "auth": "",
+        "persona": "",
+        "channel": ""
+      },
+      {
+        "key": "a2a::https://atelier-org-agent-znutqp.pnwfdv.jpn-e1.cloudhub.io/",
+        "protoId": "a2a",
+        "url": "https://atelier-org-agent-znutqp.pnwfdv.jpn-e1.cloudhub.io/",
+        "name": "組織・人事",
+        "auth": "",
+        "persona": "",
+        "channel": ""
+      },
+      {
+        "key": "a2a::https://atelier-incident-agent-znutqp.pnwfdv.jpn-e1.cloudhub.io/",
+        "protoId": "a2a",
+        "url": "https://atelier-incident-agent-znutqp.pnwfdv.jpn-e1.cloudhub.io/",
+        "name": "インシデント"
+      },
+      {
+        "key": "a2a::https://agent-network-ingress-gw-df8af0.xdfpbh.jpn-e1.cloudhub.io/scrsBroker/.well-known/agent-card.json",
+        "protoId": "a2a",
+        "url": "https://agent-network-ingress-gw-df8af0.xdfpbh.jpn-e1.cloudhub.io/scrsBroker/.well-known/agent-card.json",
+        "name": "SCRS Broker"
+      }
+    ],
+    "activeWsIdx": 0,
+    "workspaces": [
+      {
+        "name": "Multi Agents",
+        "windows": [
+          {
+            "protoId": "a2a",
+            "config": {
+              "url": "https://atelier-legal-agent-znutqp.pnwfdv.jpn-e1.cloudhub.io/",
+              "name": "法務",
+              "auth": "",
+              "persona": "",
+              "channel": ""
+            },
+            "pos": {
+              "left": "16px",
+              "top": "410px",
+              "width": "594px",
+              "height": "393px",
+              "zIndex": "186"
+            },
+            "activeTab": "chat"
+          },
+          {
+            "protoId": "a2a",
+            "config": {
+              "url": "https://atelier-procurement-agent-znutqp.pnwfdv.jpn-e1.cloudhub.io/",
+              "name": "調達・在庫",
+              "auth": "",
+              "persona": "",
+              "channel": ""
+            },
+            "pos": {
+              "left": "16px",
+              "top": "16px",
+              "width": "522px",
+              "height": "378px",
+              "zIndex": "185"
+            },
+            "activeTab": "chat"
+          },
+          {
+            "protoId": "a2a",
+            "config": {
+              "url": "https://atelier-logistics-agent-znutqp.pnwfdv.jpn-e1.cloudhub.io/",
+              "name": "物流",
+              "auth": "",
+              "persona": "",
+              "channel": ""
+            },
+            "pos": {
+              "left": "554px",
+              "top": "16px",
+              "width": "522px",
+              "height": "378px",
+              "zIndex": "158"
+            },
+            "activeTab": "chat"
+          },
+          {
+            "protoId": "a2a",
+            "config": {
+              "url": "https://atelier-org-agent-znutqp.pnwfdv.jpn-e1.cloudhub.io/",
+              "name": "組織・人事",
+              "auth": "",
+              "persona": "",
+              "channel": ""
+            },
+            "pos": {
+              "left": "1092px",
+              "top": "16px",
+              "width": "524px",
+              "height": "378px",
+              "zIndex": "177"
+            },
+            "activeTab": "chat"
+          },
+          {
+            "protoId": "a2a",
+            "config": {
+              "url": "https://atelier-incident-agent-znutqp.pnwfdv.jpn-e1.cloudhub.io/",
+              "name": "インシデント"
+            },
+            "pos": {
+              "left": "626px",
+              "top": "410px",
+              "width": "990px",
+              "height": "393px",
+              "zIndex": "188"
+            },
+            "activeTab": "chat"
+          }
+        ]
+      },
+      {
+        "name": "Broker",
+        "windows": []
+      }
+    ]
+  }
+}

@@ -2081,6 +2081,35 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .aw-traffic { display: none; }
 .aw-traffic-dot { display: none; }
 
+/* maximize / restore icon の出し分け。デフォルトは max を表示 */
+.aw-btn-max .aw-restore-icon { display: none; }
+.agent-window.is-maximized .aw-btn-max .aw-max-icon { display: none; }
+.agent-window.is-maximized .aw-btn-max .aw-restore-icon { display: inline-block; }
+
+/* 最大化遷移中だけ left/top/width/height/border-radius を transition。
+   通常時の drag / resize には transition を残さない (動きが追いつかない)。
+   is-animating は js 側で toggle 開始時に付け、 transitionend で外す。 */
+.agent-window.is-animating {
+  transition:
+    left 0.28s cubic-bezier(.2,.8,.2,1),
+    top 0.28s cubic-bezier(.2,.8,.2,1),
+    width 0.28s cubic-bezier(.2,.8,.2,1),
+    height 0.28s cubic-bezier(.2,.8,.2,1),
+    border-radius 0.2s ease;
+}
+
+/* 最大化状態。 layer (#workspace) を基準に inset:0 で広げる。 z-index は最前面相当。 */
+.agent-window.is-maximized {
+  left: 0 !important;
+  top: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 0;
+  z-index: 9999 !important;
+}
+.agent-window.is-maximized .aw-resize-grip { display: none; }
+.agent-window.is-maximized .aw-head { cursor: default; }
+
 .aw-status-dot {
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--ink-4);

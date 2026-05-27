@@ -73,10 +73,24 @@ export class AgentWindow {
     badge.textContent = this.protoLabel;
     badge.dataset.proto = this.protoId;
 
-    // Close
+    // Close / clear / maximize
     node.querySelector(".aw-btn-clear")?.addEventListener("click", () => this.clearChat());
     node.querySelector(".aw-btn-close").addEventListener("click", () => this.close());
     node.querySelector('.aw-traffic-dot[data-act="close"]').addEventListener("click", () => this.close());
+    node.querySelector(".aw-btn-max")?.addEventListener("click", () => this.toggleMaximize());
+    // ヘッダーをダブルクリックで最大化トグル (icon-btn 等のボタン上は除外)
+    node.querySelector(".aw-head").addEventListener("dblclick", (e) => {
+      if (e.target.closest("button") || e.target.closest(".aw-traffic-dot")) return;
+      this.toggleMaximize();
+    });
+
+    // user が手動 scroll-up したら以降の自動 scroll を一時停止 (新メッセージで再追従)
+    const cs = node.querySelector(".chat-scroll");
+    cs.addEventListener("scroll", () => {
+      const dist = cs.scrollHeight - cs.scrollTop - cs.clientHeight;
+      this._userPinnedToBottom = dist < 30;
+    });
+    this._userPinnedToBottom = true;
 
     // Drag
     const head = node.querySelector(".aw-head");
@@ -377,13 +391,13 @@ export class AgentWindow {
     stream.appendChild(node);
     const body = node.querySelector(".msg-body");
     this._typewriteUser(body, text);
-    this._scrollChat();
+    this._scrollChat(true);
   }
 
   _addSystemMessage(text) {
     const stream = this.el.querySelector(".chat-stream");
     stream.appendChild(this._renderMsg("system", "system", text));
-    this._scrollChat();
+    this._scrollChat(true);
   }
 
   _handleAgentMessage(text, final) {
@@ -590,9 +604,64 @@ export class AgentWindow {
     }
   }
 
-  _scrollChat() {
+  _scrollChat(force) {
     const s = this.el.querySelector(".chat-scroll");
-    s.scrollTop = s.scrollHeight;
+    // force=true: 強制 (新規 user/system メッセージ送信時)
+    // force=false (default): user が bottom 付近にいる時だけ追従。
+    // 過去ログを scroll-up で読んでいる最中は触らない。
+    if (force) {
+      s.scrollTop = s.scrollHeight;
+      this._userPinnedToBottom = true;
+      return;
+    }
+    if (this._userPinnedToBottom) s.scrollTop = s.scrollHeight;
+  }
+
+  toggleMaximize() {
+    // 連打中はアニメをスキップ (transitionend を待たずに次が来た場合の保険)
+    if (this._maxAnimTimer) {
+      clearTimeout(this._maxAnimTimer);
+      this._maxAnimTimer = null;
+    }
+
+    const willMax = !this.el.classList.contains("is-maximized");
+
+    if (willMax) {
+      // 元の pos/size を退避
+      this._preMaxPos = {
+        left:   this.el.style.left,
+        top:    this.el.style.top,
+        width:  this.el.style.width,
+        height: this.el.style.height,
+        zIndex: this.el.style.zIndex,
+      };
+      // アニメ用に transition を一時 ON。
+      // この時点では inline left/top/width/height は固定値なので、
+      // 次フレームで is-maximized クラスを足すと !important で 0/100% に補間される。
+      this.el.classList.add("is-animating");
+      requestAnimationFrame(() => this.el.classList.add("is-maximized"));
+    } else {
+      // 復元: アニメ ON のまま is-maximized を外すと inline 値に向けて補間される。
+      this.el.classList.add("is-animating");
+      this.el.classList.remove("is-maximized");
+      if (this._preMaxPos) {
+        Object.assign(this.el.style, this._preMaxPos);
+        this._preMaxPos = null;
+      }
+    }
+
+    // transitionend で is-animating を外す。 transitionend は複数 property で複数回
+    // 発火するので、 タイマーで保険を掛けつつ最後の 1 回で外す。
+    const cleanup = () => {
+      this.el.classList.remove("is-animating");
+      this.el.removeEventListener("transitionend", cleanup);
+      this._maxAnimTimer = null;
+    };
+    this.el.addEventListener("transitionend", cleanup);
+    this._maxAnimTimer = setTimeout(cleanup, 400);
+
+    this.focus();
+    if (this.onChange) this.onChange();
   }
 
   // ───────────────────────────────────────────
