@@ -77,6 +77,7 @@ const state = {
   selectedCatalogFlow: "cc",
   zoom: 1.0,
   sidebarCollapsed: false,
+  theme: "light",     // "light" | "dark"
   catalogs: [],       // [{ id, name, flow, baseUrl, orgId, envId, clientId, clientSecret?, scopes, status, createdAt }]
   // 「コネクション登録」一覧。 ウインドウが 0 個になっても残り、 明示的な DELETE のみで消える。
   // entry = { key, protoId, url, name, auth?, persona?, channel? }
@@ -91,7 +92,7 @@ const state = {
 function bookmarkKey(protoId, url) { return `${protoId}::${url || ""}`; }
 
 const ZOOM_MIN = 0.8;
-const ZOOM_MAX = 1.6;
+const ZOOM_MAX = 2.0;
 const ZOOM_STEP = 0.1;
 
 const $  = (s, p = document) => p.querySelector(s);
@@ -110,8 +111,11 @@ function init() {
   if (saved && saved.workspaces?.length) {
     state.zoom             = saved.zoom ?? 1.0;
     state.sidebarCollapsed = !!saved.sidebarCollapsed;
+    state.theme            = saved.theme === "dark" ? "dark" : "light";
     state.catalogs         = (saved.catalogs || []).map(migrateCatalog);
     state.bookmarks        = saved.bookmarks || [];
+    // sessionStorage から secrets を引き戻す (持続中のタブのみ)
+    persist.hydrateSecrets(state.catalogs, state.bookmarks);
     state.scripts          = saved.scripts   || [];
     state.selectedScriptId = saved.selectedScriptId || null;
     state.openScriptIds    = (saved.openScriptIds || []).filter(id => state.scripts.find(s => s.id === id));
@@ -122,8 +126,10 @@ function init() {
     restoreFromSaved(saved);
   } else {
     state.sidebarCollapsed = !!saved?.sidebarCollapsed;
+    state.theme            = saved?.theme === "dark" ? "dark" : "light";
     state.catalogs  = (saved?.catalogs || []).map(migrateCatalog);
     state.bookmarks = saved?.bookmarks || [];
+    persist.hydrateSecrets(state.catalogs, state.bookmarks);
     state.scripts   = saved?.scripts   || [];
     state.selectedScriptId = saved?.selectedScriptId || null;
     state.openScriptIds    = (saved?.openScriptIds || []).filter(id => state.scripts.find(s => s.id === id));
@@ -147,12 +153,14 @@ function init() {
   wireWsTabs();
   wireZoom();
   wireSidebarToggle();
+  wireTheme();
   wireWorkspaceBlur();
   wireScriptPanel();
   wireBackup();
   wireConnToggleAll();
   applyZoom();   // 復元値を反映
   applySidebar();
+  applyTheme();
   applyScriptPanel();   // 復元値を反映
   updateStatusLine();
   updateEmptyState();
@@ -179,15 +187,10 @@ function init() {
     const t = tabMatch[1];
     setTimeout(() => activeWorkspace().windows.forEach(w => w.switchTab(t)), 2200);
   }
-  // ?msg=hello  で自動的にメッセージ送信 (動作確認用)
-  const msgMatch = location.search.match(/[?&]msg=([^&]+)/);
-  if (msgMatch) {
-    const m = decodeURIComponent(msgMatch[1]);
-    setTimeout(() => activeWorkspace().windows.forEach(w => {
-      w.el.querySelector(".compose-input").value = m;
-      w._sendFromCompose();
-    }), 2400);
-  }
+  // ?msg=hello で自動メッセージ送信は **削除済み**。
+  //   - URL 1 つでアクティブウインドウから任意エージェント宛に意図しない要求を流せる
+  //     (社内 Slack / メールに `https://atelier.../?msg=...` を貼られると即発火) ため、
+  //     security review (2026-05-28) で削除。 動作確認は compose-input への手入力で。
 }
 
 // 保存トリガ (debounced)
@@ -233,6 +236,26 @@ function wireSidebarToggle() {
   $("#sidebarToggle").addEventListener("click", toggleSidebar);
 }
 
+// ═══════════════════════════════════════════════════════
+// THEME (light / dark)
+// ═══════════════════════════════════════════════════════
+function applyTheme() {
+  const dark = state.theme === "dark";
+  document.body.classList.toggle("is-dark", dark);
+  const lbl = document.querySelector("#themeToggle .theme-label");
+  if (lbl) lbl.textContent = dark ? "light" : "dark";
+}
+function toggleTheme() {
+  state.theme = state.theme === "dark" ? "light" : "dark";
+  applyTheme();
+  dirty();
+}
+function wireTheme() {
+  const btn = $("#themeToggle");
+  if (!btn) return;
+  btn.addEventListener("click", toggleTheme);
+}
+
 // ウインドウ以外 (ワークスペース余白) を click したら focus を解除する。
 // mousedown だと自分自身の resize/drag や empty-state ボタンと競合するので click を使う。
 function wireWorkspaceBlur() {
@@ -274,14 +297,16 @@ function restoreFromSaved(saved) {
   saved.workspaces.forEach(wsData => {
     const ws = createWorkspace(wsData.name || "default", { focus: true, silent: true });
     (wsData.windows || []).forEach(winData => {
+      // sessionStorage 側に残っている auth を引き戻す (タブ閉で消える)
+      const hydrated = persist.hydrateWindowSecrets(winData);
       connect({
-        protoId: winData.protoId,
-        url:     winData.config?.url,
-        name:    winData.config?.name,
-        auth:    winData.config?.auth,
-        persona: winData.config?.persona,
-        channel: winData.config?.channel
-      }, { restore: { pos: winData.pos, activeTab: winData.activeTab }, skipDirty: true });
+        protoId: hydrated.protoId,
+        url:     hydrated.config?.url,
+        name:    hydrated.config?.name,
+        auth:    hydrated.config?.auth,
+        persona: hydrated.config?.persona,
+        channel: hydrated.config?.channel
+      }, { restore: { pos: hydrated.pos, activeTab: hydrated.activeTab }, skipDirty: true });
     });
   });
   // アクティブWSを最後にスイッチ
@@ -442,6 +467,23 @@ function removeBookmark(key) {
   dirty();
 }
 
+// CONNECTIONS リストの並び替え。 fromKey の bookmark を targetKey の前/後に挿入する。
+function reorderBookmark(fromKey, targetKey, where /* "before" | "after" */) {
+  const arr = state.bookmarks || [];
+  const fromIdx = arr.findIndex(b => b.key === fromKey);
+  if (fromIdx < 0) return;
+  const [moved] = arr.splice(fromIdx, 1);
+  let targetIdx = arr.findIndex(b => b.key === targetKey);
+  if (targetIdx < 0) {
+    arr.push(moved);
+  } else {
+    arr.splice(where === "before" ? targetIdx : targetIdx + 1, 0, moved);
+  }
+  state.bookmarks = arr;
+  dirty();
+  renderBookmarks();
+}
+
 // CONNECTIONS = 登録済みコネクション (= bookmarks) を主軸に描画。
 // その下に「現在開いているウインドウ」を子要素として並べる。 ウインドウが 0 でも親は残る。
 function renderBookmarks() {
@@ -493,6 +535,40 @@ function renderBookmarks() {
     li.title = wins.length
       ? `${host}  ·  ${wins.length} window(s)`
       : `${host}  ·  no open window — click + to open`;
+    li.draggable = true;
+    li.dataset.bookmarkKey = b.key;
+
+    // ── DnD で並び替え ──
+    li.addEventListener("dragstart", (e) => {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/atelier-bookmark", b.key);
+      li.classList.add("is-dragging");
+    });
+    li.addEventListener("dragend", () => li.classList.remove("is-dragging"));
+    li.addEventListener("dragover", (e) => {
+      const k = e.dataTransfer.getData("text/atelier-bookmark") ||
+                document.querySelector(".agent-item.is-dragging")?.dataset.bookmarkKey;
+      if (!k || k === b.key) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      // hover している側 (上半分 / 下半分) で drop indicator を切替
+      const rect = li.getBoundingClientRect();
+      const before = (e.clientY - rect.top) < rect.height / 2;
+      li.classList.toggle("drop-before", before);
+      li.classList.toggle("drop-after",  !before);
+    });
+    li.addEventListener("dragleave", () => {
+      li.classList.remove("drop-before", "drop-after");
+    });
+    li.addEventListener("drop", (e) => {
+      e.preventDefault();
+      const fromKey = e.dataTransfer.getData("text/atelier-bookmark") ||
+                      document.querySelector(".agent-item.is-dragging")?.dataset.bookmarkKey;
+      const before = li.classList.contains("drop-before");
+      li.classList.remove("drop-before", "drop-after");
+      if (!fromKey || fromKey === b.key) return;
+      reorderBookmark(fromKey, b.key, before ? "before" : "after");
+    });
     li.innerHTML = `
       <button class="conn-toggle" aria-label="${expanded ? 'collapse' : 'expand'} window list" title="${canExpand ? (expanded ? 'collapse' : 'expand') : 'no open windows'}" ${canExpand ? '' : 'disabled'}>
         <svg viewBox="0 0 12 12" width="9" height="9"><polyline points="3,4.5 6,8 9,4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -2531,7 +2607,25 @@ async function applyImport(text, sourceLabel) {
       danger:       true
     });
     if (!ok) return false;
-    persist.importJson(text);
+    try {
+      persist.importJson(text);
+    } catch (e) {
+      if (e.code === "IMPORT_UNSAFE") {
+        const proceed = await modalConfirm({
+          title:        "Snapshot に注意点があります",
+          message:      "次の項目が検出されました。 信頼できる発行元の snapshot か確認してください:\n\n  - " +
+                        (e.warnings || []).join("\n  - ") +
+                        "\n\nそれでも import しますか？",
+          confirmLabel: "import を続行",
+          danger:       true
+        });
+        if (!proceed) return false;
+        persist.importJson(text, { allowOverride: true });
+      } else {
+        await modalAlert({ title: "Import に失敗しました", message: String(e.message || e) });
+        return false;
+      }
+    }
     sessionStorage.setItem("atelier:tileAfterImport", "1");
     location.reload();
     return true;
@@ -3161,16 +3255,9 @@ function wireKeyboard() {
   window.addEventListener("keydown", (e) => {
     const meta = e.metaKey || e.ctrlKey;
 
-    if (meta && e.key.toLowerCase() === "n") {
-      e.preventDefault();
-      openDialog();
-      return;
-    }
-    if (meta && e.key.toLowerCase() === "t") {
-      e.preventDefault();
-      createWorkspace(`workspace ${wsCounter + 1}`);
-      return;
-    }
+    // Ctrl+N / Ctrl+T はブラウザの新ウインドウ / 新タブに予約されており横取り不可。
+    // openDialog / createWorkspace はそれぞれサイドバーの "+ new connection" ボタン
+    // と ws-add ボタンから操作する前提に変更 (UI からショートカット表示も削除済み)。
     if (meta && e.shiftKey && (e.key === "{" || e.key === "[")) {
       e.preventDefault();
       switchWorkspaceRel(-1);

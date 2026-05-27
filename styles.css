@@ -1552,7 +1552,28 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   border-radius: 5px;
   border: 1px solid transparent;
   transition: background 0.15s ease;
+  position: relative;
+  cursor: grab;
 }
+.agent-item:active { cursor: grabbing; }
+/* DnD: 移動中のアイテムは半透明 */
+.agent-item.is-dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+/* DnD: drop hint — 上半分 hover なら top に、 下半分なら bottom に細い accent ライン */
+.agent-item.drop-before::before,
+.agent-item.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 4px; right: 4px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+.agent-item.drop-before::before { top: -1px; }
+.agent-item.drop-after::after  { bottom: -1px; }
 .conn-toggle {
   display: grid; place-items: center;
   width: 16px; height: 16px;
@@ -3663,4 +3684,161 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
 @media (max-width: 820px) {
   body { grid-template-columns: 0 1fr; }          /* サイドバーを退避 */
   .sidebar { display: none; }
+}
+
+/* トップメニューバー (rail) は zoom (--fs) の影響を受けない。
+   rail 内の文字サイズが 100% / 110% / 120% で揺れるとボタン幅が変わって
+   レイアウトがずれるため、 rail スコープでは fs を 1 に固定する。 */
+.rail, .rail * { --fs: 1; --fs-mul: 1; }
+
+/* ═══════════════════════════════════════════════════════
+   THEME · DARK MODE
+   color tokens を body.is-dark で上書きする方式。
+   既存 selectors のうち var(--*) を読んでいる箇所は自動でダーク化される。
+   hardcoded カラー (#BFE7F5 / linear-gradient で navy を直書きしている user bubble など)
+   は個別に上書きする。
+   ═══════════════════════════════════════════════════════ */
+
+/* Theme-toggle ボタン: アイコンの出し分け (デフォルト = light テーマ → 月を表示、 click で dark 化) */
+.theme-toggle .theme-ic { display: none; }
+.theme-toggle .theme-ic-moon { display: inline-block; }
+body.is-dark .theme-toggle .theme-ic-moon { display: none; }
+body.is-dark .theme-toggle .theme-ic-sun  { display: inline-block; }
+
+body.is-dark {
+  --paper:       #0E1320;
+  --paper-2:     #141A29;
+  --panel:       #1A2233;
+  --panel-soft:  #20293D;
+  --ink:         #E7ECF5;
+  --ink-2:       #C2CADD;
+  --ink-3:       #8A95B0;
+  --ink-4:       #5C6987;
+  --line:        #2A3349;
+  --line-2:      #232C42;
+  --line-3:      #1E2638;
+  --accent:      #38B6E8;
+  --accent-ink:  #66C8EE;
+  --accent-soft: #163446;
+
+  --ink-navy:    #0E1424;       /* user bubble 既定 (linear-gradient ベース) */
+  --ink-navy-2:  #1A2438;
+  --you-soft:    #2A3349;
+
+  --warn:        #FF6478;
+  --warn-soft:   #3A1A20;
+  --ok:          #4CC78A;
+  --ok-soft:     #143A28;
+
+  --you:         #244774;       /* dark mode user bubble base (gradient とほぼ同じ navy) */
+  --you-ink:     #F5F7FA;       /* user bubble 内テキスト = ほぼ白 */
+
+  --shadow-sm: 0 1px 0 rgba(0,0,0,.20), 0 1px 2px rgba(0,0,0,.30);
+  --shadow-md: 0 10px 24px -8px rgba(0,0,0,.45), 0 2px 4px rgba(0,0,0,.30), 0 0 0 1px rgba(0,0,0,.25);
+  --shadow-lg: 0 30px 60px -15px rgba(0,0,0,.55), 0 10px 20px -10px rgba(0,0,0,.35), 0 0 0 1px rgba(0,0,0,.30);
+}
+
+/* hardcoded アクセント淡 #BFE7F5 を一括で上書き (border-color のみ) */
+body.is-dark .ghost-btn:hover,
+body.is-dark .catalog-item:hover,
+body.is-dark .catalog-item.is-active,
+body.is-dark .script-item:hover,
+body.is-dark .script-item.is-active,
+body.is-dark .conn-card:hover,
+body.is-dark .conn-card.is-active,
+body.is-dark .protocol-pill:hover,
+body.is-dark .protocol-pill.is-active,
+body.is-dark .field-input:focus,
+body.is-dark .field-textarea:focus,
+body.is-dark .conn-form-control:focus {
+  border-color: var(--accent) !important;
+}
+body.is-dark .catalog-item:hover,
+body.is-dark .script-item:hover,
+body.is-dark .conn-card:hover {
+  box-shadow: 0 1px 0 rgba(0,0,0,.35), 0 2px 4px rgba(56,182,232,.10);
+}
+
+/* user bubble の navy linear-gradient を dark 用に差し替え。
+   light は #0079A8 → #00164A、 dark は線が見えづらくなるので少し明るくする */
+body.is-dark .msg-user .msg-bubble,
+body.is-dark .msg-user .msg-body,
+body.is-dark .msg.is-user .msg-bubble {
+  background: linear-gradient(135deg, #2E5494 0%, #1A2D52 100%) !important;
+  color: #F5F7FA !important;
+  border-color: rgba(255,255,255, 0.10) !important;
+}
+body.is-dark .msg-user .msg-author { color: #C2CADD; }
+
+/* アクセント丸ボタン (例: #0079A8 → #00164A) */
+body.is-dark [style*="linear-gradient(135deg, #0079A8"],
+body.is-dark .send-btn,
+body.is-dark .compose-send {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-ink) 100%) !important;
+}
+
+/* sun icon は dark テーマで色がつぶれないように accent 寄りに */
+body.is-dark .theme-toggle .theme-ic-sun { color: var(--accent); }
+
+/* dark の rail (上部メニューバー) は panel と統一して画面全体をダークに揃える。
+   元実装は light 用の白グラデなので、 dark では同色ベタ + 1px line で十分。 */
+body.is-dark .rail {
+  background: var(--panel) !important;
+  border-bottom-color: var(--line);
+}
+body.is-dark .rail::after { display: none; }
+body.is-dark .ws-tabs { background: var(--panel-soft); }
+
+/* sidebar の new connection ボタン: 元実装は color: var(--paper) (light=白)。
+   dark では --paper が黒に変わって背景の navy と同化するので、
+   dark スコープでは白で固定する。 */
+body.is-dark .side-cta {
+  color: #F5F7FA;
+  background: linear-gradient(180deg, #2E5494 0%, #1A2D52 100%);
+}
+body.is-dark .side-cta-glyph {
+  background: rgba(255,255,255, 0.92);
+  color: #1A2D52;
+}
+body.is-dark .side-cta-kbd {
+  color: rgba(245,247,250, 0.70);
+  border-color: rgba(245,247,250, 0.25);
+}
+
+/* dialog (new connection 等) と field の input は body が is-dark でも
+   var(--ink) が dark ink (#E7ECF5) を返すので本来は明るくなる。
+   ただし Chrome の autofill が背景白 + 黒文字を !important で上書きしてしまうため、
+   autofill 状態だけ明示的に dark の panel + ink に戻す。 */
+body.is-dark input:-webkit-autofill,
+body.is-dark input:-webkit-autofill:hover,
+body.is-dark input:-webkit-autofill:focus,
+body.is-dark textarea:-webkit-autofill {
+  -webkit-text-fill-color: var(--ink) !important;
+  -webkit-box-shadow: 0 0 0 1000px var(--panel) inset !important;
+  caret-color: var(--ink) !important;
+  transition: background-color 999999s ease 0s;
+}
+
+/* 念のため dialog 内 input/textarea の color も再保証 (browser default の黒を弾く) */
+body.is-dark .dialog input,
+body.is-dark .dialog textarea,
+body.is-dark .field input,
+body.is-dark .field textarea,
+body.is-dark .input-wrap input,
+body.is-dark .conn-form input,
+body.is-dark .conn-form textarea {
+  color: var(--ink) !important;
+  background-color: var(--panel) !important;
+}
+body.is-dark .input-wrap { background: var(--panel) !important; }
+body.is-dark .input-prefix { background: var(--panel-soft) !important; color: var(--ink-3) !important; }
+body.is-dark .dialog input::placeholder,
+body.is-dark .field input::placeholder,
+body.is-dark .input-wrap input::placeholder,
+body.is-dark .conn-form input::placeholder { color: var(--ink-4) !important; }
+
+/* 画面全体の背景遷移をスムーズに */
+body { transition: background-color 0.25s ease, color 0.25s ease; }
+.agent-window, .sidebar, .rail, .ghost-btn, .field-input, .field-textarea {
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }

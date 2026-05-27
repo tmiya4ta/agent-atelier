@@ -63,7 +63,7 @@ export const STRINGS = {
 
     // ── sidebar ──
     "side.newConn":         "new connection",
-    "side.newConn.tip":     "New connection (⌘N)",
+    "side.newConn.tip":     "New connection (Ctrl+N)",
     "side.bookmarks":       "BOOKMARKS",
     "side.catalogs":        "CATALOGS",
     "side.scripts":         "SCENARIOS",
@@ -86,7 +86,7 @@ export const STRINGS = {
     "side.script.delete":   "Delete script",
 
     // ── workspace tabs ──
-    "ws.add":         "New workspace (⌘T)",
+    "ws.add":         "New workspace (Ctrl+T)",
     "ws.tabs.hint":   "{kbd1} add &nbsp;·&nbsp; {kbd2} / {kbd3} switch",
     "ws.close.tip":   "Close workspace",
     "ws.close.confirm.title": "Close \"{name}\"? ({n} connections will be disconnected)",
@@ -243,9 +243,9 @@ export const STRINGS = {
 
     // ── script panel ──
     "script.tab.empty":      "no script open",
-    "script.tip.stop":       "Stop (⌘.)",
-    "script.tip.run":        "Run (⌘⏎)",
-    "script.tip.close":      "Close panel (⌘⇧K)",
+    "script.tip.stop":       "Stop (Ctrl+.)",
+    "script.tip.run":        "Run (Ctrl+Enter)",
+    "script.tip.close":      "Close panel (Ctrl+Shift+K)",
     "script.tip.clear":      "Clear editor",
     "script.tab.close":      "Close",
     "script.windows.label":  "windows",
