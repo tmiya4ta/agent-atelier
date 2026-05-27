@@ -248,6 +248,22 @@ function wireWorkspaceBlur() {
       if (state.scriptPanelOpen) closeScriptPanel();
     }
   });
+
+  // Scenario editor が開いている間は、 editor 外のどこをクリックしても閉じる。
+  // (chat window 内、 ヘッダ、 タイル余白など — editor を「ガラス面」のように扱う)
+  // 例外:
+  //   - editor 自体 (#scriptPanel) と そこからスポーンされるオーバーレイ (.modal-backdrop)
+  //   - sidebar のシナリオ操作 (script-list の項目クリックは select / open のため)
+  document.addEventListener("mousedown", (e) => {
+    if (!state.scriptPanelOpen) return;
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+    if (t.closest("#scriptPanel"))    return;   // editor 内クリック
+    if (t.closest(".modal-backdrop"))  return;  // confirm/alert/prompt が出ているとき
+    if (t.closest("#scriptList"))      return;  // sidebar の script リスト
+    if (t.closest("#scriptAdd"))       return;  // sidebar の "+" 新規シナリオボタン
+    closeScriptPanel();
+  }, true);
 }
 
 // ═══════════════════════════════════════════════════════
