@@ -10,11 +10,20 @@
  * Features matched against dev-server.py:
  *   - Static serve from project root (../)
  *   - Cache-Control: no-store on every response
- *   - CORS open ("*", any method, common headers)
+ *   - CORS limited to the local origin (was "*"; tightened to mitigate cross-tab SSRF).
  *   - /proxy: forward Content-Type / Authorization / Accept / X-Atelier-Stream
  *   - StripAuthOnRedirect: when target replies 3xx, follow once with Authorization removed
  *     (Anypoint Exchange → S3 presigned URL pattern).
  *   - Streaming POST/GET pipe with no per-response timeout.
+ *
+ * Security:
+ *   - SSRF guard: /proxy refuses RFC1918 / link-local / loopback / cloud metadata IPs and
+ *     non-http(s) protocols. Only http/https URLs to public hosts pass through, with an
+ *     allowlist for *.cloudhub.io / *.mulesoft.com / fonts.gstatic.com / cdn.jsdelivr.net /
+ *     localhost (127.0.0.1, ::1). Override via --proxy-allow <hostname-glob,...>.
+ *   - CORS: Access-Control-Allow-Origin echoes the request Origin only when it matches the
+ *     bound host:port. Cross-origin tabs cannot read /proxy responses.
+ *   - This server is intended for local development only. Do NOT expose it to the internet.
  */
 
 const http = require("http");
@@ -22,17 +31,43 @@ const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const url = require("url");
+const net = require("net");
+const dns = require("dns").promises;
 
 // ─── args ──────────────────────────────────────────────
 const args = process.argv.slice(2);
 let port = 8000;
 let host = "127.0.0.1";
+let extraAllow = [];
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--port") port = parseInt(args[++i], 10);
   else if (args[i] === "--host") host = args[++i];
+  else if (args[i] === "--proxy-allow") extraAllow = String(args[++i] || "").split(",").map(s => s.trim()).filter(Boolean);
 }
 
 const ROOT = path.resolve(__dirname, "..");
+
+// /proxy 経由で許可するホスト suffix。 子ドメイン (.cloudhub.io 等) も含む。
+const PROXY_ALLOW_SUFFIX = [
+  "cloudhub.io",            // CH2 *.xdfpbh.jpn-e1 / *.pnwfdv.jpn-e1
+  "mulesoft.com",           // anypoint.mulesoft.com / exchange* / repository
+  "anypoint.mulesoft.com",
+  "amazonaws.com",          // exchange の S3 presigned URL
+  "salesforce.com",
+  "force.com",
+  "my.salesforce.com",
+  "test.salesforce.com",
+  "login.salesforce.com",
+  "githubusercontent.com",  // raw scenarios
+  "github.com",
+  "fonts.googleapis.com",
+  "fonts.gstatic.com",
+  "cdn.jsdelivr.net",
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  ...extraAllow
+];
 
 // ─── mime ──────────────────────────────────────────────
 const MIME = {
@@ -54,10 +89,22 @@ const MIME = {
 };
 
 // ─── helpers ───────────────────────────────────────────
-function setCors(res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+// CORS は **dev-server 自身が listen している origin のみ** に echo する。
+// これで他オリジン (例: 開発機で開いた攻撃サイト) のタブから /proxy 経由で
+// 内部ネットを叩いてレスポンスを読む経路 (SSRF + CORS open) を遮断する。
+function setCors(req, res) {
+  const allowOrigins = [
+    `http://${host}:${port}`,
+    `http://127.0.0.1:${port}`,
+    `http://localhost:${port}`,
+  ];
+  const reqOrigin = req.headers.origin;
+  if (reqOrigin && allowOrigins.includes(reqOrigin)) {
+    res.setHeader("Access-Control-Allow-Origin", reqOrigin);
+    res.setHeader("Vary", "Origin");
+  }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, X-Atelier-Stream");
   res.setHeader("Access-Control-Max-Age", "86400");
 }
 function setNoCache(res) {
@@ -76,7 +123,7 @@ function sendJson(req, res, status, obj) {
   const body = Buffer.from(JSON.stringify(obj), "utf8");
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json; charset=utf-8");
-  setCors(res); setNoCache(res);
+  setCors(req, res); setNoCache(res);
   res.setHeader("Content-Length", body.length);
   res.end(body);
   log(req, status);
@@ -90,9 +137,81 @@ function safeJoin(rootDir, urlPath) {
   // strip query/fragment
   const decoded = decodeURIComponent(urlPath.split(/[?#]/)[0]);
   const target = path.normalize(path.join(rootDir, decoded));
-  // prevent traversal
-  if (!target.startsWith(rootDir)) return null;
+  // prevent traversal — startsWith だけだと rootDir + "-evil" のような prefix 衝突を許してしまうので
+  // path.relative で `..` 系が含まれないことも検査する。
+  const rel = path.relative(rootDir, target);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) return null;
+  if (target !== rootDir && !target.startsWith(rootDir + path.sep)) return null;
   return target;
+}
+
+// ─── SSRF guard ────────────────────────────────────────
+function isPrivateIPv4(ip) {
+  const m = ip.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (!m) return false;
+  const a = +m[1], b = +m[2];
+  if (a === 10) return true;                      // 10.0.0.0/8
+  if (a === 127) return true;                     // 127.0.0.0/8
+  if (a === 0) return true;                       // 0.0.0.0/8 (current network)
+  if (a === 169 && b === 254) return true;        // 169.254.0.0/16 link-local + AWS metadata
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+  if (a === 192 && b === 168) return true;        // 192.168.0.0/16
+  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 CGNAT
+  if (a >= 224) return true;                      // multicast / reserved
+  return false;
+}
+function isPrivateIPv6(ip) {
+  const lower = ip.toLowerCase();
+  if (lower === "::" || lower === "::1") return true;          // unspecified / loopback
+  if (lower.startsWith("fe80:") || lower.startsWith("fe80::")) return true; // link-local
+  if (lower.startsWith("fc") || lower.startsWith("fd")) return true;        // ULA fc00::/7
+  if (lower.startsWith("ff")) return true;                                  // multicast
+  if (lower.startsWith("::ffff:")) {
+    const v4 = lower.slice("::ffff:".length);
+    if (isPrivateIPv4(v4)) return true;
+  }
+  return false;
+}
+function hostnameIsAllowed(hostname) {
+  const h = hostname.toLowerCase();
+  return PROXY_ALLOW_SUFFIX.some(s => h === s || h.endsWith("." + s));
+}
+async function ssrfCheck(targetUrl) {
+  let parsed;
+  try { parsed = new URL(targetUrl); }
+  catch { return { ok: false, reason: "invalid url" }; }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return { ok: false, reason: `protocol "${parsed.protocol}" not allowed` };
+  }
+  const allowed = hostnameIsAllowed(parsed.hostname);
+  if (!allowed) {
+    // allowlist 外でもいきなり拒否はせず、 DNS 解決して private IP かをチェック。
+    // 結果が public IP であれば許可する。 攻撃者が任意 host を仕込んでも 169.254/10.x/127.x には
+    // 飛べない。 この緩めの仕様は demo 用途のため (社外の任意 SaaS に curl 代わりで使う)。
+    let ips = [];
+    if (net.isIP(parsed.hostname)) {
+      ips = [parsed.hostname];
+    } else {
+      try {
+        const recs = await dns.lookup(parsed.hostname, { all: true, verbatim: true });
+        ips = recs.map(r => r.address);
+      } catch (e) {
+        return { ok: false, reason: `dns lookup failed: ${e.code || e.message}` };
+      }
+    }
+    for (const ip of ips) {
+      const fam = net.isIP(ip);
+      const priv = (fam === 4) ? isPrivateIPv4(ip) : (fam === 6) ? isPrivateIPv6(ip) : true;
+      if (priv) {
+        return { ok: false, reason: `host "${parsed.hostname}" resolves to private/reserved IP ${ip}` };
+      }
+    }
+    return { ok: true, parsed, ips, viaAllowlist: false };
+  }
+  // allowlist にある host (Anypoint / GitHub / fonts 等) は CGNAT(100.64.0.0/10) や
+  // CDN 内部 IP を返してくることがあるので IP check はスキップ。
+  // localhost / 127.0.0.1 は明示的に許可される (allowlist に含めてある)。
+  return { ok: true, parsed, viaAllowlist: true };
 }
 function serveStatic(req, res) {
   let p = safeJoin(ROOT, req.url);
@@ -106,7 +225,7 @@ function serveStatic(req, res) {
       res.statusCode = 200;
       res.setHeader("Content-Type", MIME[ext] || "application/octet-stream");
       res.setHeader("Content-Length", st2.size);
-      setCors(res); setNoCache(res);
+      setCors(req, res); setNoCache(res);
       if (req.method === "HEAD") {
         res.end();
         log(req, 200, p.replace(ROOT, "") + " (head)");
@@ -156,6 +275,27 @@ async function handleProxy(req, res) {
   const target = parsedUrl.query.url;
   if (!target) { sendError(req, res, 400, "missing url= param"); return; }
 
+  // Origin check — /proxy は dev-server 自身の origin からの fetch のみ許可。
+  // 他オリジンの悪意あるタブから内部ホストを叩かれる経路を遮断する。
+  const allowOrigins = [
+    `http://${host}:${port}`,
+    `http://127.0.0.1:${port}`,
+    `http://localhost:${port}`,
+  ];
+  const reqOrigin = req.headers.origin;
+  if (reqOrigin && !allowOrigins.includes(reqOrigin)) {
+    sendError(req, res, 403, `origin "${reqOrigin}" not allowed`);
+    return;
+  }
+
+  // SSRF guard
+  const check = await ssrfCheck(target);
+  if (!check.ok) {
+    sendError(req, res, 403, `proxy denied: ${check.reason}`);
+    log(req, 403, "proxy DENY " + target.slice(0, 80));
+    return;
+  }
+
   const body = (req.method === "GET") ? null : await readBody(req);
 
   // forward only the headers we care about
@@ -174,6 +314,13 @@ async function handleProxy(req, res) {
       redirectTarget = new URL(upstream.headers.location, target).toString();
       // drain original
       upstream.resume();
+      // redirect 先にも SSRF guard を適用
+      const redirCheck = await ssrfCheck(redirectTarget);
+      if (!redirCheck.ok) {
+        sendError(req, res, 403, `proxy redirect denied: ${redirCheck.reason}`);
+        log(req, 403, "proxy DENY redirect " + redirectTarget.slice(0, 80));
+        return;
+      }
       const followHeaders = { ...fwdHeaders };
       delete followHeaders["Authorization"];
       // GET forces on 301/302/303 per common browser semantics (Exchange → S3 case is 303 GET)
@@ -186,7 +333,7 @@ async function handleProxy(req, res) {
     // pass through Content-Type
     if (upstream.headers["content-type"])
       res.setHeader("Content-Type", upstream.headers["content-type"]);
-    setCors(res); setNoCache(res);
+    setCors(req, res); setNoCache(res);
     res.setHeader("X-Atelier-Proxied-Url", target);
     if (redirectTarget) res.setHeader("X-Atelier-Followed-Redirect", redirectTarget);
     upstream.pipe(res);
@@ -200,7 +347,7 @@ async function handleProxy(req, res) {
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
     res.statusCode = 204;
-    setCors(res); setNoCache(res);
+    setCors(req, res); setNoCache(res);
     res.end();
     log(req, 204);
     return;

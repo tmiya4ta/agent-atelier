@@ -7,6 +7,14 @@ A2A 中核のマルチプロトコルエージェントクライアント。 ブ
 - **Local dev**: `python3 server/dev-server.py --port 8000` → http://127.0.0.1:8000/
 - **言語**: 英語 default、 `js/i18n.js` の `setLang("ja")` で日本語に切替可能 (現状 ja 部分翻訳)
 
+> ⚠️ **セキュリティ前提**: このアプリは **dev / demo tool** です。 OAuth `client_credentials` flow で `client_secret` をブラウザに保持、 各種 token を `sessionStorage` に置く設計のため、 信頼できないユーザに公開してはいけません。 CH2 deploy も社内デモ用と割り切ってください (Atelier 配信側に認証が無い)。
+> - localStorage に **secrets は保存しません** (sessionStorage 限定 — タブ閉で消える)
+> - export / import の JSON snapshot にも secrets は含まれません
+> - import 時は OAuth endpoint 書換や `__proto__` 等を検出して警告 dialog を出します
+> - Markdown / Slack mrkdwn の HTML 化は DOMPurify で sanitize 済 (`<script>` / `onerror=` 等を弾く)
+> - `index.html` に CSP `<meta>` を埋め込んでおり、 marked / DOMPurify は SRI 付き CDN
+> - dev-server.js の `/proxy` は **同一オリジン (dev-server 自身) からのみ受付**、 `/proxy?url=...` には allowlist + private IP (10.x / 169.254.x / 127.x / fc00::/7 等) 拒否を実装
+
 ## アーキテクチャ
 
 ```

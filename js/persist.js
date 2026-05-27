@@ -1,20 +1,88 @@
 // localStorage 永続化レイヤ
 // ワークスペース・ウインドウの構造/位置/タブ状態を保存し、リロード時に復元する。
 // チャット履歴とDebugフレームは保存しない (再接続でやり直す)。
+//
+// セキュリティ:
+//   - 機微情報 (Bearer token / OAuth clientSecret / accessToken / refreshToken) は
+//     **localStorage には保存しない**。 sessionStorage (タブ閉で消える) に分離する。
+//   - export JSON / import JSON は secrets を含まない。 共有 snapshot を
+//     渡しあっても token が漏れない。
+//   - localStorage は XSS 1 発で全部読まれるので、 公開ホスティングに上げる際は
+//     さらに index.html の CSP + DOMPurify 経由で一次経路を塞いでおくこと (済)。
 
 const KEY = "atelier:state:v1";
+const SECRETS_KEY = "atelier:secrets:v1";
 const VERSION = 1;
+
+// 機微フィールドのキー名 (catalogs / window config / bookmarks / oauth state 共通)
+const SENSITIVE_FIELDS = ["auth", "clientSecret", "accessToken", "refreshToken", "tokenExpiresAt"];
+
+// オブジェクトから secrets を分離して { sanitized, secrets } を返す。
+// secrets は元 obj を識別するキー (cat-id / bookmark-key / window-key) で索引する。
+function extractSecrets(obj, idKey) {
+  const secrets = {};
+  let touched = false;
+  for (const k of SENSITIVE_FIELDS) {
+    if (obj && Object.prototype.hasOwnProperty.call(obj, k) && obj[k] !== "" && obj[k] != null) {
+      secrets[k] = obj[k];
+      touched = true;
+    }
+  }
+  if (!touched) return null;
+  return { idKey, secrets };
+}
+
+// sanitized obj を作る — SENSITIVE_FIELDS を空文字に書き換えたシャローコピー
+function stripSecrets(obj) {
+  if (!obj || typeof obj !== "object") return obj;
+  const out = { ...obj };
+  for (const k of SENSITIVE_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(out, k) && out[k]) out[k] = "";
+  }
+  return out;
+}
+
+// secrets store: sessionStorage に { [scope]: { [idKey]: { auth, clientSecret, ... } } }
+function loadSecrets() {
+  try {
+    const raw = sessionStorage.getItem(SECRETS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+function saveSecrets(store) {
+  try { sessionStorage.setItem(SECRETS_KEY, JSON.stringify(store)); } catch {}
+}
+function setSecretEntry(scope, idKey, secrets) {
+  const s = loadSecrets();
+  s[scope] = s[scope] || {};
+  if (secrets && Object.keys(secrets).length) s[scope][idKey] = secrets;
+  else delete s[scope][idKey];
+  saveSecrets(s);
+}
+function getSecretEntry(scope, idKey) {
+  const s = loadSecrets();
+  return s[scope]?.[idKey] || null;
+}
+function clearSecrets() {
+  try { sessionStorage.removeItem(SECRETS_KEY); } catch {}
+}
 
 // ─── snapshot ────────────────────────────────
 function snapshotWindow(win) {
+  // window の secret は (protoId + url) でキー化して sessionStorage 行きにする。
+  const idKey = `${win.protoId}::${win.adapter.config.url || ""}`;
+  const cfg = win.adapter.config || {};
+  const winSecret = extractSecrets(cfg, idKey);
+  if (winSecret) setSecretEntry("windows", idKey, winSecret.secrets);
   return {
     protoId: win.protoId,
     config: {
-      url:     win.adapter.config.url,
-      name:    win.adapter.config.name,
-      auth:    win.adapter.config.auth,
-      persona: win.adapter.config.persona,
-      channel: win.adapter.config.channel
+      url:     cfg.url,
+      name:    cfg.name,
+      // auth は sessionStorage 行き — localStorage には空文字で残す (load 側で再合流)
+      auth:    "",
+      persona: cfg.persona,
+      channel: cfg.channel
     },
     pos: {
       left:   win.el.style.left,
@@ -29,16 +97,31 @@ function snapshotWindow(win) {
 
 export function save(state) {
   try {
+    // catalogs / bookmarks の secrets を sessionStorage に逃がす
+    const sanitizedCatalogs = (state.catalogs || []).map(c => {
+      const idKey = c.id;
+      const sec = extractSecrets(c, idKey);
+      if (sec) setSecretEntry("catalogs", idKey, sec.secrets);
+      return stripSecrets(c);
+    });
+    const sanitizedBookmarks = (state.bookmarks || []).map(b => {
+      const idKey = b.key || `${b.protoId}::${b.url || ""}`;
+      const sec = extractSecrets(b, idKey);
+      if (sec) setSecretEntry("bookmarks", idKey, sec.secrets);
+      return stripSecrets(b);
+    });
+
     const data = {
       v: VERSION,
       zoom: state.zoom ?? 1.0,
       sidebarCollapsed: !!state.sidebarCollapsed,
-      catalogs:  state.catalogs  || [],
+      theme: state.theme === "dark" ? "dark" : "light",
+      catalogs:  sanitizedCatalogs,
       scripts:   state.scripts   || [],
       selectedScriptId: state.selectedScriptId || null,
-      // 「閉じても残るコネクション登録」。 各 entry は { key, protoId, url, name, auth?, persona?, channel? }。
-      // ウインドウの開閉と独立に存続し、 ユーザが明示的に DELETE しない限り消えない。
-      bookmarks: state.bookmarks || [],
+      // 「閉じても残るコネクション登録」。 各 entry は { key, protoId, url, name, persona?, channel? }
+      // (auth/secret は sessionStorage 側)。
+      bookmarks: sanitizedBookmarks,
       activeWsIdx: Math.max(0, state.workspaces.findIndex(w => w.id === state.activeWs)),
       workspaces: state.workspaces.map(ws => ({
         name: ws.name,
@@ -49,6 +132,28 @@ export function save(state) {
   } catch (e) {
     console.warn("[persist] save failed:", e);
   }
+}
+
+// 機微情報 hydration: load 時に sessionStorage から secrets を取り出して state に再合流する。
+// app.js の restore フローから明示呼び出し。
+export function hydrateSecrets(catalogs, bookmarks) {
+  for (const c of (catalogs || [])) {
+    const sec = getSecretEntry("catalogs", c.id);
+    if (sec) Object.assign(c, sec);
+  }
+  for (const b of (bookmarks || [])) {
+    const idKey = b.key || `${b.protoId}::${b.url || ""}`;
+    const sec = getSecretEntry("bookmarks", idKey);
+    if (sec) Object.assign(b, sec);
+  }
+}
+
+// window 復元時に呼ばれる。 protoId+url から sessionStorage の secret を取り出して config に詰める。
+export function hydrateWindowSecrets(snap) {
+  const idKey = `${snap.protoId}::${snap.config?.url || ""}`;
+  const sec = getSecretEntry("windows", idKey);
+  if (sec && snap.config) Object.assign(snap.config, sec);
+  return snap;
 }
 
 export function load() {
@@ -66,6 +171,7 @@ export function load() {
 
 export function clear() {
   try { localStorage.removeItem(KEY); } catch {}
+  clearSecrets();
 }
 
 // debounced save — 連続的な変更 (ドラッグ等) でも安く済ませる
@@ -77,10 +183,18 @@ export function scheduleSave(state, ms = 80) {
 
 // ─── export / import ─────────────────────────
 // Snapshot file format:
-// { app: "atelier", exportedAt: ISO, state: <raw state object> }
+// { app: "atelier", exportedAt: ISO, state: <raw state object — secrets stripped> }
 export function exportJson() {
   const raw = localStorage.getItem(KEY);
   const state = raw ? JSON.parse(raw) : { v: VERSION };
+  // localStorage 上の state は既に save() で secrets 抜きだが、 念のため再度 strip。
+  if (Array.isArray(state.catalogs))  state.catalogs  = state.catalogs.map(stripSecrets);
+  if (Array.isArray(state.bookmarks)) state.bookmarks = state.bookmarks.map(stripSecrets);
+  if (Array.isArray(state.workspaces)) {
+    state.workspaces.forEach(ws => (ws.windows || []).forEach(w => {
+      if (w.config) w.config = stripSecrets(w.config);
+    }));
+  }
   return JSON.stringify({
     app: "atelier",
     exportedAt: new Date().toISOString(),
@@ -88,7 +202,43 @@ export function exportJson() {
   }, null, 2);
 }
 
-export function importJson(str) {
+// import 時に「危険な書き換え」を検出する。 共有 snapshot に細工された場合の警告材料。
+// 戻り値: { warnings: string[] }
+function inspectImport(state) {
+  const warnings = [];
+  // OAuth endpoint 書換 (anypoint.mulesoft.com 以外を catalog に仕込んでいる)
+  for (const c of (state.catalogs || [])) {
+    const allow = ["anypoint.mulesoft.com"];
+    const probe = (u) => {
+      try {
+        const h = new URL(u).hostname;
+        return !allow.some(a => h === a || h.endsWith("." + a));
+      } catch { return false; }
+    };
+    if (c.authUrl && probe(c.authUrl))
+      warnings.push(`catalog "${c.name || c.id}" の authUrl が Anypoint 以外: ${c.authUrl}`);
+    if (c.tokenUrl && probe(c.tokenUrl))
+      warnings.push(`catalog "${c.name || c.id}" の tokenUrl が Anypoint 以外: ${c.tokenUrl}`);
+  }
+  // snapshot に secret が含まれている (export 元が strip し忘れ or 外部由来)
+  const hasSecret = (o) => o && SENSITIVE_FIELDS.some(k => o[k]);
+  if ((state.catalogs || []).some(hasSecret))
+    warnings.push("snapshot に catalog の secret (clientSecret / accessToken 等) が含まれています");
+  if ((state.bookmarks || []).some(hasSecret))
+    warnings.push("snapshot に bookmark の auth token が含まれています");
+  // prototype pollution 経由
+  const dangerKeys = (o) => o && Object.keys(o).some(k => k === "__proto__" || k === "constructor" || k === "prototype");
+  const scan = (obj, depth = 0) => {
+    if (!obj || typeof obj !== "object" || depth > 4) return false;
+    if (dangerKeys(obj)) return true;
+    for (const v of Object.values(obj)) if (scan(v, depth + 1)) return true;
+    return false;
+  };
+  if (scan(state)) warnings.push("snapshot に __proto__ / constructor / prototype キーが含まれています");
+  return { warnings };
+}
+
+export function importJson(str, opts = {}) {
   const parsed = JSON.parse(str);
   if (!parsed || typeof parsed !== "object") {
     throw new Error("Invalid JSON: not an object");
@@ -103,6 +253,22 @@ export function importJson(str) {
   }
   if (!Array.isArray(state.workspaces)) {
     throw new Error("Snapshot missing workspaces[]");
+  }
+  // 危険な書き換え検査。 opts.allowOverride=true (UI 側で確認済み) でなければ throw。
+  const { warnings } = inspectImport(state);
+  if (warnings.length && !opts.allowOverride) {
+    const e = new Error("Import safety warnings:\n  - " + warnings.join("\n  - "));
+    e.warnings = warnings;
+    e.code = "IMPORT_UNSAFE";
+    throw e;
+  }
+  // import 時は secrets を必ず除去 (snapshot 由来の token を流し込ませない)
+  if (Array.isArray(state.catalogs))  state.catalogs  = state.catalogs.map(stripSecrets);
+  if (Array.isArray(state.bookmarks)) state.bookmarks = state.bookmarks.map(stripSecrets);
+  if (Array.isArray(state.workspaces)) {
+    state.workspaces.forEach(ws => (ws.windows || []).forEach(w => {
+      if (w.config) w.config = stripSecrets(w.config);
+    }));
   }
   localStorage.setItem(KEY, JSON.stringify(state));
 }
