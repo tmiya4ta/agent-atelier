@@ -107,10 +107,46 @@ export class AgentWindow {
     // Chat compose
     const ta = node.querySelector(".compose-input");
     const sendBtn = node.querySelector(".compose-send");
+    // 入力履歴 (ターミナル風の up/down)。 1 ウインドウあたり最大 10 件、 古い順から押し出し。
+    this._inputHistory = [];
+    this._historyCursor = -1;     // -1 = 履歴外 (現在 typing 中の draft)
+    this._historyDraft = "";       // 履歴を辿り始めた時点の入力中テキスト
+    this.MAX_INPUT_HISTORY = 10;
     ta.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         this._sendFromCompose();
+        return;
+      }
+      if (e.key === "ArrowUp" && !e.shiftKey && !e.ctrlKey && !e.altKey) {
+        // カーソルが先頭行に居る時だけ履歴遡上 (複数行 textarea の編集を妨げない)
+        const before = ta.value.slice(0, ta.selectionStart);
+        if (before.includes("\n")) return;
+        if (this._inputHistory.length === 0) return;
+        e.preventDefault();
+        if (this._historyCursor === -1) {
+          this._historyDraft = ta.value;
+          this._historyCursor = this._inputHistory.length - 1;
+        } else if (this._historyCursor > 0) {
+          this._historyCursor--;
+        }
+        this._setComposeValue(this._inputHistory[this._historyCursor]);
+        return;
+      }
+      if (e.key === "ArrowDown" && !e.shiftKey && !e.ctrlKey && !e.altKey) {
+        if (this._historyCursor === -1) return;
+        const after = ta.value.slice(ta.selectionStart);
+        if (after.includes("\n")) return;
+        e.preventDefault();
+        if (this._historyCursor < this._inputHistory.length - 1) {
+          this._historyCursor++;
+          this._setComposeValue(this._inputHistory[this._historyCursor]);
+        } else {
+          // 末尾より下: draft に戻る
+          this._historyCursor = -1;
+          this._setComposeValue(this._historyDraft || "");
+        }
+        return;
       }
     });
     ta.addEventListener("input", () => {
@@ -320,9 +356,33 @@ export class AgentWindow {
     const ta = this.el.querySelector(".compose-input");
     const text = ta.value.trim();
     if (!text || this.adapter.state !== "open") return;
+    this._pushInputHistory(text);
     ta.value = "";
     ta.style.height = "auto";
     this.sendProgrammatic(text);
+  }
+
+  // 入力履歴に push。 直前と同一なら重複しない。 上限超過分は先頭から落とす。
+  _pushInputHistory(text) {
+    const last = this._inputHistory[this._inputHistory.length - 1];
+    if (text !== last) {
+      this._inputHistory.push(text);
+      if (this._inputHistory.length > this.MAX_INPUT_HISTORY) {
+        this._inputHistory.shift();
+      }
+    }
+    this._historyCursor = -1;
+    this._historyDraft = "";
+  }
+
+  // 履歴から呼び戻すときの textarea 同期。 高さ自動調整 + キャレットを末尾へ。
+  _setComposeValue(v) {
+    const ta = this.el.querySelector(".compose-input");
+    ta.value = v;
+    ta.style.height = "auto";
+    ta.style.height = Math.min(ta.scrollHeight, 140) + "px";
+    const end = ta.value.length;
+    ta.setSelectionRange(end, end);
   }
 
   // Script から呼び出される。chat-stream を空にする + adapter の contextId を reroll
@@ -433,7 +493,7 @@ export class AgentWindow {
       if (final) msg.dataset.streaming = "0";
       // Slack: typewriter 完了後に mrkdwn を HTML 化
       if (final && this.protoId === "slack") {
-        body.innerHTML = mrkdwnToHtml(fullText);
+        body.innerHTML = safeHtml(mrkdwnToHtml(fullText));
         body.dataset.md = "1";
       }
       // a2a: Markdown (GFM) を HTML 化
@@ -443,7 +503,7 @@ export class AgentWindow {
       else if (final && this.protoId === "a2a" && window.marked) {
         try {
           window.marked.setOptions({ gfm: true, breaks: false });
-          body.innerHTML = window.marked.parse(fullText);
+          body.innerHTML = safeHtml(window.marked.parse(fullText));
           body.dataset.md = "1";
         } catch (e) {
           // fallback to plain text on parse error
@@ -500,12 +560,12 @@ export class AgentWindow {
       this._userTypeTimer = null;
       // protocol に応じた整形
       if (this.protoId === "slack") {
-        body.innerHTML = mrkdwnToHtml(normalized);
+        body.innerHTML = safeHtml(mrkdwnToHtml(normalized));
         body.dataset.md = "1";
       } else if (this.protoId === "a2a" && window.marked) {
         try {
           window.marked.setOptions({ gfm: true, breaks: false });
-          body.innerHTML = window.marked.parse(normalized);
+          body.innerHTML = safeHtml(window.marked.parse(normalized));
           body.dataset.md = "1";
         } catch (e) {
           console.warn("[window] marked.parse (user) failed:", e);
@@ -861,6 +921,29 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
+// marked / mrkdwnToHtml の出力を innerHTML に流す前に通す sanitizer。
+// agent / Slack 由来の text に <img onerror=...> 等が混入したときの一次防御。
+// DOMPurify が無い環境 (CDN ブロック等) では、 marked 出力を捨てて escape 済み textContent
+// 相当の HTML にフォールバックして安全側に倒す。
+function safeHtml(html) {
+  if (typeof window !== "undefined" && window.DOMPurify && typeof window.DOMPurify.sanitize === "function") {
+    return window.DOMPurify.sanitize(html, {
+      USE_PROFILES: { html: true },
+      ADD_ATTR: ["target", "rel"],
+      // <a target=_blank> に rel=noopener noreferrer を強制
+      FORBID_ATTR: ["style"],
+    });
+  }
+  // fallback: 危険な要素を除いた最低限 — script/iframe/object/embed/style と onXxx 属性を弾く
+  return String(html || "")
+    .replace(/<\s*\/?\s*(script|iframe|object|embed|style|link|meta)\b[^>]*>/gi, "")
+    .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, "")
+    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "")
+    .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, "")
+    .replace(/\s(href|src)\s*=\s*"\s*javascript:[^"]*"/gi, ' $1="#"')
+    .replace(/\s(href|src)\s*=\s*'\s*javascript:[^']*'/gi, " $1='#'");
+}
+
 function timeStr(ts) {
   const d = ts ? new Date(ts) : new Date();
   return d.toTimeString().slice(0, 8);
@@ -884,10 +967,10 @@ function mrkdwnToHtml(text) {
     return ` IC${inlines.length - 1} `;
   });
   // Slack 風リンク: <url|label> / <url>
-  s = s.replace(/&lt;(https?:\/\/[^|&\s]+)\|([^&\n]+?)&gt;/g, '<a href="$1" target="_blank" rel="noopener">$2</a>');
-  s = s.replace(/&lt;(https?:\/\/[^&\s]+)&gt;/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+  s = s.replace(/&lt;(https?:\/\/[^|&\s]+)\|([^&\n]+?)&gt;/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$2</a>');
+  s = s.replace(/&lt;(https?:\/\/[^&\s]+)&gt;/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
   // 素の URL
-  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>');
   // bold / italic / strike (word 境界を考慮)
   s = s.replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<strong>$2</strong>');
   s = s.replace(/(^|[\s(])_([^_\n]+)_/g,   '$1<em>$2</em>');

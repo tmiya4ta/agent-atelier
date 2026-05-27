@@ -5,14 +5,35 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Atelier — Agent Workbench</title>
 
+  <!-- Content-Security-Policy (defense-in-depth against XSS).
+       inline styles を残しているコンポーネント (window position 等) があるので style-src に
+       'unsafe-inline' を許容。 script は self + jsdelivr の SRI 付きライブラリのみ。 -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self';
+                 script-src 'self' https://cdn.jsdelivr.net;
+                 style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+                 font-src 'self' https://fonts.gstatic.com data:;
+                 img-src 'self' data: https:;
+                 connect-src 'self' https: http://127.0.0.1:* http://localhost:*;
+                 frame-ancestors 'none';
+                 base-uri 'self';
+                 form-action 'self';" />
+
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,300..700;1,8..60,300..700&family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 
   <link rel="stylesheet" href="./styles.css" />
 
-  <!-- Markdown (GFM) renderer for a2a agent responses -->
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- Markdown (GFM) renderer for a2a agent responses. SRI で改竄 / 差替検知。 -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@11.2.0/marked.min.js"
+          integrity="sha384-9Md4MlJk24bo2Ifubp0FbKhuES4/iAwyTGMeWpBG4RoHGTKygpEGEpOYhEQxbfa9"
+          crossorigin="anonymous"></script>
+  <!-- DOMPurify — marked の出力を innerHTML に流す前に sanitize。
+       agent / Slack 由来の text に <img onerror=...> が混じった時の一次防御。 -->
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"
+          integrity="sha384-+VfUPEb0PdtChMwmBcBmykRMDd+v6D/oFmB3rZM/puCMDYcIvF968OimRh4KQY9a"
+          crossorigin="anonymous"></script>
 </head>
 <body>
   <!-- ───────────────  TOP RAIL  ─────────────── -->
@@ -59,6 +80,23 @@
         <button class="zoom-val" id="zoomVal" title="Reset to 100% (click)" aria-label="reset">100%</button>
         <button class="zoom-btn" id="zoomIn"  title="Zoom in" aria-label="zoom in">+</button>
       </div>
+      <button class="ghost-btn theme-toggle" id="themeToggle" title="Toggle dark mode" aria-label="toggle dark mode">
+        <svg class="theme-ic theme-ic-sun" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+          <circle cx="8" cy="8" r="3"/>
+          <line x1="8" y1="1.5" x2="8" y2="3"/>
+          <line x1="8" y1="13" x2="8" y2="14.5"/>
+          <line x1="1.5" y1="8" x2="3" y2="8"/>
+          <line x1="13" y1="8" x2="14.5" y2="8"/>
+          <line x1="3.3" y1="3.3" x2="4.4" y2="4.4"/>
+          <line x1="11.6" y1="11.6" x2="12.7" y2="12.7"/>
+          <line x1="3.3" y1="12.7" x2="4.4" y2="11.6"/>
+          <line x1="11.6" y1="4.4" x2="12.7" y2="3.3"/>
+        </svg>
+        <svg class="theme-ic theme-ic-moon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13.5 9.5 A6 6 0 1 1 6.5 2.5 a4.7 4.7 0 0 0 7 7 z"/>
+        </svg>
+        <span class="theme-label">dark</span>
+      </button>
       <button class="ghost-btn" id="btnLayout" title="Cycle tile layout (smart → uniform → columns)" data-tile-mode="smart">
         <svg viewBox="0 0 16 16" width="14" height="14"><rect x="1" y="1" width="6" height="6" fill="none" stroke="currentColor"/><rect x="9" y="1" width="6" height="6" fill="none" stroke="currentColor"/><rect x="1" y="9" width="6" height="6" fill="none" stroke="currentColor"/><rect x="9" y="9" width="6" height="6" fill="none" stroke="currentColor"/></svg>
         <span>tile</span>
@@ -80,10 +118,9 @@
   <aside class="sidebar" id="sidebar">
    <div class="side-scroll">
     <section class="side-sec side-cta-sec">
-      <button class="side-cta" id="btnConnect" title="New connection (⌘N)">
+      <button class="side-cta" id="btnConnect" title="New connection">
         <span class="side-cta-glyph">+</span>
         <span class="side-cta-label">new connection</span>
-        <span class="side-cta-kbd">⌘N</span>
       </button>
     </section>
 
@@ -156,11 +193,11 @@
     <div class="ws-tabs-scroll" id="wsTabsScroll">
       <!-- dynamic tabs -->
     </div>
-    <button class="ws-add" id="wsAdd" title="New workspace (⌘T)">
+    <button class="ws-add" id="wsAdd" title="New workspace">
       <svg viewBox="0 0 16 16" width="12" height="12"><line x1="8" y1="3" x2="8" y2="13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="3" y1="8" x2="13" y2="8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
     </button>
     <span class="ws-tabs-hint">
-      <kbd>⌘T</kbd> add &nbsp;·&nbsp; <kbd>⌘⇧[</kbd> / <kbd>⌘⇧]</kbd> switch &nbsp;·&nbsp; double-click to rename
+      double-click to rename
     </span>
   </nav>
 
@@ -487,7 +524,7 @@
       <div class="script-tabbar-spacer"></div>
       <span class="script-saved" id="scriptSavedAt">—</span>
       <span class="script-status" id="scriptStatus" hidden></span>
-      <button class="script-tool script-tool-icon script-tabbar-collapse" id="scriptCollapse" title="Close panel (⌘⇧K)" aria-label="close panel">
+      <button class="script-tool script-tool-icon script-tabbar-collapse" id="scriptCollapse" title="Close panel (Ctrl+Shift+K)" aria-label="close panel">
         <svg viewBox="0 0 16 16" width="12" height="12"><path d="M3 5 L8 10 L13 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
     </div>
@@ -506,11 +543,11 @@
       <button class="script-tool script-tool-icon" id="scriptClear" title="Clear editor">
         <svg viewBox="0 0 16 16" width="12" height="12"><path d="M3 4 h10 M5.5 4 v-1 a1 1 0 0 1 1 -1 h3 a1 1 0 0 1 1 1 v1 M4 4 v10 a1 1 0 0 0 1 1 h6 a1 1 0 0 0 1 -1 v-10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
-      <button class="script-tool" id="scriptStop" disabled title="Stop (⌘.)">
+      <button class="script-tool" id="scriptStop" disabled title="Stop (Ctrl+.)">
         <svg viewBox="0 0 12 12" width="9" height="9"><rect x="2" y="2" width="8" height="8" fill="currentColor"/></svg>
         <span>stop</span>
       </button>
-      <button class="script-tool is-run" id="scriptRun" title="Run (⌘⏎)">
+      <button class="script-tool is-run" id="scriptRun" title="Run (Ctrl+Enter)">
         <svg viewBox="0 0 12 12" width="9" height="9"><path d="M3 2 L10 6 L3 10 Z" fill="currentColor"/></svg>
         <span>run</span>
       </button>
@@ -610,7 +647,7 @@ clear
               <span class="compose-meta-item"><span class="cm-key">role</span><span class="cm-val">user</span></span>
               <span class="compose-meta-item"><span class="cm-key">stream</span><span class="cm-val">on</span></span>
               <span class="compose-meta-spacer"></span>
-              <span class="compose-meta-item"><kbd>⏎</kbd> send &nbsp;<kbd>⇧⏎</kbd> newline</span>
+              <span class="compose-meta-item"><kbd>Enter</kbd> send &nbsp;<kbd>Shift+Enter</kbd> newline</span>
             </div>
           </div>
         </section>
