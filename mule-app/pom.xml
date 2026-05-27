@@ -6,7 +6,7 @@
 
     <groupId>fe1db8fb-8261-4b5c-a591-06fea582f980</groupId>
     <artifactId>atelier-static</artifactId>
-    <version>1.0.18</version>
+    <version>1.0.19</version>
     <packaging>mule-application</packaging>
 
     <name>atelier-static</name>
@@ -16,9 +16,13 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <app.runtime>4.10.1</app.runtime>
-        <mule.maven.plugin.version>4.7.0</mule.maven.plugin.version>
+        <mule.maven.plugin.version>4.9.1</mule.maven.plugin.version>
         <!-- 親 (../) にある Atelier の静的アセット。 build 時に src/main/resources/static/ にコピー -->
         <atelier.root>${project.basedir}/..</atelier.root>
+
+        <anypoint.businessGroup>MuleSoft\T1</anypoint.businessGroup>
+        <anypoint.environment>Sandbox</anypoint.environment>
+        <anypoint.targetSpace>rootps</anypoint.targetSpace>
     </properties>
 
     <build>
@@ -67,6 +71,22 @@
                 <extensions>true</extensions>
                 <configuration>
                     <classifier>mule-application</classifier>
+                    <cloudhub2Deployment>
+                        <muleVersion>${app.runtime}</muleVersion>
+                        <username>${anypoint.username}</username>
+                        <password>${anypoint.password}</password>
+                        <businessGroup>${anypoint.businessGroup}</businessGroup>
+                        <environment>${anypoint.environment}</environment>
+                        <target>${anypoint.targetSpace}</target>
+                        <provider>MC</provider>
+                        <applicationName>${project.artifactId}</applicationName>
+                        <replicas>1</replicas>
+                        <vCores>0.1</vCores>
+                        <deploymentTimeout>600000</deploymentTimeout>
+                        <deploymentSettings>
+                            <generateDefaultPublicUrl>true</generateDefaultPublicUrl>
+                        </deploymentSettings>
+                    </cloudhub2Deployment>
                 </configuration>
             </plugin>
         </plugins>
