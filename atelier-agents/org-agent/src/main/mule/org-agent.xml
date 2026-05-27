@@ -237,10 +237,15 @@ var sysPrompt =
 "  2) get_supplier_relations (mdm-mcp): 過去インシデント・取引先関係\n" ++
 "  3) list_suppliers (mdm-mcp): region/status/リスク範囲で取引先一覧 (例: 関西の取引先)\n" ++
 "  4) list_regions (mdm-mcp): 取引先マスタの region 一覧と各 region の件数\n" ++
-"  5) find_best_buyer (hr-mcp): category / region で調達担当者を検索\n" ++
+"  5) list_parts (mdm-mcp): supplier/category/location/部品名で部品一覧 (READ-ONLY)\n" ++
+"  6) resolve_part (mdm-mcp): 部品番号 → 部品詳細 (主取引先・代替候補つき)\n" ++
+"  7) list_part_alternatives (mdm-mcp): ある部品の代替部品候補を取得\n" ++
+"  8) find_suppliers_for_part (mdm-mcp): 部品を供給可能な取引先 (主+代替経由) をリスク順で取得\n" ++
+"  9) list_incidents (mdm-mcp): supplier/part/status/severity/since 条件でインシデント一覧\n" ++
+"  10) find_best_buyer (hr-mcp): category / region で調達担当者を検索\n" ++
 "\n" ++
 "  [WRITE / 副作用あり — ユーザの明示指示時のみ]\n" ++
-"  6) send_approval_request (hr-mcp): 承認依頼を Slack DM で送信\n" ++
+"  11) send_approval_request (hr-mcp): 承認依頼を Slack DM で送信\n" ++
 "\n" ++
 "  [対象外 — 依頼されても実行しない]\n" ++
 "  - サプライヤーリスクスコア更新 / KG オントロジー記録 (legal-agent 経路)\n" ++
@@ -252,6 +257,11 @@ var sysPrompt =
 "  - resolve_supplier → result.supplier.goldenId / result.supplier.name\n" ++
 "  - list_suppliers → result.count / result.items[i].goldenId / .name / .region / .riskScore / .status\n" ++
 "  - list_regions → result.count / result.items[i].region / .supplierCount\n" ++
+"  - list_parts → result.count / result.total / result.truncated / result.items[i].partNumber / .name / .category / .primarySupplier{goldenId,name}\n" ++
+"  - resolve_part → result.part.partNumber / .name / .primarySupplier / .alternatives[]\n" ++
+"  - list_part_alternatives → result.count / result.items[i].partNumber / .name / .compatibilityScore / .primarySupplier\n" ++
+"  - find_suppliers_for_part → result.count / result.items[i].goldenId / .name / .region / .riskScore / .via (primary|alternative) / .alternativePartNumber\n" ++
+"  - list_incidents → result.count / result.total / result.truncated / result.items[i].incidentId / .status / .severity / .createdAt / .supplier{goldenId,name} / .part{partNumber,name}\n" ++
 "  - find_best_buyer → result.buyers[i].employeeId / .employeeName / .category / .region\n" ++
 "  - send_approval_request → result.approvalRequestId / result.dueAt\n" ++
 "\n" ++
@@ -278,6 +288,8 @@ var sysPrompt =
 "    - 過去インシデント・取引先関係の照会\n" ++
 "    - 取引先一覧 (region / status / リスクスコア範囲で絞込み)\n" ++
 "    - 取引先 region 一覧 (各 region の件数付き)\n" ++
+"    - 部品一覧 / 部品詳細 / 代替部品 / 部品の供給可能取引先\n" ++
+"    - インシデント一覧 (supplier / part / status / severity / since)\n" ++
 "    - 担当バイヤーの検索 (category / region)\n" ++
 "    - 承認依頼の Slack DM 送信\n" ++
 "\n" ++
@@ -359,6 +371,72 @@ output application/java
       parameters: {
         "type": "object",
         properties: {},
+        required: []
+      }
+  }},
+  { "type": "function", "function": {
+      name: "list_parts",
+      description: "条件指定 (supplierGoldenId / category / location / nameLike) で部品一覧を取得 (READ-ONLY)。 既定 limit=10、 上限 50。",
+      parameters: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          category:         { "type": "string", description: "電力設備 / 機械部品 / 電子部品 / 素材" },
+          location:         { "type": "string" },
+          nameLike:         { "type": "string" },
+          limit:            { "type": "integer" }
+        },
+        required: []
+      }
+  }},
+  { "type": "function", "function": {
+      name: "resolve_part",
+      description: "部品番号から部品詳細 (主取引先・代替候補つき) を取得 (READ-ONLY)",
+      parameters: {
+        "type": "object",
+        properties: {
+          partNumber: { "type": "string" }
+        },
+        required: ["partNumber"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "list_part_alternatives",
+      description: "ある部品の代替部品候補を CompatibilityScore 降順で取得 (READ-ONLY)",
+      parameters: {
+        "type": "object",
+        properties: {
+          partNumber: { "type": "string" },
+          limit:      { "type": "integer" }
+        },
+        required: ["partNumber"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "find_suppliers_for_part",
+      description: "部品を供給可能な取引先 (主+代替経由) を RiskScore 昇順で取得 (READ-ONLY)",
+      parameters: {
+        "type": "object",
+        properties: {
+          partNumber: { "type": "string" },
+          limit:      { "type": "integer" }
+        },
+        required: ["partNumber"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "list_incidents",
+      description: "条件指定 (supplierGoldenId / partNumber / status / severity / since) でインシデント一覧を CreatedDate 降順で取得 (READ-ONLY)。 既定 limit=10、 上限 50。",
+      parameters: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          partNumber:       { "type": "string" },
+          status:           { "type": "string", description: "OPEN / IN_PROGRESS / CLOSED / ALL" },
+          severity:         { "type": "string", description: "LOW / MEDIUM / HIGH / CRITICAL" },
+          since:            { "type": "string", "format": "date-time" },
+          limit:            { "type": "integer" }
+        },
         required: []
       }
   }},
@@ -517,7 +595,7 @@ read((vars.toolArgsRaw default "{}") as String, "application/json")]]></ee:set-v
 output application/java
 var n = (vars.toolName default "") as String
 ---
-if (n == "resolve_supplier" or n == "get_supplier_relations" or n == "list_suppliers" or n == "list_regions") "mdm"
+if (n == "resolve_supplier" or n == "get_supplier_relations" or n == "list_suppliers" or n == "list_regions" or n == "list_parts" or n == "resolve_part" or n == "list_part_alternatives" or n == "find_suppliers_for_part" or n == "list_incidents") "mdm"
 else if (n == "find_best_buyer" or n == "send_approval_request") "hr"
 else "unknown"]]></ee:set-variable>
                         </ee:variables>

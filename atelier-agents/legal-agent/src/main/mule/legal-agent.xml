@@ -266,16 +266,26 @@ var sysPrompt =
 "    2) get_supplier_relations (mdm-mcp): 過去インシデント・取引先関係\n" ++
 "    3) list_suppliers (mdm-mcp): region/status/リスク範囲で取引先一覧 (例: 関西の取引先一覧)\n" ++
 "    4) list_regions (mdm-mcp): 取引先マスタの region 一覧と各 region の件数\n" ++
-"    5) get_quality_agreement (contract-mcp): 品質保証協定書 (条項・ペナルティ上限)\n" ++
+"    5) list_parts (mdm-mcp): supplier/category/location/部品番号部分一致で部品一覧\n" ++
+"    6) resolve_part (mdm-mcp): 部品番号 → 部品詳細\n" ++
+"    7) list_part_alternatives (mdm-mcp): 部品の代替品一覧 (互換スコア順)\n" ++
+"    8) find_suppliers_for_part (mdm-mcp): 部品を供給可能なサプライヤー一覧 (主+代替、 リスク低い順)\n" ++
+"    9) list_incidents (mdm-mcp): インシデント一覧 (supplier/part/status/severity/since で絞込)\n" ++
+"   10) get_quality_agreement (contract-mcp): 品質保証協定書 (条項・ペナルティ上限)\n" ++
 "  [WRITE / 副作用あり — ユーザの明示指示時のみ]\n" ++
-"    6) generate_return_request (contract-mcp): 返品要求書 (requestId 採番)\n" ++
-"    7) send_penalty_notice (contract-mcp): ペナルティ通知書 (noticeId 採番)\n" ++
-"    8) update_supplier_risk_score (mdm-mcp): リスクスコア更新\n" ++
-"    9) update_ontology (mdm-mcp): KG にトリプル記録\n\n" ++
+"   11) generate_return_request (contract-mcp): 返品要求書 (requestId 採番)\n" ++
+"   12) send_penalty_notice (contract-mcp): ペナルティ通知書 (noticeId 採番)\n" ++
+"   13) update_supplier_risk_score (mdm-mcp): リスクスコア更新\n" ++
+"   14) update_ontology (mdm-mcp): KG にトリプル記録\n\n" ++
 "tool の返り値の読み方:\n" ++
 "  - resolve_supplier → result.supplier.goldenId / result.supplier.name (matched=false でも success ステータス)\n" ++
 "  - list_suppliers → result.count / result.items[i].goldenId / .name / .region / .riskScore / .status\n" ++
 "  - list_regions → result.count / result.items[i].region / .supplierCount\n" ++
+"  - list_parts → result.count / result.total / result.truncated / result.items[i].partNumber / .category / .primarySupplierGoldenId / .stockStatus\n" ++
+"  - resolve_part → result.partNumber / .description / .primarySupplierGoldenId / .alternativeCount\n" ++
+"  - list_part_alternatives → result.count / result.items[i].alternativePartNumber / .score / .alternativeSupplierGoldenId\n" ++
+"  - find_suppliers_for_part → result.count / result.items[i].goldenId / .name / .riskScore / .source / .viaPartNumber\n" ++
+"  - list_incidents → result.count / result.total / result.truncated / result.items[i].name / .severity / .status / .partNumber / .supplierGoldenId / .createdAt\n" ++
 "  - get_quality_agreement → result.clause / result.penaltyCap (協定が存在しなければ result.clause が空文字)\n" ++
 "  - generate_return_request → result.requestId / result.quantity\n" ++
 "  - send_penalty_notice → result.noticeId / result.amount\n" ++
@@ -307,6 +317,8 @@ var sysPrompt =
 "    - 過去インシデント・取引先関係の照会\n" ++
 "    - 取引先一覧 (region / status / リスクスコア範囲で絞込み)\n" ++
 "    - 取引先 region 一覧 (各 region の件数付き)\n" ++
+"    - 部品一覧・部品詳細・代替品一覧・部品を供給可能なサプライヤー一覧\n" ++
+"    - インシデント一覧 (supplier / part / status / severity / 日付で絞込)\n" ++
 "    - 品質保証協定書 (条項・ペナルティ上限) の確認\n" ++
 "    - 返品要求書の発行\n" ++
 "    - ペナルティ通知書の送付\n" ++
@@ -392,6 +404,70 @@ output application/java
       parameters: {
         "type": "object",
         properties: {},
+        required: []
+      }
+  }},
+  { "type": "function", "function": {
+      name: "list_parts",
+      description: "条件指定 (supplierGoldenId / category / location / nameLike) で部品一覧を取得 (READ-ONLY)。 既定 limit=10、 上限 50。",
+      parameters: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          category:         { "type": "string", description: "電力設備 / 機械部品 / 電子部品 / 素材" },
+          location:         { "type": "string" },
+          nameLike:         { "type": "string" },
+          limit:            { "type": "integer" }
+        },
+        required: []
+      }
+  }},
+  { "type": "function", "function": {
+      name: "resolve_part",
+      description: "部品番号 (Name 完全一致) で部品詳細 1 件を取得 (READ-ONLY)。",
+      parameters: {
+        "type": "object",
+        properties: { partNumber: { "type": "string" } },
+        required: ["partNumber"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "list_part_alternatives",
+      description: "部品の代替品一覧 (互換スコア降順) を取得 (READ-ONLY)。",
+      parameters: {
+        "type": "object",
+        properties: {
+          partNumber: { "type": "string" },
+          limit:      { "type": "integer" }
+        },
+        required: ["partNumber"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "find_suppliers_for_part",
+      description: "部品を供給可能なサプライヤー一覧 (主+代替経由、 RiskScore 昇順) を取得 (READ-ONLY)。",
+      parameters: {
+        "type": "object",
+        properties: {
+          partNumber: { "type": "string" },
+          limit:      { "type": "integer" }
+        },
+        required: ["partNumber"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "list_incidents",
+      description: "インシデント一覧を取得 (READ-ONLY、 ORDER BY CreatedDate DESC)。 既定 limit=10、 上限 50。",
+      parameters: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          partNumber:       { "type": "string" },
+          status:           { "type": "string", description: "OPEN / IN_PROGRESS / RESOLVED / ALL" },
+          severity:         { "type": "string", description: "CRITICAL / HIGH / MEDIUM / LOW" },
+          since:            { "type": "string", description: "ISO8601 日付" },
+          limit:            { "type": "integer" }
+        },
         required: []
       }
   }},
@@ -599,7 +675,7 @@ read((vars.toolArgsRaw default "{}") as String, "application/json")]]></ee:set-v
 output application/java
 var n = (vars.toolName default "") as String
 ---
-if (n == "resolve_supplier" or n == "get_supplier_relations" or n == "list_suppliers" or n == "list_regions" or n == "update_supplier_risk_score" or n == "update_ontology") "mdm"
+if (n == "resolve_supplier" or n == "get_supplier_relations" or n == "list_suppliers" or n == "list_regions" or n == "list_parts" or n == "resolve_part" or n == "list_part_alternatives" or n == "find_suppliers_for_part" or n == "list_incidents" or n == "update_supplier_risk_score" or n == "update_ontology") "mdm"
 else if (n == "get_quality_agreement" or n == "generate_return_request" or n == "send_penalty_notice") "contract"
 else "unknown"]]></ee:set-variable>
                         </ee:variables>
