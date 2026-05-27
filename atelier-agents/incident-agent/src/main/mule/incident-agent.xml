@@ -147,7 +147,7 @@ var fallbackByReason =
   if ((vars.finishReason default "") as String == "length")
     "ℹ️ インシデント管理 (atelier-incident-agent) です。\n\n回答が文字数上限に達しました。\nincidentId か (サプライヤー名 + 部品番号 + 不具合内容) を指定して再度お試しください。"
   else
-    "ℹ️ インシデント管理 (atelier-incident-agent) です。\n\n**実行可能な操作**\n- 取引先のゴールデン ID 解決\n- 過去インシデント・取引先関係の照会\n- 既存 incidentId の状態照会\n- インシデントの新規採番 (Incident__c 作成)\n- インシデントステータスの更新 (OPEN / IN_PROGRESS / RESOLVED)\n\nincidentId か (サプライヤー名 + 部品番号 + 不具合内容) を教えてください。"
+    "ℹ️ インシデント管理 (atelier-incident-agent) です。\n\n**実行可能な操作**\n- 取引先のゴールデン ID 解決\n- 過去インシデント・取引先関係の照会\n- 取引先一覧 (region / status / リスクスコア範囲で絞込み)\n- 取引先 region 一覧 (各 region の件数付き)\n- 既存 incidentId の状態照会\n- インシデントの新規採番 (Incident__c 作成)\n- インシデントステータスの更新 (OPEN / IN_PROGRESS / RESOLVED)\n\nincidentId か (サプライヤー名 + 部品番号 + 不具合内容) を教えてください。"
 ---
 if (t != "") t
 else if (lastAssistantContent != "") lastAssistantContent
@@ -237,14 +237,18 @@ var sysPrompt =
 "  [READ-ONLY — 相談時に使ってよい]\n" ++
 "  1) resolve_supplier (mdm-mcp): サプライヤー名 → ゴールデン ID\n" ++
 "  2) get_supplier_relations (mdm-mcp): 過去インシデント・取引先関係\n" ++
-"  3) lookup_incident (incident-mcp): incidentId で既存 Incident__c を 1 件取得 (404 のとき exists=false)\n" ++
+"  3) list_suppliers (mdm-mcp): region/status/リスク範囲で取引先一覧 (例: 関西の取引先)\n" ++
+"  4) list_regions (mdm-mcp): 取引先マスタの region 一覧と各 region の件数\n" ++
+"  5) lookup_incident (incident-mcp): incidentId で既存 Incident__c を 1 件取得 (404 のとき exists=false)\n" ++
 "\n" ++
 "  [WRITE / 副作用あり — ユーザの明示指示時のみ]\n" ++
-"  4) register_incident (incident-mcp): Incident__c を新規作成 (incidentId 未指定なら採番)\n" ++
-"  5) update_incident_status (incident-mcp): incidentId のステータスを OPEN/IN_PROGRESS/RESOLVED に更新\n" ++
+"  6) register_incident (incident-mcp): Incident__c を新規作成 (incidentId 未指定なら採番)\n" ++
+"  7) update_incident_status (incident-mcp): incidentId のステータスを OPEN/IN_PROGRESS/RESOLVED に更新\n" ++
 "\n" ++
 "tool 戻り値の構造:\n" ++
 "  - resolve_supplier → result.supplier.goldenId / result.supplier.name\n" ++
+"  - list_suppliers → result.count / result.items[i].goldenId / .name / .region / .riskScore / .status\n" ++
+"  - list_regions → result.count / result.items[i].region / .supplierCount\n" ++
 "  - lookup_incident → result.exists / result.incident.incidentId / .supplierGoldenId / .partNumber / .severity / .status\n" ++
 "  - register_incident → result.incidentId / result.supplierGoldenId / result.partNumber\n" ++
 "  - update_incident_status → result.incidentId / result.status\n" ++
@@ -271,6 +275,8 @@ var sysPrompt =
 "    **実行可能な操作**\n" ++
 "    - 取引先のゴールデン ID 解決\n" ++
 "    - 過去インシデント・取引先関係の照会\n" ++
+"    - 取引先一覧 (region / status / リスクスコア範囲で絞込み)\n" ++
+"    - 取引先 region 一覧 (各 region の件数付き)\n" ++
 "    - 既存 incidentId の状態照会\n" ++
 "    - インシデントの新規採番 (Incident__c 作成)\n" ++
 "    - インシデントステータスの更新 (OPEN / IN_PROGRESS / RESOLVED)\n" ++
@@ -341,6 +347,30 @@ output application/java
           depth:            { "type": "integer" }
         },
         required: ["supplierGoldenId"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "list_suppliers",
+      description: "条件指定 (region / status / リスクスコア範囲) で取引先一覧を取得 (READ-ONLY)。region 完全一致。 status 既定 ACTIVE。",
+      parameters: {
+        "type": "object",
+        properties: {
+          region:       { "type": "string", description: "Region__c の値 (例: 関西、 中部、 兵庫、 関東、 九州、 東北)" },
+          status:       { "type": "string", description: "ACTIVE / INACTIVE / BLOCKED / ALL" },
+          riskScoreMin: { "type": "number" },
+          riskScoreMax: { "type": "number" },
+          limit:        { "type": "integer" }
+        },
+        required: []
+      }
+  }},
+  { "type": "function", "function": {
+      name: "list_regions",
+      description: "Supplier__c.Region__c の DISTINCT 値と、 各 region の ACTIVE 件数を一覧で返す (READ-ONLY)。",
+      parameters: {
+        "type": "object",
+        properties: {},
+        required: []
       }
   }},
   { "type": "function", "function": {
@@ -510,7 +540,7 @@ read((vars.toolArgsRaw default "{}") as String, "application/json")]]></ee:set-v
 output application/java
 var n = (vars.toolName default "") as String
 ---
-if (n == "resolve_supplier" or n == "get_supplier_relations") "mdm"
+if (n == "resolve_supplier" or n == "get_supplier_relations" or n == "list_suppliers" or n == "list_regions") "mdm"
 else if (n == "lookup_incident" or n == "register_incident" or n == "update_incident_status") "incident"
 else "unknown"]]></ee:set-variable>
                         </ee:variables>

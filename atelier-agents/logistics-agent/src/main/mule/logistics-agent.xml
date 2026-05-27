@@ -145,7 +145,7 @@ var fallbackByReason =
   if ((vars.finishReason default "") as String == "length")
     "ℹ️ 物流 (atelier-logistics-agent) です。\n\n回答が文字数上限に達しました。\n部品番号・必要数・インシデント ID のいずれかを指定して再度お試しください。"
   else
-    "ℹ️ 物流 (atelier-logistics-agent) です。\n\n**実行可能な操作**\n- 取引先のゴールデン ID 解決\n- 過去インシデント・取引先関係の照会\n- 部品在庫の照会\n- 在庫の仮確保\n- 仮確保のキャンセル\n\n**対象外** (依頼されても実施しません): サプライヤーリスクスコア更新 / KG (オントロジー) 記録 / 法務契約照会 / 発注ドラフト / 承認依頼送信 / インシデント採番。\n\nお手数ですが部品番号・必要数・インシデント ID のいずれかを指定してください。"
+    "ℹ️ 物流 (atelier-logistics-agent) です。\n\n**実行可能な操作**\n- 取引先のゴールデン ID 解決\n- 過去インシデント・取引先関係の照会\n- 取引先一覧 (region / status / リスクスコア範囲で絞込み)\n- 取引先 region 一覧 (各 region の件数付き)\n- 部品在庫の照会\n- 在庫の仮確保\n- 仮確保のキャンセル\n\n**対象外** (依頼されても実施しません): サプライヤーリスクスコア更新 / KG (オントロジー) 記録 / 法務契約照会 / 発注ドラフト / 承認依頼送信 / インシデント採番。\n\nお手数ですが部品番号・必要数・インシデント ID のいずれかを指定してください。"
 ---
 if (t != "") t
 else if (lastAssistantContent != "") lastAssistantContent
@@ -234,10 +234,12 @@ var sysPrompt =
 "  [READ-ONLY — 相談時に使ってよい]\n" ++
 "    1) resolve_supplier (mdm-mcp): サプライヤー名 → ゴールデン ID\n" ++
 "    2) get_supplier_relations (mdm-mcp): 過去インシデント・代替部品候補\n" ++
-"    3) check_inventory (inventory-mcp): 在庫数量\n" ++
+"    3) list_suppliers (mdm-mcp): region/status/リスク範囲で取引先一覧 (例: 関西の取引先)\n" ++
+"    4) list_regions (mdm-mcp): 取引先マスタの region 一覧と各 region の件数\n" ++
+"    5) check_inventory (inventory-mcp): 在庫数量\n" ++
 "  [WRITE / 副作用あり — ユーザの明示指示時のみ]\n" ++
-"    4) reserve_inventory (inventory-mcp): 在庫を仮確保 (RESERVED) する\n" ++
-"    5) cancel_inventory_reservation (inventory-mcp): 仮確保 (reservationId) をキャンセル\n\n" ++
+"    6) reserve_inventory (inventory-mcp): 在庫を仮確保 (RESERVED) する\n" ++
+"    7) cancel_inventory_reservation (inventory-mcp): 仮確保 (reservationId) をキャンセル\n\n" ++
 "  [対象外 — 依頼されても実行しない]\n" ++
 "    - サプライヤーリスクスコア更新 / KG オントロジー記録 (legal-agent 経路)\n" ++
 "    - 法務契約照会 / 返品要求書発行 / ペナルティ通知 (legal-agent)\n" ++
@@ -246,6 +248,8 @@ var sysPrompt =
 "    - インシデント採番 / ステータス更新 (incident-agent)\n\n" ++
 "tool の返り値の読み方:\n" ++
 "  - resolve_supplier → result.supplier.goldenId / result.supplier.name (matched=false でも success ステータス)\n" ++
+"  - list_suppliers → result.count / result.items[i].goldenId / .name / .region / .riskScore / .status\n" ++
+"  - list_regions → result.count / result.items[i].region / .supplierCount\n" ++
 "  - check_inventory → result.quantityOnHand / result.available / result.warehouse / result.leadTimeHours\n" ++
 "  - reserve_inventory → result.reservationId / result.ttlSeconds\n" ++
 "  - cancel_inventory_reservation → result.status (CANCELLED など)\n" ++
@@ -272,6 +276,8 @@ var sysPrompt =
 "    **実行可能な操作**\n" ++
 "    - 取引先のゴールデン ID 解決\n" ++
 "    - 過去インシデント・取引先関係の照会\n" ++
+"    - 取引先一覧 (region / status / リスクスコア範囲で絞込み)\n" ++
+"    - 取引先 region 一覧 (各 region の件数付き)\n" ++
 "    - 部品在庫の照会\n" ++
 "    - 在庫の仮確保\n" ++
 "    - 仮確保のキャンセル\n" ++
@@ -330,6 +336,30 @@ output application/java
           depth:            { "type": "integer" }
         },
         required: ["supplierGoldenId"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "list_suppliers",
+      description: "条件指定 (region / status / リスクスコア範囲) で取引先一覧を取得 (READ-ONLY)。region 完全一致。 status 既定 ACTIVE。",
+      parameters: {
+        "type": "object",
+        properties: {
+          region:       { "type": "string", description: "Region__c の値 (例: 関西、 中部、 兵庫、 関東、 九州、 東北)" },
+          status:       { "type": "string", description: "ACTIVE / INACTIVE / BLOCKED / ALL" },
+          riskScoreMin: { "type": "number" },
+          riskScoreMax: { "type": "number" },
+          limit:        { "type": "integer" }
+        },
+        required: []
+      }
+  }},
+  { "type": "function", "function": {
+      name: "list_regions",
+      description: "Supplier__c.Region__c の DISTINCT 値と、 各 region の ACTIVE 件数を一覧で返す (READ-ONLY)。",
+      parameters: {
+        "type": "object",
+        properties: {},
+        required: []
       }
   }},
   { "type": "function", "function": {
@@ -493,7 +523,7 @@ read((vars.toolArgsRaw default "{}") as String, "application/json")]]></ee:set-v
 output application/java
 var n = (vars.toolName default "") as String
 ---
-if (n == "resolve_supplier" or n == "get_supplier_relations") "mdm"
+if (n == "resolve_supplier" or n == "get_supplier_relations" or n == "list_suppliers" or n == "list_regions") "mdm"
 else if (n == "check_inventory" or n == "reserve_inventory" or n == "cancel_inventory_reservation") "inventory"
 else "unknown"]]></ee:set-variable>
                         </ee:variables>

@@ -168,7 +168,7 @@ var fallbackByReason =
   if ((vars.finishReason default "") as String == "length")
     "ℹ️ 法務 (atelier-legal-agent) です。\n\n回答が文字数上限に達しました。\nサプライヤー名・契約 ID・インシデント ID のいずれかを指定して再度お試しください。"
   else
-    "ℹ️ 法務 (atelier-legal-agent) です。\n\n**実行可能な操作**\n- 取引先のゴールデン ID 解決\n- 過去インシデント・取引先関係の照会\n- 品質保証協定書 (条項・ペナルティ上限) の確認\n- 返品要求書の発行\n- ペナルティ通知書の送付\n- サプライヤーリスクスコアの更新\n- KG (オントロジー) へのトリプル登録\n\nサプライヤー名・契約 ID・インシデント ID のいずれかを指定してください。"
+    "ℹ️ 法務 (atelier-legal-agent) です。\n\n**実行可能な操作**\n- 取引先のゴールデン ID 解決\n- 過去インシデント・取引先関係の照会\n- 取引先一覧 (region / status / リスクスコア範囲で絞込み)\n- 取引先 region 一覧 (各 region の件数付き)\n- 品質保証協定書 (条項・ペナルティ上限) の確認\n- 返品要求書の発行\n- ペナルティ通知書の送付\n- サプライヤーリスクスコアの更新\n- KG (オントロジー) へのトリプル登録\n\nサプライヤー名・契約 ID・インシデント ID のいずれかを指定してください。"
 ---
 if (t != "") t
 else if (lastAssistantContent != "") lastAssistantContent
@@ -264,14 +264,18 @@ var sysPrompt =
 "  [READ-ONLY — 相談時に使ってよい]\n" ++
 "    1) resolve_supplier (mdm-mcp): サプライヤー名 → ゴールデン ID\n" ++
 "    2) get_supplier_relations (mdm-mcp): 過去インシデント・取引先関係\n" ++
-"    3) get_quality_agreement (contract-mcp): 品質保証協定書 (条項・ペナルティ上限)\n" ++
+"    3) list_suppliers (mdm-mcp): region/status/リスク範囲で取引先一覧 (例: 関西の取引先一覧)\n" ++
+"    4) list_regions (mdm-mcp): 取引先マスタの region 一覧と各 region の件数\n" ++
+"    5) get_quality_agreement (contract-mcp): 品質保証協定書 (条項・ペナルティ上限)\n" ++
 "  [WRITE / 副作用あり — ユーザの明示指示時のみ]\n" ++
-"    4) generate_return_request (contract-mcp): 返品要求書 (requestId 採番)\n" ++
-"    5) send_penalty_notice (contract-mcp): ペナルティ通知書 (noticeId 採番)\n" ++
-"    6) update_supplier_risk_score (mdm-mcp): リスクスコア更新\n" ++
-"    7) update_ontology (mdm-mcp): KG にトリプル記録\n\n" ++
+"    6) generate_return_request (contract-mcp): 返品要求書 (requestId 採番)\n" ++
+"    7) send_penalty_notice (contract-mcp): ペナルティ通知書 (noticeId 採番)\n" ++
+"    8) update_supplier_risk_score (mdm-mcp): リスクスコア更新\n" ++
+"    9) update_ontology (mdm-mcp): KG にトリプル記録\n\n" ++
 "tool の返り値の読み方:\n" ++
 "  - resolve_supplier → result.supplier.goldenId / result.supplier.name (matched=false でも success ステータス)\n" ++
+"  - list_suppliers → result.count / result.items[i].goldenId / .name / .region / .riskScore / .status\n" ++
+"  - list_regions → result.count / result.items[i].region / .supplierCount\n" ++
 "  - get_quality_agreement → result.clause / result.penaltyCap (協定が存在しなければ result.clause が空文字)\n" ++
 "  - generate_return_request → result.requestId / result.quantity\n" ++
 "  - send_penalty_notice → result.noticeId / result.amount\n" ++
@@ -294,13 +298,15 @@ var sysPrompt =
 "  - この会話には以前のターンが含まれる場合があります。 それらを参照して文脈を保持し、 解決済みの supplierGoldenId / 条項 を覚えていれば再呼び出しせず即答する。\n" ++
 "\n" ++
 "私が対応できない / 情報が足りない時の応答ルール:\n" ++
-"  - 上記 7 つの tool で扱えない自由検索や、 サプライヤー名・契約 ID・インシデント ID のいずれも分からない場合、 必ず以下のテンプレートで Markdown 4〜8 行返してください:\n" ++
+"  - 上記 9 つの tool で扱えない自由検索や、 サプライヤー名・契約 ID・インシデント ID のいずれも分からない場合、 必ず以下のテンプレートで Markdown 4〜8 行返してください:\n" ++
 "\n" ++
 "    ℹ️ 法務 (atelier-legal-agent) です。\n" ++
 "\n" ++
 "    **実行可能な操作**\n" ++
 "    - 取引先のゴールデン ID 解決\n" ++
 "    - 過去インシデント・取引先関係の照会\n" ++
+"    - 取引先一覧 (region / status / リスクスコア範囲で絞込み)\n" ++
+"    - 取引先 region 一覧 (各 region の件数付き)\n" ++
 "    - 品質保証協定書 (条項・ペナルティ上限) の確認\n" ++
 "    - 返品要求書の発行\n" ++
 "    - ペナルティ通知書の送付\n" ++
@@ -363,6 +369,30 @@ output application/java
           depth:            { "type": "integer" }
         },
         required: ["supplierGoldenId"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "list_suppliers",
+      description: "条件指定 (region / status / リスクスコア範囲) で取引先一覧を取得 (READ-ONLY)。region 完全一致。 status 既定 ACTIVE。",
+      parameters: {
+        "type": "object",
+        properties: {
+          region:       { "type": "string", description: "Region__c の値 (例: 関西、 中部、 兵庫、 関東、 九州、 東北)" },
+          status:       { "type": "string", description: "ACTIVE / INACTIVE / BLOCKED / ALL" },
+          riskScoreMin: { "type": "number" },
+          riskScoreMax: { "type": "number" },
+          limit:        { "type": "integer" }
+        },
+        required: []
+      }
+  }},
+  { "type": "function", "function": {
+      name: "list_regions",
+      description: "Supplier__c.Region__c の DISTINCT 値と、 各 region の ACTIVE 件数を一覧で返す (READ-ONLY)。",
+      parameters: {
+        "type": "object",
+        properties: {},
+        required: []
       }
   }},
   { "type": "function", "function": {
@@ -569,7 +599,7 @@ read((vars.toolArgsRaw default "{}") as String, "application/json")]]></ee:set-v
 output application/java
 var n = (vars.toolName default "") as String
 ---
-if (n == "resolve_supplier" or n == "get_supplier_relations" or n == "update_supplier_risk_score" or n == "update_ontology") "mdm"
+if (n == "resolve_supplier" or n == "get_supplier_relations" or n == "list_suppliers" or n == "list_regions" or n == "update_supplier_risk_score" or n == "update_ontology") "mdm"
 else if (n == "get_quality_agreement" or n == "generate_return_request" or n == "send_penalty_notice") "contract"
 else "unknown"]]></ee:set-variable>
                         </ee:variables>

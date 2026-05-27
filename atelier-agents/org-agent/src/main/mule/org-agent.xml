@@ -145,7 +145,7 @@ var fallbackByReason =
   if ((vars.finishReason default "") as String == "length")
     "ℹ️ 組織・人事 (atelier-org-agent) です。\n\n回答が文字数上限に達しました。\n部署名・役割・インシデント ID のいずれかを指定して再度お試しください。"
   else
-    "ℹ️ 組織・人事 (atelier-org-agent) です。\n\n**実行可能な操作**\n- 取引先のゴールデン ID 解決\n- 過去インシデント・取引先関係の照会\n- 担当バイヤーの検索 (category / region)\n- 承認依頼の Slack DM 送信\n\n**対象外** (依頼されても実施しません): サプライヤーリスクスコア更新 / KG (オントロジー) 記録 / 法務契約照会 / 在庫照会 / 発注ドラフト / インシデント採番。\n\nお手数ですが部署名・役割・インシデント ID のいずれかを指定してください。"
+    "ℹ️ 組織・人事 (atelier-org-agent) です。\n\n**実行可能な操作**\n- 取引先のゴールデン ID 解決\n- 過去インシデント・取引先関係の照会\n- 取引先一覧 (region / status / リスクスコア範囲で絞込み)\n- 取引先 region 一覧 (各 region の件数付き)\n- 担当バイヤーの検索 (category / region)\n- 承認依頼の Slack DM 送信\n\n**対象外** (依頼されても実施しません): サプライヤーリスクスコア更新 / KG (オントロジー) 記録 / 法務契約照会 / 在庫照会 / 発注ドラフト / インシデント採番。\n\nお手数ですが部署名・役割・インシデント ID のいずれかを指定してください。"
 ---
 if (t != "") t
 else if (lastAssistantContent != "") lastAssistantContent
@@ -235,10 +235,12 @@ var sysPrompt =
 "  [READ-ONLY — 相談時に使ってよい]\n" ++
 "  1) resolve_supplier (mdm-mcp): サプライヤー名 → ゴールデン ID\n" ++
 "  2) get_supplier_relations (mdm-mcp): 過去インシデント・取引先関係\n" ++
-"  3) find_best_buyer (hr-mcp): category / region で調達担当者を検索\n" ++
+"  3) list_suppliers (mdm-mcp): region/status/リスク範囲で取引先一覧 (例: 関西の取引先)\n" ++
+"  4) list_regions (mdm-mcp): 取引先マスタの region 一覧と各 region の件数\n" ++
+"  5) find_best_buyer (hr-mcp): category / region で調達担当者を検索\n" ++
 "\n" ++
 "  [WRITE / 副作用あり — ユーザの明示指示時のみ]\n" ++
-"  4) send_approval_request (hr-mcp): 承認依頼を Slack DM で送信\n" ++
+"  6) send_approval_request (hr-mcp): 承認依頼を Slack DM で送信\n" ++
 "\n" ++
 "  [対象外 — 依頼されても実行しない]\n" ++
 "  - サプライヤーリスクスコア更新 / KG オントロジー記録 (legal-agent 経路)\n" ++
@@ -248,6 +250,8 @@ var sysPrompt =
 "\n" ++
 "tool 戻り値の構造:\n" ++
 "  - resolve_supplier → result.supplier.goldenId / result.supplier.name\n" ++
+"  - list_suppliers → result.count / result.items[i].goldenId / .name / .region / .riskScore / .status\n" ++
+"  - list_regions → result.count / result.items[i].region / .supplierCount\n" ++
 "  - find_best_buyer → result.buyers[i].employeeId / .employeeName / .category / .region\n" ++
 "  - send_approval_request → result.approvalRequestId / result.dueAt\n" ++
 "\n" ++
@@ -272,6 +276,8 @@ var sysPrompt =
 "    **実行可能な操作**\n" ++
 "    - 取引先のゴールデン ID 解決\n" ++
 "    - 過去インシデント・取引先関係の照会\n" ++
+"    - 取引先一覧 (region / status / リスクスコア範囲で絞込み)\n" ++
+"    - 取引先 region 一覧 (各 region の件数付き)\n" ++
 "    - 担当バイヤーの検索 (category / region)\n" ++
 "    - 承認依頼の Slack DM 送信\n" ++
 "\n" ++
@@ -330,6 +336,30 @@ output application/java
           depth:            { "type": "integer" }
         },
         required: ["supplierGoldenId"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "list_suppliers",
+      description: "条件指定 (region / status / リスクスコア範囲) で取引先一覧を取得 (READ-ONLY)。region 完全一致。 status 既定 ACTIVE。",
+      parameters: {
+        "type": "object",
+        properties: {
+          region:       { "type": "string", description: "Region__c の値 (例: 関西、 中部、 兵庫、 関東、 九州、 東北)" },
+          status:       { "type": "string", description: "ACTIVE / INACTIVE / BLOCKED / ALL" },
+          riskScoreMin: { "type": "number" },
+          riskScoreMax: { "type": "number" },
+          limit:        { "type": "integer" }
+        },
+        required: []
+      }
+  }},
+  { "type": "function", "function": {
+      name: "list_regions",
+      description: "Supplier__c.Region__c の DISTINCT 値と、 各 region の ACTIVE 件数を一覧で返す (READ-ONLY)。",
+      parameters: {
+        "type": "object",
+        properties: {},
+        required: []
       }
   }},
   { "type": "function", "function": {
@@ -487,7 +517,7 @@ read((vars.toolArgsRaw default "{}") as String, "application/json")]]></ee:set-v
 output application/java
 var n = (vars.toolName default "") as String
 ---
-if (n == "resolve_supplier" or n == "get_supplier_relations") "mdm"
+if (n == "resolve_supplier" or n == "get_supplier_relations" or n == "list_suppliers" or n == "list_regions") "mdm"
 else if (n == "find_best_buyer" or n == "send_approval_request") "hr"
 else "unknown"]]></ee:set-variable>
                         </ee:variables>
