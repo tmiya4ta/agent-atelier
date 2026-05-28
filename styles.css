@@ -2171,26 +2171,26 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .aw-proto-badge[data-proto="slack"]  { color: #8B5300; background: #FFF1D6; border-color: #F4D89A; }
 .aw-proto-badge[data-proto="openai"] { color: var(--ok); background: var(--ok-soft); border-color: #CFE5D9; }
 
-/* sidebar Connections の各行に protocol を示す小バッジ。
-   .aw-proto-badge と同じカラートークンを使い、 サイズだけ少し小さく揃える。 */
+/* sidebar Connections の各行に protocol を示すミニラベル。
+   背景・枠は持たず、 行頭に小さく色文字を置くだけ。 名前を圧迫しない。 */
 .conn-proto-badge {
   font-family: var(--f-mono);
   font-size: calc(8.5px * var(--fs-mul, 1.1) * var(--fs, 1));
   letter-spacing: 0.08em;
-  color: var(--ink-3);
-  background: var(--panel);
-  border: 1px solid var(--line);
-  padding: 1px 5px;
-  border-radius: 2px;
+  color: var(--ink-4);
   text-transform: uppercase;
-  margin-right: 6px;
+  margin-right: 7px;
   flex-shrink: 0;
-  line-height: 1.4;
+  font-weight: 500;
+  /* 等幅 3 字分だけ占有して名前の左端を揃える */
+  display: inline-block;
+  min-width: 28px;
+  text-align: left;
 }
-.conn-proto-badge[data-proto="a2a"]    { color: var(--accent-ink); background: var(--accent-soft); border-color: #BFE7F5; }
-.conn-proto-badge[data-proto="mcp"]    { color: var(--warn); background: var(--warn-soft); border-color: #F4D5C6; }
-.conn-proto-badge[data-proto="slack"]  { color: #8B5300; background: #FFF1D6; border-color: #F4D89A; }
-.conn-proto-badge[data-proto="openai"] { color: var(--ok); background: var(--ok-soft); border-color: #CFE5D9; }
+.conn-proto-badge[data-proto="a2a"]    { color: var(--accent-ink); }
+.conn-proto-badge[data-proto="mcp"]    { color: var(--warn); }
+.conn-proto-badge[data-proto="slack"]  { color: #B07A1A; }
+.conn-proto-badge[data-proto="openai"] { color: var(--ok); }
 
 .aw-title {
   margin: 0;
