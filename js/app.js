@@ -86,8 +86,20 @@ const state = {
   selectedScriptId: null,
   openScriptIds: [],  // panel に open しているタブの順序
   scriptPanelOpen: false,
-  scriptPanelHeight: 480
+  scriptPanelHeight: 0  // 0 = 未設定。 init で canvas の ~50% に決まる
 };
+
+function defaultScriptPanelHeight() {
+  return Math.round(window.innerHeight * 0.5);
+}
+
+// 0 / null は default (50% canvas) にリフト。 旧 hard-coded 480 も migration
+// 対象として default に置き換える (user 由来でなく旧 init/scenario 由来なので)。
+// それ以外 (user が drag で決めた値) はそのまま尊重する。
+function normalizeScriptPanelHeight(saved) {
+  if (!saved || saved === 480) return defaultScriptPanelHeight();
+  return saved;
+}
 
 function bookmarkKey(protoId, url) { return `${protoId}::${url || ""}`; }
 
@@ -120,7 +132,7 @@ function init() {
     state.selectedScriptId = saved.selectedScriptId || null;
     state.openScriptIds    = (saved.openScriptIds || []).filter(id => state.scripts.find(s => s.id === id));
     state.scriptPanelOpen  = !!saved.scriptPanelOpen && state.openScriptIds.length > 0;
-    state.scriptPanelHeight = saved.scriptPanelHeight || 480;
+    state.scriptPanelHeight = normalizeScriptPanelHeight(saved.scriptPanelHeight);
     catCounter    = state.catalogs.reduce((m, c) => Math.max(m, parseInt(c.id?.split("-")[1] || 0)), 0);
     scriptCounter = state.scripts.reduce((m, s) => Math.max(m, parseInt(s.id?.split("-")[1] || 0)), 0);
     restoreFromSaved(saved);
@@ -134,7 +146,7 @@ function init() {
     state.selectedScriptId = saved?.selectedScriptId || null;
     state.openScriptIds    = (saved?.openScriptIds || []).filter(id => state.scripts.find(s => s.id === id));
     state.scriptPanelOpen  = !!saved?.scriptPanelOpen && state.openScriptIds.length > 0;
-    state.scriptPanelHeight = saved?.scriptPanelHeight || 480;
+    state.scriptPanelHeight = normalizeScriptPanelHeight(saved?.scriptPanelHeight);
     scriptCounter = state.scripts.reduce((m, s) => Math.max(m, parseInt(s.id?.split("-")[1] || 0)), 0);
     createWorkspace("default", { focus: true, silent: true });
   }
