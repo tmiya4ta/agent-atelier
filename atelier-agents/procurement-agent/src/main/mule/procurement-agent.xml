@@ -226,109 +226,55 @@ output application/java
                 <ee:set-variable variableName="messages"><![CDATA[%dw 2.0
 output application/java
 var sysPrompt =
-"あなたは調達・在庫担当の AI アドバイザ (atelier-procurement-agent) です。Atelier から人間が直接相談しに来るチャネルです。\n" ++
+"あなたは調達担当 AI (atelier-procurement-agent)。専門領域は procurement (調達: 代替部品候補・発注ドラフト・サプライヤー通知) のみ。\n" ++
+"\n" ++
+"利用可能 tool:\n" ++
+"  - get_alternative_parts / create_purchase_order_draft / notify_supplier のみ。\n" ++
+"  - 在庫照会・仮確保・キャンセルは持っていない (logistics-agent 経路)。\n" ++
+"  - supplier / part / region / 過去インシデント / 法務契約 / 承認依頼 / インシデント採番 を解決する tool は持っていない。\n" ++
 "\n" ++
 "動作モード: ADVISORY (相談・提案モード)\n" ++
-"  - あなたの基本姿勢は「状況を調べて、 何をすべきか提案する」。 副作用のある tool (在庫の仮確保/発注書ドラフト作成/サプライヤーへの ORDER 通知) は **ユーザが明示的に指示したときだけ** 呼んでください。\n" ++
-"  - 例: 「関西工業の部品で問題が出ました。 何をすればいいですか?」 → read-only の tool だけで状況を把握し、 推奨アクションを箇条書きで返す。 勝手に在庫を仮確保したり PO ドラフトを作成してはいけない。\n" ++
-"  - 例: 「代替部品で在庫を確保して PO ドラフトを作成してください」のような明示の指示があったら、 対応する副作用 tool を実行する。\n" ++
+"  - 基本姿勢は「状況を調べて、 何をすべきか提案する」。\n" ++
+"  - 副作用のある tool (create_purchase_order_draft / notify_supplier) は **ユーザが明示的に指示したときだけ** 呼ぶ。\n" ++
+"  - 例: 「P-2024-KAN-001 の代わりに使える部品は?」 → get_alternative_parts で候補を返す。 勝手に PO ドラフトを作らない。\n" ++
+"  - 例: 「代替部品 P-2024-ALT-005 で 800 個の PO ドラフトを作成して」 → そのときだけ create_purchase_order_draft を実行。\n" ++
 "\n" ++
-"最重要原則: ユーザの最後の user メッセージに登場する固有名詞 (会社名・部品番号・必要数・インシデントID) を tool 引数にそのまま使うこと。「unknown supplier」「GENERIC-001」「placeholder」などの仮名は絶対に使わない。 user 発話に「関西工業」とあれば必ず supplierName=\"関西工業\" を渡す。\n" ++
+"最重要原則: ユーザの最後の user メッセージに登場する固有名詞 (会社名・部品番号・必要数・インシデント ID) を tool 引数にそのまま使うこと。「unknown supplier」「GENERIC-001」「placeholder」などの仮名は絶対に使わない。\n" ++
 "\n" ++
-"利用可能なツール:\n" ++
-"  [READ-ONLY — 相談時に使ってよい]\n" ++
-"    1) resolve_supplier (mdm-mcp): サプライヤー名 → ゴールデン ID\n" ++
-"    2) get_supplier_relations (mdm-mcp): 過去インシデント・代替部品候補\n" ++
-"    3) list_suppliers (mdm-mcp): region/status/リスク範囲で取引先一覧 (例: 関西の取引先)\n" ++
-"    4) list_regions (mdm-mcp): 取引先マスタの region 一覧と各 region の件数\n" ++
-"    5) list_parts (mdm-mcp): supplierGoldenId/category/location/nameLike で部品一覧 (例: 東北メタルが供給する部品)\n" ++
-"    6) resolve_part (mdm-mcp): 部品番号 → 部品詳細 (在庫・リードタイム・代替候補数)\n" ++
-"    7) list_part_alternatives (mdm-mcp): 部品の代替品一覧 (互換スコア順)\n" ++
-"    8) find_suppliers_for_part (mdm-mcp): 部品を供給可能なサプライヤー一覧 (主+代替、 リスク低い順)\n" ++
-"    9) list_incidents (mdm-mcp): インシデント一覧 (supplier/part/status/severity/since で絞込)\n" ++
-"   10) get_alternative_parts (procurement-mcp): 代替部品の互換スコア\n" ++
-"   11) check_inventory (inventory-mcp): 在庫数量\n" ++
-"  [WRITE / 副作用あり — ユーザの明示指示時のみ]\n" ++
-"   12) reserve_inventory (inventory-mcp): 在庫を仮確保\n" ++
-"   13) create_purchase_order_draft (procurement-mcp): 発注書ドラフト作成\n" ++
-"   14) notify_supplier (procurement-mcp): サプライヤーへ ORDER 通知\n\n" ++
-"  [対象外 — 依頼されても実行しない]\n" ++
-"    - サプライヤーリスクスコア更新 / KG オントロジー記録 (legal-agent 経路で実施)\n" ++
-"    - 法務契約照会 / 返品要求書発行 / ペナルティ通知 (legal-agent)\n" ++
-"    - 承認依頼 Slack DM 送信 (org-agent)\n" ++
-"    - インシデント採番 / ステータス更新 (incident-agent)\n\n" ++
-"tool の返り値の読み方:\n" ++
-"  - resolve_supplier → result.supplier.goldenId / result.supplier.name (matched=false でも success ステータス)\n" ++
-"  - list_suppliers → result.count / result.items[i].goldenId / .name / .region / .riskScore / .status\n" ++
-"  - list_regions → result.count / result.items[i].region / .supplierCount\n" ++
-"  - list_parts → result.count / result.total / result.truncated / result.items[i].partNumber / .description / .category / .location / .primarySupplierGoldenId / .quantityAvailable / .leadTimeHours / .stockStatus\n" ++
-"  - resolve_part → result.partNumber / .description / .primarySupplierGoldenId / .quantityAvailable / .stockStatus / .alternativeCount\n" ++
-"  - list_part_alternatives → result.count / result.items[i].alternativePartNumber / .score / .alternativeSupplierGoldenId / .alternativeQuantityAvailable\n" ++
-"  - find_suppliers_for_part → result.count / result.items[i].goldenId / .name / .riskScore / .source (PRIMARY|ALTERNATIVE) / .viaPartNumber\n" ++
-"  - list_incidents → result.count / result.total / result.truncated / result.items[i].name / .severity / .status / .partNumber / .supplierGoldenId / .createdAt\n" ++
+"自分のドメイン外の情報が必要なときは、 推測せず以下の marker で問い返すこと:\n" ++
+"\n" ++
+"    [NEED_INFO]\n" ++
+"    - <question 1>\n" ++
+"    - <question 2>\n" ++
+"    [/NEED_INFO]\n" ++
+"\n" ++
+"具体例:\n" ++
+"  - サプライヤー名 → ゴールデン ID 解決が必要 → [NEED_INFO] で「supplier ID for \"関西部品\" ?」を投げる。\n" ++
+"  - 部品 ID の正規化、 現行価格、 主取引先が分からない → [NEED_INFO] で問い返す。\n" ++
+"  - 在庫数量・仮確保が必要 → [NEED_INFO] で「current inventory for \"P-...\" ?」または「reserve N units of \"P-...\" via logistics ?」を投げる (logistics-agent が hub)。\n" ++
+"\n" ++
+"上位 (broker または人間) が解決して回答したら、 その値を使って自分の tool を実行する。\n" ++
+"\n" ++
+"tool の返り値:\n" ++
 "  - get_alternative_parts → result.alternatives[i].partNumber / .compatibility / .supplierGoldenId / .supplierName\n" ++
-"  - check_inventory → result.quantityOnHand / result.available / result.warehouse\n" ++
-"  - reserve_inventory → result.reservationId / result.ttlSeconds\n" ++
 "  - create_purchase_order_draft → result.draftId / result.totalAmount\n" ++
 "  - notify_supplier → result.notificationId\n" ++
 "\n" ++
-"相談 (ADVISORY) の進め方:\n" ++
-"  1. resolve_supplier(supplierName=ユーザの言ったサプライヤー名) を呼ぶ。 matched=false でもサプライヤー名の正規化候補が返るので諦めない。\n" ++
-"  2. 必要なら get_supplier_relations で過去インシデントを参照。\n" ++
-"  3. 部品番号があれば get_alternative_parts で代替候補一覧を取得。\n" ++
-"  4. 必要数や具体的な部品が決まれば check_inventory で在庫数量を確認。\n" ++
-"  5. ここで止め、 「現状はこう」「次はこういうアクションが必要 (在庫の仮確保/PO ドラフト作成/サプライヤー通知)」 を Markdown で提案する。 副作用 tool は呼ばない。\n" ++
-"  6. ユーザが「では仮確保と PO ドラフトをお願いします」のように指示したら、 そのときだけ副作用 tool を実行する。\n" ++
-"\n" ++
 "重要ルール:\n" ++
-"  - ユーザに無闇に情報を聞き返さない。 サプライヤー名 / 部品番号 のどちらか一つでも分かれば、 read-only tool で調査を開始する。\n" ++
+"  - ユーザの明示指示なしに WRITE tool (create_purchase_order_draft / notify_supplier) を呼ばない。\n" ++
 "  - tool が status=success で返したら必ず result.* の中身を読み、「取得できませんでした」と書かない。\n" ++
-"  - WRITE tool を勝手に呼ばない。 ユーザが「対応して」「実行して」「確保して」「発注して」「通知して」「更新して」 のような実行指示を出したときだけ呼ぶ。\n" ++
-"\n" ++
-"会話履歴について:\n" ++
-"  - 以前のターンが含まれる場合は参照し、 解決済みの supplierGoldenId / 代替部品 / 在庫数量 を覚えていれば再呼び出しせず即答する。\n" ++
-"\n" ++
-"私が対応できない / 情報が足りない時の応答ルール:\n" ++
-"  - 上記 11 ツールで扱えない自由検索や、 サプライヤー名・部品番号のいずれも分からない場合、 必ず以下のテンプレートで Markdown 4〜8 行返してください:\n" ++
-"\n" ++
-"    ℹ️ 調達 (atelier-procurement-agent) です。\n" ++
-"\n" ++
-"    **実行可能な操作**\n" ++
-"    - 取引先のゴールデン ID 解決\n" ++
-"    - 過去インシデント・取引先関係の照会\n" ++
-"    - 取引先一覧 (region / status / リスクスコア範囲で絞込み)\n" ++
-"    - 取引先 region 一覧 (各 region の件数付き)\n" ++
-"    - 部品一覧 (supplier / category / location / 部品番号部分一致で絞込)\n" ++
-"    - 部品詳細・代替品一覧・部品を供給可能なサプライヤー一覧\n" ++
-"    - インシデント一覧 (supplier / part / status / severity / 日付で絞込)\n" ++
-"    - 代替部品候補の取得\n" ++
-"    - 部品在庫の照会\n" ++
-"    - 在庫の仮確保\n" ++
-"    - 発注ドラフトの作成\n" ++
-"    - 取引先への通知メッセージ送付\n" ++
-"\n" ++
-"    **対象外** (依頼されても実施しません): サプライヤーリスクスコア更新 / KG (オントロジー) 記録 / 法務契約照会 / 承認依頼送信 / インシデント採番。\n" ++
-"\n" ++
-"    お手数ですがサプライヤー名・部品番号・必要数のいずれかを指定してください。\n" ++
+"  - 以前のターンで解決済みの supplierGoldenId / partNumber / draftId は再呼び出しせず流用する。\n" ++
 "\n" ++
 "出力フォーマット:\n" ++
-"  [ADVISORY 回答 — 副作用 tool を呼ばない場合]\n" ++
+"  [ADVISORY — 副作用 tool を呼ばない場合]\n" ++
 "    ✅ procurement-agent: <一言サマリ>\n" ++
-"    - 取引先: <name> (<goldenId>)\n" ++
-"    - 代替部品: <partNumber> 互換 <%> (供給元 <supplierName>)\n" ++
-"    - 在庫: <quantityOnHand> 個\n" ++
-"    - 推奨アクション:\n" ++
-"      - 代替部品 <X 個> の在庫仮確保\n" ++
-"      - 代替供給元への発注ドラフト作成\n" ++
-"      - サプライヤーへの ORDER 通知\n" ++
-"    💬 上記を実行する場合は「実行してください」「在庫確保と発注をお願い」のようにご指示ください。\n" ++
+"    - 代替部品候補: <partNumber> 互換 <%> (供給元 <supplierName>)\n" ++
+"    - 推奨アクション: 代替供給元への発注ドラフト作成 / サプライヤー通知\n" ++
+"    💬 実行する場合は「実行してください」「PO ドラフトをお願い」のようにご指示ください。\n" ++
 "\n" ++
-"  [EXECUTE 完了 — ユーザ指示で副作用 tool を呼んだ場合]\n" ++
+"  [EXECUTE — ユーザ指示で副作用 tool を呼んだ場合]\n" ++
 "    ✅ procurement-agent: <実行サマリ>\n" ++
-"    - 取引先: <name> (<goldenId>)\n" ++
 "    - 代替部品: <partNumber> 互換 <%>\n" ++
-"    - 在庫: <quantityOnHand> 個\n" ++
-"    - 仮確保: <reservationId>\n" ++
 "    - 発注ドラフト: <draftId> ¥<totalAmount>\n" ++
 "    - 通知: <notificationId>"
 ---
@@ -343,120 +289,6 @@ else
 output application/java
 ---
 [
-  { "type": "function", "function": {
-      name: "resolve_supplier",
-      description: "サプライヤー名/ヒントから ゴールデン ID を解決する",
-      parameters: {
-        "type": "object",
-        properties: {
-          supplierName: { "type": "string" },
-          hint:         { "type": "string" }
-        },
-        required: ["supplierName"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "get_supplier_relations",
-      description: "ゴールデン ID から親会社・子会社・過去インシデント・代替部品候補を取得",
-      parameters: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string" },
-          depth:            { "type": "integer" }
-        },
-        required: ["supplierGoldenId"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "list_suppliers",
-      description: "条件指定 (region / status / リスクスコア範囲) で取引先一覧を取得 (READ-ONLY)。region 完全一致。 status 既定 ACTIVE。",
-      parameters: {
-        "type": "object",
-        properties: {
-          region:       { "type": "string", description: "Region__c の値 (例: 関西、 中部、 兵庫、 関東、 九州、 東北)" },
-          status:       { "type": "string", description: "ACTIVE / INACTIVE / BLOCKED / ALL" },
-          riskScoreMin: { "type": "number" },
-          riskScoreMax: { "type": "number" },
-          limit:        { "type": "integer" }
-        },
-        required: []
-      }
-  }},
-  { "type": "function", "function": {
-      name: "list_regions",
-      description: "Supplier__c.Region__c の DISTINCT 値と、 各 region の ACTIVE 件数を一覧で返す (READ-ONLY)。",
-      parameters: {
-        "type": "object",
-        properties: {},
-        required: []
-      }
-  }},
-  { "type": "function", "function": {
-      name: "list_parts",
-      description: "条件指定 (supplierGoldenId / category / location / nameLike) で部品一覧を取得 (READ-ONLY)。 既定 limit=10、 上限 50。",
-      parameters: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string", description: "PrimarySupplier の GoldenId__c (例: G-TOHOKU-MET-001)。" },
-          category:         { "type": "string", description: "電力設備 / 機械部品 / 電子部品 / 素材" },
-          location:         { "type": "string", description: "倉庫拠点コード (例: KOBE-W1)" },
-          nameLike:         { "type": "string", description: "部品番号の部分一致 (例: TOH-500)" },
-          limit:            { "type": "integer", description: "1..50 (既定 10)" }
-        },
-        required: []
-      }
-  }},
-  { "type": "function", "function": {
-      name: "resolve_part",
-      description: "部品番号 (Name 完全一致) で部品詳細 1 件を取得 (READ-ONLY)。",
-      parameters: {
-        "type": "object",
-        properties: {
-          partNumber: { "type": "string", description: "例: P-2024-TOH-500" }
-        },
-        required: ["partNumber"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "list_part_alternatives",
-      description: "部品の代替品一覧 (互換スコア降順) を取得 (READ-ONLY)。",
-      parameters: {
-        "type": "object",
-        properties: {
-          partNumber: { "type": "string" },
-          limit:      { "type": "integer", description: "1..50 (既定 10)" }
-        },
-        required: ["partNumber"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "find_suppliers_for_part",
-      description: "部品を供給可能なサプライヤー一覧 (主+代替経由、 RiskScore 昇順) を取得 (READ-ONLY)。",
-      parameters: {
-        "type": "object",
-        properties: {
-          partNumber: { "type": "string" },
-          limit:      { "type": "integer", description: "1..50 (既定 10)" }
-        },
-        required: ["partNumber"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "list_incidents",
-      description: "インシデント一覧を取得 (READ-ONLY、 ORDER BY CreatedDate DESC)。 既定 limit=10、 上限 50。",
-      parameters: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string" },
-          partNumber:       { "type": "string" },
-          status:           { "type": "string", description: "OPEN / IN_PROGRESS / RESOLVED / ALL" },
-          severity:         { "type": "string", description: "CRITICAL / HIGH / MEDIUM / LOW" },
-          since:            { "type": "string", description: "ISO8601 日付 (例: 2026-05-01)" },
-          limit:            { "type": "integer", description: "1..50 (既定 10)" }
-        },
-        required: []
-      }
-  }},
   { "type": "function", "function": {
       name: "get_alternative_parts",
       description: "代替部品候補を IDMC KG から互換スコア降順で取得",
@@ -493,41 +325,6 @@ output application/java
           incidentId:       { "type": "string" }
         },
         required: ["supplierGoldenId", "type", "message"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "check_inventory",
-      description: "部品の在庫レベルを照会する",
-      parameters: {
-        "type": "object",
-        properties: {
-          partNumber:       { "type": "string" },
-          requiredQuantity: { "type": "integer" }
-        },
-        required: ["partNumber"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "reserve_inventory",
-      description: "部品在庫を仮確保 (RESERVED) する",
-      parameters: {
-        "type": "object",
-        properties: {
-          partNumber: { "type": "string" },
-          quantity:   { "type": "integer" },
-          incidentId: { "type": "string" },
-          ttlSeconds: { "type": "integer" }
-        },
-        required: ["partNumber", "quantity", "incidentId"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "cancel_inventory_reservation",
-      description: "仮確保 (reservationId) をキャンセルする",
-      parameters: {
-        "type": "object",
-        properties: { reservationId: { "type": "string" } },
-        required: ["reservationId"]
       }
   }}
 ]]]></ee:set-variable>
@@ -656,9 +453,7 @@ read((vars.toolArgsRaw default "{}") as String, "application/json")]]></ee:set-v
 output application/java
 var n = (vars.toolName default "") as String
 ---
-if (n == "resolve_supplier" or n == "get_supplier_relations" or n == "list_suppliers" or n == "list_regions" or n == "list_parts" or n == "resolve_part" or n == "list_part_alternatives" or n == "find_suppliers_for_part" or n == "list_incidents") "mdm"
-else if (n == "check_inventory" or n == "reserve_inventory" or n == "cancel_inventory_reservation") "inventory"
-else if (n == "get_alternative_parts" or n == "create_purchase_order_draft" or n == "notify_supplier") "procurement"
+if (n == "get_alternative_parts" or n == "create_purchase_order_draft" or n == "notify_supplier") "procurement"
 else "unknown"]]></ee:set-variable>
                         </ee:variables>
                     </ee:transform>

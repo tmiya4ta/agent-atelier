@@ -223,17 +223,31 @@ output application/java
                 <ee:set-variable variableName="messages"><![CDATA[%dw 2.0
 output application/java
 var sysPrompt =
-"あなたはインシデント管理担当 AI (atelier-incident-agent)。Atelier から人間が相談に来る。\n" ++
+"あなたはインシデント管理担当 AI (atelier-incident-agent)。専門領域は incident のみ。\n" ++
+"\n" ++
+"利用可能 tool:\n" ++
+"  - lookup_incident / register_incident / update_incident_status のみ。\n" ++
+"  - supplier / part / region / 在庫 / 契約 等を解決する tool は持っていない。\n" ++
 "\n" ++
 "原則:\n" ++
 "  - ユーザ発話の固有名詞 (会社名・部品番号・incidentId) はそのまま tool 引数に使う。仮名禁止。\n" ++
 "  - 既ターンで解決済みの goldenId / incidentId は再呼び出しせず流用。\n" ++
 "  - tool が success で返ったら result.* を読んで反映する。\n" ++
 "\n" ++
+"クロスドメイン情報が不足したら:\n" ++
+"  - supplierGoldenId / 正規化済 partNumber 等、自分の tool で取れない情報が必要な場合は推測しない。\n" ++
+"  - 代わりに以下の marker block で明示的に問い返す。orchestrator (broker / 人間) が解決して回答する。\n" ++
+"\n" ++
+"    [NEED_INFO]\n" ++
+"    - <question 1>\n" ++
+"    - <question 2>\n" ++
+"    [/NEED_INFO]\n" ++
+"\n" ++
+"  - 回答が返ってきてから tool を実行する。NEED_INFO 出力時は他の本文/テーブルは書かない。\n" ++
+"\n" ++
 "WRITE tool (register_incident / update_incident_status):\n" ++
 "  - 明示指示時のみ実行: 「登録/採番/インシデント化/クローズ/解決済みに/IN_PROGRESS に」等の命令形。\n" ++
-"  - register_incident は supplierGoldenId / partNumber / severity / rawMessage が必須。揃っていなければ不足項目を返す (実行しない)。\n" ++
-"  - 必要なら register 前に resolve_supplier で goldenId 解決。\n" ++
+"  - register_incident は supplierGoldenId / partNumber / severity / rawMessage が必須。揃っていなければ NEED_INFO で問い返す (実行しない)。\n" ++
 "\n" ++
 "出力 (Markdown、見やすさ最優先):\n" ++
 "  - 散文を書かない。 必ず **見出し → リスト or テーブル** で構造化する。\n" ++
@@ -272,9 +286,7 @@ var sysPrompt =
 "    | 取引先 | **<name>** (<goldenId>) |\n" ++
 "    | 部品 | **<partNumber>** |\n" ++
 "    | severity | **<severity>** |\n" ++
-"    | status | **<status>** |\n" ++
-"\n" ++
-"  一覧返答 (list_suppliers / list_parts / list_incidents 等) は必ずテーブルで、 行数は 5-10 件まで。"
+"    | status | **<status>** |\n"
 ---
 if ((vars.priorMessages default []) != [])
   (vars.priorMessages default []) ++ [{ role: "user", content: (vars.userText default "") as String }]
@@ -287,120 +299,6 @@ else
 output application/java
 ---
 [
-  { "type": "function", "function": {
-      name: "resolve_supplier",
-      description: "サプライヤー名/ヒントから ゴールデン ID を解決する",
-      parameters: {
-        "type": "object",
-        properties: {
-          supplierName: { "type": "string" },
-          hint:         { "type": "string" }
-        },
-        required: ["supplierName"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "get_supplier_relations",
-      description: "ゴールデン ID から親会社・子会社・過去インシデント・代替部品候補を取得",
-      parameters: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string" },
-          depth:            { "type": "integer" }
-        },
-        required: ["supplierGoldenId"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "list_suppliers",
-      description: "条件指定 (region / status / リスクスコア範囲) で取引先一覧を取得 (READ-ONLY)。region 完全一致。 status 既定 ACTIVE。",
-      parameters: {
-        "type": "object",
-        properties: {
-          region:       { "type": "string", description: "Region__c の値 (例: 関西、 中部、 兵庫、 関東、 九州、 東北)" },
-          status:       { "type": "string", description: "ACTIVE / INACTIVE / BLOCKED / ALL" },
-          riskScoreMin: { "type": "number" },
-          riskScoreMax: { "type": "number" },
-          limit:        { "type": "integer" }
-        },
-        required: []
-      }
-  }},
-  { "type": "function", "function": {
-      name: "list_regions",
-      description: "Supplier__c.Region__c の DISTINCT 値と、 各 region の ACTIVE 件数を一覧で返す (READ-ONLY)。",
-      parameters: {
-        "type": "object",
-        properties: {},
-        required: []
-      }
-  }},
-  { "type": "function", "function": {
-      name: "list_parts",
-      description: "条件指定 (supplierGoldenId / category / location / nameLike) で部品一覧を取得 (READ-ONLY)。 既定 limit=10、 上限 50。",
-      parameters: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string" },
-          category:         { "type": "string", description: "電力設備 / 機械部品 / 電子部品 / 素材" },
-          location:         { "type": "string" },
-          nameLike:         { "type": "string" },
-          limit:            { "type": "integer" }
-        },
-        required: []
-      }
-  }},
-  { "type": "function", "function": {
-      name: "resolve_part",
-      description: "部品番号から部品詳細 (主取引先・代替候補つき) を取得 (READ-ONLY)",
-      parameters: {
-        "type": "object",
-        properties: {
-          partNumber: { "type": "string" }
-        },
-        required: ["partNumber"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "list_part_alternatives",
-      description: "ある部品の代替部品候補を CompatibilityScore 降順で取得 (READ-ONLY)",
-      parameters: {
-        "type": "object",
-        properties: {
-          partNumber: { "type": "string" },
-          limit:      { "type": "integer" }
-        },
-        required: ["partNumber"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "find_suppliers_for_part",
-      description: "部品を供給可能な取引先 (主+代替経由) を RiskScore 昇順で取得 (READ-ONLY)",
-      parameters: {
-        "type": "object",
-        properties: {
-          partNumber: { "type": "string" },
-          limit:      { "type": "integer" }
-        },
-        required: ["partNumber"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "list_incidents",
-      description: "条件指定 (supplierGoldenId / partNumber / status / severity / since) でインシデント一覧を CreatedDate 降順で取得 (READ-ONLY)。 既定 limit=10、 上限 50。",
-      parameters: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string" },
-          partNumber:       { "type": "string" },
-          status:           { "type": "string", description: "OPEN / IN_PROGRESS / CLOSED / ALL" },
-          severity:         { "type": "string", description: "LOW / MEDIUM / HIGH / CRITICAL" },
-          since:            { "type": "string", "format": "date-time" },
-          limit:            { "type": "integer" }
-        },
-        required: []
-      }
-  }},
   { "type": "function", "function": {
       name: "lookup_incident",
       description: "incidentId で既存 Incident__c を 1 件取得する。404 のときは exists=false を返す",
@@ -568,8 +466,7 @@ read((vars.toolArgsRaw default "{}") as String, "application/json")]]></ee:set-v
 output application/java
 var n = (vars.toolName default "") as String
 ---
-if (n == "resolve_supplier" or n == "get_supplier_relations" or n == "list_suppliers" or n == "list_regions" or n == "list_parts" or n == "resolve_part" or n == "list_part_alternatives" or n == "find_suppliers_for_part" or n == "list_incidents") "mdm"
-else if (n == "lookup_incident" or n == "register_incident" or n == "update_incident_status") "incident"
+if (n == "lookup_incident" or n == "register_incident" or n == "update_incident_status") "incident"
 else "unknown"]]></ee:set-variable>
                         </ee:variables>
                     </ee:transform>

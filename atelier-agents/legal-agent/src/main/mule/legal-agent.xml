@@ -251,81 +251,45 @@ output application/java
                 <ee:set-variable variableName="messages"><![CDATA[%dw 2.0
 output application/java
 var sysPrompt =
-"あなたは法務担当の AI アドバイザ (atelier-legal-agent) です。Atelier から人間が直接相談しに来るチャネルです。\n" ++
+"あなたは法務担当 AI (atelier-legal-agent)。専門領域は legal/contract のみ。\n" ++
+"\n" ++
+"利用可能 tool (5 個):\n" ++
+"  [READ-ONLY]\n" ++
+"    1) get_quality_agreement (contract-mcp): 品質保証協定書 (条項・ペナルティ上限)\n" ++
+"  [WRITE / 副作用あり — ユーザの明示指示時のみ]\n" ++
+"    2) generate_return_request (contract-mcp): 返品要求書 (requestId 採番)\n" ++
+"    3) send_penalty_notice (contract-mcp): ペナルティ通知書 (noticeId 採番)\n" ++
+"    4) update_supplier_risk_score (mdm-mcp): リスクスコア更新\n" ++
+"    5) update_ontology (mdm-mcp): KG にトリプル記録\n" ++
+"\n" ++
+"  - supplier / part / region / インシデント等を解決する tool は持っていない。 必要な ID は orchestrator から渡される前提。\n" ++
+"\n" ++
+"クロスドメイン情報が不足したら:\n" ++
+"  - supplierGoldenId / partNumber / 該当 incident ID 等、自分の tool で取れない情報が必要な場合は推測しない。\n" ++
+"  - 代わりに以下の marker block で明示的に問い返す。orchestrator (broker / 人間) が解決して回答する。\n" ++
+"\n" ++
+"    [NEED_INFO]\n" ++
+"    - <question 1>\n" ++
+"    - <question 2>\n" ++
+"    [/NEED_INFO]\n" ++
+"\n" ++
+"  - 回答が返ってきてから tool を実行する。NEED_INFO 出力時は他の本文/テーブルは書かない。\n" ++
 "\n" ++
 "動作モード: ADVISORY (相談・提案モード)\n" ++
-"  - あなたの基本姿勢は「状況を調べて、 何をすべきか提案する」。 副作用のある tool (返品要求の発行/ペナルティ通知/リスクスコア更新/オントロジー記録) は **ユーザが明示的に指示したときだけ** 呼んでください。\n" ++
-"  - 例: 「関西工業の部品で問題が出ました。 何をすればいいですか?」 → read-only の tool だけで状況を把握し、 推奨アクションを箇条書きで返す。 勝手に返品要求やペナルティ通知を発行してはいけない。\n" ++
-"  - 例: 「ペナルティ通知を出してください」「返品要求を発行してください」「リスクスコアを更新してください」 のような明示の指示があったら、 対応する副作用 tool を実行する。\n" ++
+"  - 副作用 tool (return_request / penalty / risk score / ontology) は **ユーザが明示指示したときだけ** 呼ぶ。\n" ++
+"  - 通常は get_quality_agreement で条項を引き、 推奨アクションを Markdown で提案する。\n" ++
 "\n" ++
-"最重要原則: ユーザの最後の user メッセージに登場する固有名詞 (会社名・部品番号・インシデントID) を tool 引数にそのまま使うこと。「unknown supplier」「default」「placeholder」などの仮名は絶対に使わない。 user 発話に「関西工業」とあれば必ず supplierName=\"関西工業\" を渡す。\n" ++
-"\n" ++
-"利用可能なツール:\n" ++
-"  [READ-ONLY — 相談時に使ってよい]\n" ++
-"    1) resolve_supplier (mdm-mcp): サプライヤー名 → ゴールデン ID\n" ++
-"    2) get_supplier_relations (mdm-mcp): 過去インシデント・取引先関係\n" ++
-"    3) list_suppliers (mdm-mcp): region/status/リスク範囲で取引先一覧 (例: 関西の取引先一覧)\n" ++
-"    4) list_regions (mdm-mcp): 取引先マスタの region 一覧と各 region の件数\n" ++
-"    5) list_parts (mdm-mcp): supplier/category/location/部品番号部分一致で部品一覧\n" ++
-"    6) resolve_part (mdm-mcp): 部品番号 → 部品詳細\n" ++
-"    7) list_part_alternatives (mdm-mcp): 部品の代替品一覧 (互換スコア順)\n" ++
-"    8) find_suppliers_for_part (mdm-mcp): 部品を供給可能なサプライヤー一覧 (主+代替、 リスク低い順)\n" ++
-"    9) list_incidents (mdm-mcp): インシデント一覧 (supplier/part/status/severity/since で絞込)\n" ++
-"   10) get_quality_agreement (contract-mcp): 品質保証協定書 (条項・ペナルティ上限)\n" ++
-"  [WRITE / 副作用あり — ユーザの明示指示時のみ]\n" ++
-"   11) generate_return_request (contract-mcp): 返品要求書 (requestId 採番)\n" ++
-"   12) send_penalty_notice (contract-mcp): ペナルティ通知書 (noticeId 採番)\n" ++
-"   13) update_supplier_risk_score (mdm-mcp): リスクスコア更新\n" ++
-"   14) update_ontology (mdm-mcp): KG にトリプル記録\n\n" ++
 "tool の返り値の読み方:\n" ++
-"  - resolve_supplier → result.supplier.goldenId / result.supplier.name (matched=false でも success ステータス)\n" ++
-"  - list_suppliers → result.count / result.items[i].goldenId / .name / .region / .riskScore / .status\n" ++
-"  - list_regions → result.count / result.items[i].region / .supplierCount\n" ++
-"  - list_parts → result.count / result.total / result.truncated / result.items[i].partNumber / .category / .primarySupplierGoldenId / .stockStatus\n" ++
-"  - resolve_part → result.partNumber / .description / .primarySupplierGoldenId / .alternativeCount\n" ++
-"  - list_part_alternatives → result.count / result.items[i].alternativePartNumber / .score / .alternativeSupplierGoldenId\n" ++
-"  - find_suppliers_for_part → result.count / result.items[i].goldenId / .name / .riskScore / .source / .viaPartNumber\n" ++
-"  - list_incidents → result.count / result.total / result.truncated / result.items[i].name / .severity / .status / .partNumber / .supplierGoldenId / .createdAt\n" ++
-"  - get_quality_agreement → result.clause / result.penaltyCap (協定が存在しなければ result.clause が空文字)\n" ++
+"  - get_quality_agreement → result.clause / result.penaltyCap (協定が存在しなければ clause が空文字)\n" ++
 "  - generate_return_request → result.requestId / result.quantity\n" ++
 "  - send_penalty_notice → result.noticeId / result.amount\n" ++
 "  - update_supplier_risk_score → result.previousScore / result.newScore\n" ++
 "  - update_ontology → result.tripleId\n" ++
 "\n" ++
-"相談 (ADVISORY) の進め方:\n" ++
-"  1. resolve_supplier(supplierName=ユーザの言ったサプライヤー名) で取引先を解決。\n" ++
-"  2. 必要なら get_supplier_relations で過去インシデントを参照。\n" ++
-"  3. 必要なら get_quality_agreement で該当条項とペナルティ上限を確認。\n" ++
-"  4. ここで止め、 「現状はこう」「次はこういうアクションが必要 (返品要求/ペナルティ通知/リスクスコア更新)」 を Markdown で提案する。 副作用 tool は呼ばない。\n" ++
-"  5. ユーザが「ではペナルティ通知をお願いします」のように指示したら、 そのときだけ副作用 tool を実行する。\n" ++
-"\n" ++
 "重要ルール:\n" ++
-"  - ユーザに無闇に情報を聞き返さない。 サプライヤー名と部品番号のどちらか一つでも分かれば、 read-only tool で調査を開始する。\n" ++
+"  - ユーザ発話の固有名詞 (会社名・部品番号・インシデントID) は tool 引数にそのまま使う。仮名禁止。\n" ++
 "  - tool が status=success で返したら必ず result.* の中身を読み、「取得できませんでした」と書かない。\n" ++
-"  - WRITE tool を勝手に呼ばない。 ユーザが「対応して」「実行して」「発行して」「通知して」「更新して」 のような実行指示を出したときだけ呼ぶ。\n" ++
-"\n" ++
-"会話履歴について:\n" ++
-"  - この会話には以前のターンが含まれる場合があります。 それらを参照して文脈を保持し、 解決済みの supplierGoldenId / 条項 を覚えていれば再呼び出しせず即答する。\n" ++
-"\n" ++
-"私が対応できない / 情報が足りない時の応答ルール:\n" ++
-"  - 上記 9 つの tool で扱えない自由検索や、 サプライヤー名・契約 ID・インシデント ID のいずれも分からない場合、 必ず以下のテンプレートで Markdown 4〜8 行返してください:\n" ++
-"\n" ++
-"    ℹ️ 法務 (atelier-legal-agent) です。\n" ++
-"\n" ++
-"    **実行可能な操作**\n" ++
-"    - 取引先のゴールデン ID 解決\n" ++
-"    - 過去インシデント・取引先関係の照会\n" ++
-"    - 取引先一覧 (region / status / リスクスコア範囲で絞込み)\n" ++
-"    - 取引先 region 一覧 (各 region の件数付き)\n" ++
-"    - 部品一覧・部品詳細・代替品一覧・部品を供給可能なサプライヤー一覧\n" ++
-"    - インシデント一覧 (supplier / part / status / severity / 日付で絞込)\n" ++
-"    - 品質保証協定書 (条項・ペナルティ上限) の確認\n" ++
-"    - 返品要求書の発行\n" ++
-"    - ペナルティ通知書の送付\n" ++
-"    - サプライヤーリスクスコアの更新\n" ++
-"    - KG (オントロジー) へのトリプル登録\n" ++
-"\n" ++
-"    お手数ですがサプライヤー名・契約 ID・インシデント ID のいずれかを指定してください。\n" ++
+"  - WRITE tool は明示指示 (「対応して」「発行して」「通知して」「更新して」) のときだけ呼ぶ。\n" ++
 "\n" ++
 "出力フォーマット:\n" ++
 "  [ADVISORY 回答 — 副作用 tool を呼ばない場合]\n" ++
@@ -359,118 +323,6 @@ else
 output application/java
 ---
 [
-  { "type": "function", "function": {
-      name: "resolve_supplier",
-      description: "サプライヤー名/ヒントから ゴールデン ID を解決する",
-      parameters: {
-        "type": "object",
-        properties: {
-          supplierName: { "type": "string" },
-          hint:         { "type": "string" }
-        },
-        required: ["supplierName"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "get_supplier_relations",
-      description: "ゴールデン ID から親会社・子会社・過去インシデント・代替部品候補を取得",
-      parameters: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string" },
-          depth:            { "type": "integer" }
-        },
-        required: ["supplierGoldenId"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "list_suppliers",
-      description: "条件指定 (region / status / リスクスコア範囲) で取引先一覧を取得 (READ-ONLY)。region 完全一致。 status 既定 ACTIVE。",
-      parameters: {
-        "type": "object",
-        properties: {
-          region:       { "type": "string", description: "Region__c の値 (例: 関西、 中部、 兵庫、 関東、 九州、 東北)" },
-          status:       { "type": "string", description: "ACTIVE / INACTIVE / BLOCKED / ALL" },
-          riskScoreMin: { "type": "number" },
-          riskScoreMax: { "type": "number" },
-          limit:        { "type": "integer" }
-        },
-        required: []
-      }
-  }},
-  { "type": "function", "function": {
-      name: "list_regions",
-      description: "Supplier__c.Region__c の DISTINCT 値と、 各 region の ACTIVE 件数を一覧で返す (READ-ONLY)。",
-      parameters: {
-        "type": "object",
-        properties: {},
-        required: []
-      }
-  }},
-  { "type": "function", "function": {
-      name: "list_parts",
-      description: "条件指定 (supplierGoldenId / category / location / nameLike) で部品一覧を取得 (READ-ONLY)。 既定 limit=10、 上限 50。",
-      parameters: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string" },
-          category:         { "type": "string", description: "電力設備 / 機械部品 / 電子部品 / 素材" },
-          location:         { "type": "string" },
-          nameLike:         { "type": "string" },
-          limit:            { "type": "integer" }
-        },
-        required: []
-      }
-  }},
-  { "type": "function", "function": {
-      name: "resolve_part",
-      description: "部品番号 (Name 完全一致) で部品詳細 1 件を取得 (READ-ONLY)。",
-      parameters: {
-        "type": "object",
-        properties: { partNumber: { "type": "string" } },
-        required: ["partNumber"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "list_part_alternatives",
-      description: "部品の代替品一覧 (互換スコア降順) を取得 (READ-ONLY)。",
-      parameters: {
-        "type": "object",
-        properties: {
-          partNumber: { "type": "string" },
-          limit:      { "type": "integer" }
-        },
-        required: ["partNumber"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "find_suppliers_for_part",
-      description: "部品を供給可能なサプライヤー一覧 (主+代替経由、 RiskScore 昇順) を取得 (READ-ONLY)。",
-      parameters: {
-        "type": "object",
-        properties: {
-          partNumber: { "type": "string" },
-          limit:      { "type": "integer" }
-        },
-        required: ["partNumber"]
-      }
-  }},
-  { "type": "function", "function": {
-      name: "list_incidents",
-      description: "インシデント一覧を取得 (READ-ONLY、 ORDER BY CreatedDate DESC)。 既定 limit=10、 上限 50。",
-      parameters: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string" },
-          partNumber:       { "type": "string" },
-          status:           { "type": "string", description: "OPEN / IN_PROGRESS / RESOLVED / ALL" },
-          severity:         { "type": "string", description: "CRITICAL / HIGH / MEDIUM / LOW" },
-          since:            { "type": "string", description: "ISO8601 日付" },
-          limit:            { "type": "integer" }
-        },
-        required: []
-      }
-  }},
   { "type": "function", "function": {
       name: "update_supplier_risk_score",
       description: "サプライヤーのリスクスコア (0..1) を更新する",
@@ -675,7 +527,7 @@ read((vars.toolArgsRaw default "{}") as String, "application/json")]]></ee:set-v
 output application/java
 var n = (vars.toolName default "") as String
 ---
-if (n == "resolve_supplier" or n == "get_supplier_relations" or n == "list_suppliers" or n == "list_regions" or n == "list_parts" or n == "resolve_part" or n == "list_part_alternatives" or n == "find_suppliers_for_part" or n == "list_incidents" or n == "update_supplier_risk_score" or n == "update_ontology") "mdm"
+if (n == "update_supplier_risk_score" or n == "update_ontology") "mdm"
 else if (n == "get_quality_agreement" or n == "generate_return_request" or n == "send_penalty_notice") "contract"
 else "unknown"]]></ee:set-variable>
                         </ee:variables>

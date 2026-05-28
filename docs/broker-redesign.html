@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Broker-centric Agent Redesign — SCRS demo</title>
+<style>
+  :root {
+    --paper:    #FAF8F4;
+    --panel:    #ffffff;
+    --ink:      #0E1320;
+    --ink-2:    #2A2F3D;
+    --ink-3:    #5A6173;
+    --ink-4:    #8E94A4;
+    --line:     #E4E0D8;
+    --accent:   #2D4BFF;
+    --ok:       #0D8245;
+    --warn:     #C75A2D;
+    --navy:     #00164A;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Source Serif 4", "Source Serif Pro", Georgia, serif;
+    font-size: 16px;
+    line-height: 1.7;
+  }
+  body {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 56px 40px 80px;
+  }
+  h1 {
+    font-size: 32px;
+    margin: 0 0 6px;
+    letter-spacing: -0.01em;
+  }
+  .lede {
+    color: var(--ink-3);
+    font-style: italic;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 24px;
+    margin-bottom: 32px;
+  }
+  h2 {
+    font-size: 22px;
+    margin: 40px 0 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    letter-spacing: -0.005em;
+  }
+  h3 {
+    font-size: 17px;
+    margin: 26px 0 8px;
+    color: var(--ink-2);
+  }
+  p { margin: 10px 0 14px; }
+  ul, ol { margin: 8px 0 14px; padding-left: 22px; }
+  li { margin: 4px 0; }
+  code, kbd, pre, .mono {
+    font-family: "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  code {
+    background: #F1EEE6;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 13.5px;
+  }
+  pre {
+    background: var(--navy);
+    color: #E5E9F2;
+    padding: 14px 18px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.55;
+    margin: 12px 0;
+  }
+  pre code {
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    font-size: inherit;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0 18px;
+    font-size: 14px;
+    background: var(--panel);
+  }
+  th, td {
+    border: 1px solid var(--line);
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: #F1EEE6;
+    font-family: "Geist", system-ui, sans-serif;
+    font-weight: 600;
+    color: var(--ink-2);
+    font-size: 13px;
+    letter-spacing: 0.01em;
+  }
+  td.mono, td code { font-size: 12.5px; }
+  .pill {
+    display: inline-block;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: #F1EEE6;
+    color: var(--ink-3);
+  }
+  .pill-ok   { background: #E5F3EC; color: var(--ok);   border-color: #BFE0CF; }
+  .pill-cut  { background: #FAE6DC; color: var(--warn); border-color: #EDC4B0; }
+  .pill-keep { background: #E0E7FF; color: var(--accent); border-color: #BFCCF0; }
+
+  blockquote {
+    border-left: 3px solid var(--accent);
+    background: #F4F2EC;
+    margin: 14px 0;
+    padding: 10px 18px;
+    color: var(--ink-2);
+    font-style: italic;
+  }
+  .callout {
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--accent);
+    background: var(--panel);
+    padding: 14px 18px 12px;
+    border-radius: 4px;
+    margin: 18px 0;
+    font-style: normal;
+  }
+  .callout strong { color: var(--accent); }
+  .meta {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    color: var(--ink-4);
+    letter-spacing: 0.04em;
+  }
+  .ascii {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 14px 18px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    white-space: pre;
+    overflow-x: auto;
+    color: var(--ink-2);
+    margin: 12px 0;
+  }
+  .toc {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 14px 22px 12px;
+    margin: 0 0 28px;
+    font-size: 14px;
+  }
+  .toc-title {
+    font-family: "Geist", system-ui, sans-serif;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-4);
+    margin: 0 0 4px;
+  }
+  .toc ol { padding-left: 22px; }
+  hr {
+    border: 0;
+    border-top: 1px solid var(--line);
+    margin: 36px 0;
+  }
+  .footer {
+    margin-top: 48px;
+    color: var(--ink-4);
+    font-size: 12px;
+    border-top: 1px solid var(--line);
+    padding-top: 16px;
+    font-family: "Geist", system-ui, sans-serif;
+  }
+</style>
+</head>
+<body>
+
+<h1>Broker-centric Agent Redesign</h1>
+<p class="lede">
+  SCRS demo の各 agent から横断的な MDM lookup tool を取り上げ、 broker の存在価値を可視化する。
+  各 agent は自分の専門業務にしか tool を持たず、 知らない情報が必要になったら <code>[NEED_INFO]</code> マーカーで明示的に問い返す。
+  人間が往復していたエージェント間連携を broker が肩代わりする ── という流れを demo で見せる。
+</p>
+
+<div class="toc">
+  <div class="toc-title">contents</div>
+  <ol>
+    <li><a href="#motivation">なぜこの設計に変えるのか</a></li>
+    <li><a href="#tool-redesign">Tool 再設計 (5 agents)</a></li>
+    <li><a href="#need-info">人間への問い直しプロトコル</a></li>
+    <li><a href="#broker-role">Broker の役割 (今回の射程外)</a></li>
+    <li><a href="#flow">想定フロー (broker なし vs broker あり)</a></li>
+    <li><a href="#impl-steps">実装ステップ</a></li>
+    <li><a href="#open-questions">確定済みの判断と検討メモ</a></li>
+  </ol>
+</div>
+
+<h2 id="motivation">1. なぜこの設計に変えるのか</h2>
+
+<p>
+  既存設計では各 agent が <strong>shared 9 個 の MDM lookup tool</strong>
+  (<code>resolve_supplier</code> / <code>list_suppliers</code> / <code>resolve_part</code> / <code>list_parts</code> / <code>list_part_alternatives</code> /
+  <code>find_suppliers_for_part</code> / <code>get_supplier_relations</code> / <code>list_regions</code> / <code>list_incidents</code>) を全員ぶら下げている。
+  これだと agent は自分一人で大半の参照が完結してしまい、 <em>broker の出番が無い</em>。 demo として broker の価値が伝わらない。
+</p>
+
+<div class="callout">
+  <strong>ねらい:</strong>
+  各 agent を「専門業務の executor」に純化する。 lookup は持たない、 横断判断もしない。
+  足りない情報があれば <code>[NEED_INFO]</code> で人間 (= 上位の orchestrator) に問い返す。
+  broker がいれば、 これを自動的に他 agent から集めてくれるので人間は最初の指示と最後の結果だけ見ればよい。
+  broker がいなければ、 人間が agent 間を行き来する手間が visible になる。
+</div>
+
+<h3>Before / After サマリ</h3>
+
+<table>
+  <thead>
+    <tr><th>agent</th><th>before (tools)</th><th>after (tools)</th><th>差分</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>incident</td><td>12</td><td>3</td>
+      <td><span class="pill pill-cut">-9 shared MDM</span></td>
+    </tr>
+    <tr>
+      <td>legal</td><td>14</td><td>5</td>
+      <td><span class="pill pill-cut">-9 shared MDM</span></td>
+    </tr>
+    <tr>
+      <td>logistics</td><td>12</td><td>3</td>
+      <td><span class="pill pill-cut">-9 shared MDM</span></td>
+    </tr>
+    <tr>
+      <td>org</td><td>11</td><td>2</td>
+      <td><span class="pill pill-cut">-9 shared MDM</span></td>
+    </tr>
+    <tr>
+      <td>procurement</td><td>15</td><td>3</td>
+      <td><span class="pill pill-cut">-9 shared MDM</span> <span class="pill pill-cut">-3 inventory → logistics 集約</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="tool-redesign">2. Tool 再設計 (5 agents)</h2>
+
+<h3>incident-agent <span class="meta">(3 tools)</span></h3>
+<table>
+  <thead><tr><th>tool</th><th>役割</th></tr></thead>
+  <tbody>
+    <tr><td><code class="mono">register_incident</code></td><td>新規インシデント登録</td></tr>
+    <tr><td><code class="mono">update_incident_status</code></td><td>インシデント状態遷移 (open → investigating → resolved 等)</td></tr>
+    <tr><td><code class="mono">lookup_incident</code></td><td>incident ID から既存インシデント取得</td></tr>
+  </tbody>
+</table>
+<p>
+  人間/broker が「関西部品の P-2024-KAN-001 で不良 15%、 INC-2026-0527 で登録して」と言うときに、
+  agent は <em>関西部品の supplier ID と P-2024-KAN-001 の正規化 part ID</em> を知らない。
+  <code>[NEED_INFO]</code> で問い返す。
+</p>
+
+<h3>legal-agent <span class="meta">(5 tools)</span></h3>
+<table>
+  <thead><tr><th>tool</th><th>役割</th></tr></thead>
+  <tbody>
+    <tr><td><code class="mono">get_quality_agreement</code></td><td>該当 supplier の品質保証契約取得</td></tr>
+    <tr><td><code class="mono">send_penalty_notice</code></td><td>違約金通知の発出</td></tr>
+    <tr><td><code class="mono">generate_return_request</code></td><td>返品依頼書ドラフト</td></tr>
+    <tr><td><code class="mono">update_supplier_risk_score</code></td><td>リスクスコア更新</td></tr>
+    <tr><td><code class="mono">update_ontology</code></td><td>onto グラフ更新 (関係追加・トピック分類)</td></tr>
+  </tbody>
+</table>
+
+<h3>logistics-agent <span class="meta">(3 tools — 全 inventory ハブ化)</span></h3>
+<table>
+  <thead><tr><th>tool</th><th>役割</th></tr></thead>
+  <tbody>
+    <tr><td><code class="mono">check_inventory</code></td><td>part の在庫照会</td></tr>
+    <tr><td><code class="mono">reserve_inventory</code></td><td>在庫予約</td></tr>
+    <tr><td><code class="mono">cancel_inventory_reservation</code></td><td>予約キャンセル</td></tr>
+  </tbody>
+</table>
+<p>procurement-agent からは inventory 系 3 tool を完全に削除し、 logistics に集約する。 procurement は「在庫見たい」と言ったら logistics に投げてもらう。</p>
+
+<h3>org-agent <span class="meta">(2 tools)</span></h3>
+<table>
+  <thead><tr><th>tool</th><th>役割</th></tr></thead>
+  <tbody>
+    <tr><td><code class="mono">find_best_buyer</code></td><td>地域・業務種別に応じた最適 buyer 担当者検索</td></tr>
+    <tr><td><code class="mono">send_approval_request</code></td><td>承認リクエスト発出</td></tr>
+  </tbody>
+</table>
+
+<h3>procurement-agent <span class="meta">(3 tools)</span></h3>
+<table>
+  <thead><tr><th>tool</th><th>役割</th></tr></thead>
+  <tbody>
+    <tr><td><code class="mono">create_purchase_order_draft</code></td><td>PO ドラフト作成</td></tr>
+    <tr><td><code class="mono">get_alternative_parts</code></td><td>代替部品候補取得</td></tr>
+    <tr><td><code class="mono">notify_supplier</code></td><td>supplier への通知発出</td></tr>
+  </tbody>
+</table>
+<p>
+  代替部品の <em>list</em> を取る tool は残すが、 part ID 解決や supplier 一覧は持たない。
+  PO 切るときも <code>[NEED_INFO]</code> で「現行価格は?」「在庫状況は?」「使える supplier は?」と問い返す。
+</p>
+
+<h2 id="need-info">3. 人間への問い直しプロトコル</h2>
+
+<p>
+  各 agent の system prompt に追記し、 LLM の自然な発話で問い返しを生成させる。
+  tool として実装する案 (<code>ask_user(question)</code>) も検討したが、 demo の見た目が自然な (A) を採用。
+</p>
+
+<h3>system_prompt 追記文 (例)</h3>
+<pre><code>You only have tools for your own domain ({{agent_domain}}).
+When you lack cross-domain information (supplier IDs, part IDs,
+inventory levels, contracts, decisions from other domains, etc.),
+DO NOT guess. Output a clearly-marked block:
+
+[NEED_INFO]
+- &lt;question 1&gt;
+- &lt;question 2&gt;
+[/NEED_INFO]
+
+The orchestrator (broker or human) will resolve these and reply.
+Only after receiving the answers should you proceed with your tools.</code></pre>
+
+<h3>marker の形式</h3>
+<ul>
+  <li>開始: <code>[NEED_INFO]</code></li>
+  <li>終了: <code>[/NEED_INFO]</code></li>
+  <li>本体: 1 行 1 質問のリスト (<code>- ...</code>)</li>
+</ul>
+
+<p>
+  broker 側はこれを正規表現 (<code>/\[NEED_INFO\]([\s\S]*?)\[\/NEED_INFO\]/</code>) で抽出して、
+  該当する別 agent に投げ直す。 人間運用時は単に画面上の質問を読んで答えるだけ。
+</p>
+
+<h2 id="broker-role">4. Broker の役割 <span class="meta">(今回の射程外、 後続タスク)</span></h2>
+
+<ul>
+  <li>人間からの初回 task を受け取る</li>
+  <li>適切な専門 agent (incident / legal / etc.) を選び、 task を投げる</li>
+  <li>応答に <code>[NEED_INFO]</code> があれば、 各 question を別 agent に振って回答を集約</li>
+  <li>集めた回答を最初の agent に折り返して再投入</li>
+  <li><code>[NEED_INFO]</code> が消えるまでループ (上限 N hop で打ち切り)</li>
+  <li>最終結果を人間に summary 1 通で返す</li>
+</ul>
+
+<div class="callout">
+  <strong>broker 自体はこの doc の対象外。</strong> agent 側を上記プロトコルに合わせて再設計するのが今回のスコープ。
+</div>
+
+<h2 id="flow">5. 想定フロー (broker なし vs broker あり)</h2>
+
+<h3>5.1 broker なし (人間が往復)</h3>
+
+<div class="ascii">USER  → incident-agent: "関西部品の P-2024-KAN-001 で不良 15%、 INC 登録して"
+            ↓
+incident-agent → USER:
+   [NEED_INFO]
+   - supplier ID for "関西部品" ?
+   - normalized part ID for "P-2024-KAN-001" ?
+   [/NEED_INFO]
+            ↓
+USER  → ??? どこに聞けば... (人間が手動で MDM-like agent を巡回)
+USER  → org-agent ? incident-agent ? lookup できる相手を探す
+            ↓
+USER  → incident-agent:  supplier_id=G-KANSAI-PARTS-001 / part_id=...
+            ↓
+incident-agent: register_incident → INC-2026-0527 created.</div>
+
+<h3>5.2 broker あり (自動連携)</h3>
+
+<div class="ascii">USER  → broker: "関西部品の P-2024-KAN-001 で不良 15%、 INC 登録して"
+            ↓
+broker → incident-agent
+incident-agent → broker: [NEED_INFO] supplier ID, part ID
+            ↓
+broker → mdm-agent (or any peer that can answer)
+mdm-agent → broker: G-KANSAI-PARTS-001 / part_id=P-...
+            ↓
+broker → incident-agent: (with resolved IDs)
+incident-agent: register_incident → INC-2026-0527
+            ↓
+broker → USER: "登録完了 INC-2026-0527 です。"</div>
+
+<p>
+  →  人間は最初と最後だけ。 broker が居る・居ないで demo の体験差がはっきり見える。
+</p>
+
+<h2 id="impl-steps">6. 実装ステップ</h2>
+
+<ol>
+  <li>各 agent.xml の <code>tools</code> 配列から shared 9 個を削除 (5 ファイル)</li>
+  <li>procurement-agent から inventory 3 tool (<code>check_inventory</code> / <code>reserve_inventory</code> / <code>cancel_inventory_reservation</code>) を削除</li>
+  <li>各 agent の <code>system_prompt</code> に <code>[NEED_INFO]</code> プロトコル文を追記</li>
+  <li>各 agent の <code>pom.xml</code> で version bump (1.2.x → 1.3.0 など)</li>
+  <li>5 agent を再 deploy (Anypoint Exchange upload + CH2 redeploy)</li>
+  <li>動作確認: 各 agent に「関西部品の P-2024-KAN-001 で不良 15%」を投げ、 <code>[NEED_INFO]</code> が返ることを目視</li>
+  <li>scenarios/scrs-a.json に「broker なし版 (面倒)」と「broker あり版 (スマート)」 2 シナリオを書き分け</li>
+</ol>
+
+<h2 id="open-questions">7. 確定済みの判断と検討メモ</h2>
+
+<table>
+  <thead><tr><th>論点</th><th>決定</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>shared 9 個の扱い</td>
+      <td><span class="pill pill-cut">全削除</span> (broker の出番を最大化)</td>
+    </tr>
+    <tr>
+      <td>inventory 3 tool の集約先</td>
+      <td><span class="pill pill-keep">logistics-agent に集約</span> (procurement からは削除)</td>
+    </tr>
+    <tr>
+      <td>NEED_INFO marker の言語</td>
+      <td><code>[NEED_INFO]</code> / <code>[/NEED_INFO]</code> 英語固定 (broker の正規表現 parse 安定性のため)</td>
+    </tr>
+    <tr>
+      <td><code>ask_user</code> tool 化 vs prompt 誘導</td>
+      <td>prompt 誘導 (A 案) を採用</td>
+    </tr>
+    <tr>
+      <td>既存固有 tool (register_incident 等)</td>
+      <td>触らない</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr>
+
+<p class="footer">
+  doc generated 2026-05-28 · agent-atelier <code>v0.3.0</code>
+  ·  related: <code>atelier-agents/{incident,legal,logistics,org,procurement}-agent/src/main/mule/*.xml</code>
+</p>
+
+</body>
+</html>
