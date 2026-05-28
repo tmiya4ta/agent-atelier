@@ -628,15 +628,39 @@ clear
         <!-- CHAT PANE -->
         <section class="pane pane-chat is-active" data-pane="chat">
           <div class="aw-watermark" aria-hidden="true"></div>
-          <div class="chat-scroll">
-            <div class="chat-meta">
-              <span class="chat-meta-line"></span>
-              <span class="chat-meta-text">conversation started</span>
-              <span class="chat-meta-line"></span>
+          <!-- chat-region: chat-scroll と caps-overlay の relative containing block。
+               compose の上にだけ overlay を被せたいので chat-compose は外。 -->
+          <div class="chat-region">
+            <div class="chat-scroll">
+              <div class="chat-meta">
+                <span class="chat-meta-line"></span>
+                <span class="chat-meta-text">conversation started</span>
+                <span class="chat-meta-line"></span>
+              </div>
+              <div class="chat-stream"></div>
             </div>
-            <div class="chat-stream"></div>
+            <!-- Capabilities overlay: agentCard 由来の skills を左からスライドイン。 -->
+            <div class="caps-overlay" hidden aria-hidden="true">
+              <div class="caps-overlay-head">
+                <span class="caps-overlay-title">capabilities</span>
+                <button class="caps-overlay-close" title="close" aria-label="close">
+                  <svg viewBox="0 0 12 12" width="10" height="10"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/><line x1="9.5" y1="2.5" x2="2.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/></svg>
+                </button>
+              </div>
+              <div class="caps-overlay-body"></div>
+            </div>
           </div>
           <div class="chat-compose">
+            <div class="compose-toolbar">
+              <button class="compose-caps" type="button" title="Show this agent's capabilities" aria-label="show capabilities" aria-expanded="false">
+                <svg viewBox="0 0 14 14" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="7" cy="7" r="5.2"/>
+                  <line x1="7" y1="4.6" x2="7" y2="7.4"/>
+                  <circle cx="7" cy="9.6" r="0.6" fill="currentColor" stroke="none"/>
+                </svg>
+                <span>capabilities</span>
+              </button>
+            </div>
             <div class="compose-row">
               <textarea class="compose-input" rows="1" placeholder="Type a message..."></textarea>
               <button class="compose-send" title="send">

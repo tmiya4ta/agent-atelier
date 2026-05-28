@@ -615,35 +615,25 @@ function renderBookmarks() {
         }, { lockName: true });
         return;
       }
-      if (e.target.closest(".conn-toggle")) {
-        e.stopPropagation();
-        if (!canExpand) return;
-        const cur  = state._connExpanded[b.key] !== false;
-        const next = !cur;
-        state._connExpanded[b.key] = next;
-        animateConnExpand(b.key, next);
+      // 行全体のクリック (`>` chevron / 名前 / count / 余白) は単一の動作にまとめる:
+      //   wins=0 → connect、wins=1 → focus、wins>1 → アコーディオン toggle
+      if (wins.length === 0) {
+        connect({
+          protoId: b.protoId, url: b.url, name: displayName,
+          auth: b.auth, persona: b.persona, channel: b.channel
+        }, { lockName: true });
         return;
       }
-      if (e.target.closest(".agent-name, .bm-count")) {
-        if (wins.length === 0) {
-          // 閉じている bookmark をクリック → 開く
-          connect({
-            protoId: b.protoId, url: b.url, name: displayName,
-            auth: b.auth, persona: b.persona, channel: b.channel
-          }, { lockName: true });
-          return;
-        }
-        if (wins.length === 1) {
-          const { win, ws } = wins[0];
-          if (ws.id !== state.activeWs) { switchWorkspace(ws.id); setTimeout(() => win.focus(), 50); }
-          else win.focus();
-        } else {
-          const cur  = state._connExpanded[b.key] !== false;
-          const next = !cur;
-          state._connExpanded[b.key] = next;
-          animateConnExpand(b.key, next);
-        }
+      if (wins.length === 1) {
+        const { win, ws } = wins[0];
+        if (ws.id !== state.activeWs) { switchWorkspace(ws.id); setTimeout(() => win.focus(), 50); }
+        else win.focus();
+        // 1 つだけの時もアコーディオンを toggle (focus と両立)
       }
+      const cur  = state._connExpanded[b.key] !== false;
+      const next = !cur;
+      state._connExpanded[b.key] = next;
+      animateConnExpand(b.key, next);
     });
     root.appendChild(li);
 

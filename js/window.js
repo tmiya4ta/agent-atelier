@@ -155,6 +155,15 @@ export class AgentWindow {
     });
     sendBtn.addEventListener("click", () => this._sendFromCompose());
 
+    // Capabilities overlay (compose toolbar の capabilities ボタン)
+    const capsBtn = node.querySelector(".compose-caps");
+    const capsOverlay = node.querySelector(".caps-overlay");
+    const capsClose = node.querySelector(".caps-overlay-close");
+    capsBtn.addEventListener("click", () => this._toggleCapsOverlay());
+    capsClose.addEventListener("click", () => this._closeCapsOverlay());
+    // 外側クリック (overlay の背景部) で閉じる挙動はなし — 入力中に消えると邪魔なので明示 close のみ。
+    capsOverlay.addEventListener("click", (e) => e.stopPropagation());
+
     // Debug toolbar
     node.querySelector('.debug-tool[data-act="clear"]').addEventListener("click", () => {
       this.debugFrames = [];
@@ -169,12 +178,20 @@ export class AgentWindow {
     // Settings pane content (static for now)
     this._renderSettings();
 
-    // 右下リサイズグリップ
+    // 右下リサイズグリップ (視覚的な目印)
     const grip = document.createElement("div");
     grip.className = "aw-resize-grip";
     grip.title = "Drag to resize";
-    grip.addEventListener("mousedown", (e) => this._beginResize(e));
+    grip.addEventListener("mousedown", (e) => this._beginResize(e, "se"));
     node.appendChild(grip);
+
+    // 4 辺 + 4 角 (SE 以外) の不可視リサイズハンドル。 SE はグリップが既にカバー。
+    ["n","s","e","w","ne","nw","sw"].forEach(dir => {
+      const h = document.createElement("div");
+      h.className = "aw-resize-edge aw-resize-" + dir;
+      h.addEventListener("mousedown", (ev) => this._beginResize(ev, dir));
+      node.appendChild(h);
+    });
 
     this.layer.appendChild(node);
     this.focus();
@@ -319,24 +336,47 @@ export class AgentWindow {
     window.addEventListener("mouseup", onUp);
   }
 
-  // 右下グリップでリサイズ。 mousedown 時の rect を起点にして delta で width/height を伸縮。
-  _beginResize(e) {
+  // 4 辺 + 4 角でリサイズ。 dir = "n"|"s"|"e"|"w"|"ne"|"nw"|"se"|"sw"
+  // n/w 側を引っ張ったときは left/top も動かす必要がある。
+  _beginResize(e, dir = "se") {
+    if (this.el.classList.contains("is-maximized")) return;
     e.preventDefault();
     e.stopPropagation();
     this.focus();
     const startX = e.clientX, startY = e.clientY;
     const startW = this.el.offsetWidth;
     const startH = this.el.offsetHeight;
+    const startL = this.el.offsetLeft;
+    const startT = this.el.offsetTop;
     const minW = parseInt(getComputedStyle(this.el).minWidth, 10) || 380;
     const minH = parseInt(getComputedStyle(this.el).minHeight, 10) || 320;
+    const cursorMap = {
+      n: "ns-resize", s: "ns-resize",
+      e: "ew-resize", w: "ew-resize",
+      ne: "nesw-resize", sw: "nesw-resize",
+      nw: "nwse-resize", se: "nwse-resize"
+    };
     document.body.style.userSelect = "none";
-    document.body.style.cursor = "nwse-resize";
+    document.body.style.cursor = cursorMap[dir] || "nwse-resize";
 
     const onMove = (ev) => {
-      const w = Math.max(minW, startW + (ev.clientX - startX));
-      const h = Math.max(minH, startH + (ev.clientY - startY));
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      let w = startW, h = startH, l = startL, t = startT;
+      if (dir.includes("e")) w = Math.max(minW, startW + dx);
+      if (dir.includes("s")) h = Math.max(minH, startH + dy);
+      if (dir.includes("w")) {
+        w = Math.max(minW, startW - dx);
+        l = startL + (startW - w);
+      }
+      if (dir.includes("n")) {
+        h = Math.max(minH, startH - dy);
+        t = startT + (startH - h);
+      }
       this.el.style.width  = w + "px";
       this.el.style.height = h + "px";
+      this.el.style.left   = Math.max(0, l) + "px";
+      this.el.style.top    = Math.max(0, t) + "px";
     };
     const onUp = () => {
       window.removeEventListener("mousemove", onMove);
@@ -360,6 +400,67 @@ export class AgentWindow {
     ta.value = "";
     ta.style.height = "auto";
     this.sendProgrammatic(text);
+  }
+
+  // ───────────────────────────────────────────
+  // Capabilities overlay
+  // ───────────────────────────────────────────
+  _toggleCapsOverlay() {
+    const ov = this.el.querySelector(".caps-overlay");
+    if (!ov) return;
+    if (ov.classList.contains("is-visible")) {
+      this._closeCapsOverlay();
+    } else {
+      this._openCapsOverlay();
+    }
+  }
+  _openCapsOverlay() {
+    const ov = this.el.querySelector(".caps-overlay");
+    const btn = this.el.querySelector(".compose-caps");
+    if (!ov) return;
+    this._renderCapsOverlay();
+    ov.hidden = false;
+    ov.setAttribute("aria-hidden", "false");
+    btn?.setAttribute("aria-expanded", "true");
+    // 次フレームで is-visible を立てて transition を発火 (display:none → 表示の同フレームだと効かない)
+    requestAnimationFrame(() => ov.classList.add("is-visible"));
+  }
+  _closeCapsOverlay() {
+    const ov = this.el.querySelector(".caps-overlay");
+    const btn = this.el.querySelector(".compose-caps");
+    if (!ov) return;
+    ov.classList.remove("is-visible");
+    btn?.setAttribute("aria-expanded", "false");
+    const onEnd = () => {
+      ov.removeEventListener("transitionend", onEnd);
+      if (!ov.classList.contains("is-visible")) {
+        ov.hidden = true;
+        ov.setAttribute("aria-hidden", "true");
+      }
+    };
+    ov.addEventListener("transitionend", onEnd);
+  }
+  _renderCapsOverlay() {
+    const body = this.el.querySelector(".caps-overlay-body");
+    if (!body) return;
+    const card = this.adapter.agentCard;
+    if (!card) {
+      body.innerHTML = `<div class="caps-empty">agent card not loaded yet</div>`;
+      return;
+    }
+    const skills = card.skills || [];
+    if (!skills.length) {
+      body.innerHTML = `<div class="caps-empty">no skills declared</div>`;
+      return;
+    }
+    // skill 名だけ並べる。 description は title 属性 (OS native tooltip) で hover 時に表示。
+    body.innerHTML = `<div class="caps-skill-list">` +
+      skills.map(s => {
+        const name = s.name || s.id || "";
+        const desc = s.description || "";
+        return `<div class="caps-skill-item" title="${escapeHtml(desc)}">${escapeHtml(name)}</div>`;
+      }).join("") +
+      `</div>`;
   }
 
   // 入力履歴に push。 直前と同一なら重複しない。 上限超過分は先頭から落とす。

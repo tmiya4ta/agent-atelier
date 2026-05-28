@@ -2062,6 +2062,23 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   border-bottom-right-radius: var(--radius-lg);
 }
 .agent-window:hover .aw-resize-grip { opacity: 0.7; }
+
+/* 4 辺 + 4 角 (SE 以外) の不可視リサイズハンドル。 透明 div を window 端に
+   貼って cursor とドラッグだけ受ける。 SE は既存 .aw-resize-grip がカバー。
+   厚みは 6px (辺) / 12px (角) — 細すぎるとつかみづらく、 太すぎると内側 UI に被る。 */
+.aw-resize-edge {
+  position: absolute;
+  z-index: 4;
+  background: transparent;
+}
+.aw-resize-n  { top: -3px;    left: 12px;   right: 12px;  height: 6px;  cursor: ns-resize; }
+.aw-resize-s  { bottom: -3px; left: 12px;   right: 12px;  height: 6px;  cursor: ns-resize; }
+.aw-resize-e  { right: -3px;  top: 12px;    bottom: 12px; width: 6px;   cursor: ew-resize; }
+.aw-resize-w  { left: -3px;   top: 12px;    bottom: 12px; width: 6px;   cursor: ew-resize; }
+.aw-resize-ne { top: -3px;    right: -3px;  width: 14px;  height: 14px; cursor: nesw-resize; }
+.aw-resize-nw { top: -3px;    left: -3px;   width: 14px;  height: 14px; cursor: nwse-resize; }
+.aw-resize-sw { bottom: -3px; left: -3px;   width: 14px;  height: 14px; cursor: nesw-resize; }
+.agent-window.is-maximized .aw-resize-edge { display: none; }
 .agent-window.is-focused {
   box-shadow: 0 4px 14px -4px rgba(0,22,74,.10);
 }
@@ -2612,6 +2629,131 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .cm-key { color: var(--ink-4); }
 .cm-val { color: var(--ink-2); }
 .compose-meta-spacer { flex: 1; }
+
+/* compose 上のツールバー (capabilities ボタン等) */
+.compose-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.compose-caps {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px 3px 7px;
+  font-family: var(--f-mono);
+  font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink-2);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.compose-caps:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--panel);
+}
+.compose-caps[aria-expanded="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(45,75,255, 0.06);
+}
+
+/* chat-region: chat-scroll と caps-overlay を縦並び flex で内包。
+   pane の高さの中で compose を除いた領域だけが overlay の対象になる
+   (= 入力ボックスには絶対に被らない)。 */
+.chat-region {
+  position: relative;
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+}
+.chat-region > .chat-scroll { flex: 1; min-height: 0; }
+
+/* Capabilities overlay: chat-region 内に絶対配置、 左からスライドイン + フェードイン。
+   ガラス感は無し: ネイビーべた塗り + 不透明寄りで読みやすさ優先。 */
+.caps-overlay {
+  position: absolute;
+  left: 0; top: 0;
+  width: min(280px, 75%);
+  height: 100%;
+  background: rgba(0, 22, 74, 0.30);
+  color: #ffffff;
+  border-right: 1px solid rgba(255,255,255, 0.10);
+  display: flex;
+  flex-direction: column;
+  z-index: 6;
+  opacity: 0;
+  transform: translateX(-12px);
+  transition: opacity 0.28s cubic-bezier(.2,.8,.2,1),
+              transform 0.28s cubic-bezier(.2,.8,.2,1);
+  pointer-events: none;
+  box-shadow: 4px 0 18px -8px rgba(0,22,74, 0.30);
+}
+.caps-overlay.is-visible {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+.caps-overlay-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 8px 4px 12px;
+  border-bottom: 1px solid rgba(255,255,255, 0.10);
+  font-family: var(--f-mono);
+  font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.08em;
+  color: rgba(255,255,255, 0.78);
+  text-transform: uppercase;
+  min-height: 22px;
+}
+.caps-overlay-close {
+  width: 18px; height: 18px;
+  display: grid; place-items: center;
+  border-radius: 3px;
+  color: rgba(255,255,255, 0.72);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.caps-overlay-close:hover {
+  background: rgba(255,255,255, 0.12);
+  color: #fff;
+}
+.caps-overlay-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px 18px;
+  font-size: calc(12px * var(--fs-mul, 1.1) * var(--fs, 1));
+}
+.caps-skill-list {
+  display: flex; flex-direction: column;
+  gap: 4px;
+}
+.caps-skill-item {
+  font-family: var(--f-mono);
+  font-size: calc(11.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: rgba(255,255,255, 0.92);
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: default;
+  transition: background 0.12s ease;
+  /* description が長くても overlay 幅に収まるように、 wrap + word-break。
+     ツールチップは title 属性で OS native のものを使う。 */
+  word-break: break-word;
+}
+.caps-skill-item:hover { background: rgba(255,255,255, 0.10); }
+.caps-empty {
+  color: rgba(255,255,255, 0.7);
+  font-style: italic;
+  padding: 24px 0;
+  text-align: center;
+}
+
+body.is-dark .compose-caps[aria-expanded="true"] {
+  background: rgba(85,128,255, 0.12);
+}
 
 /* ─── AGENT CARD pane ─── */
 .card-scroll {
