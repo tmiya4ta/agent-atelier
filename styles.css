@@ -2168,7 +2168,29 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 }
 .aw-proto-badge[data-proto="a2a"]    { color: var(--accent-ink); background: var(--accent-soft); border-color: #BFE7F5; }
 .aw-proto-badge[data-proto="mcp"]    { color: var(--warn); background: var(--warn-soft); border-color: #F4D5C6; }
+.aw-proto-badge[data-proto="slack"]  { color: #8B5300; background: #FFF1D6; border-color: #F4D89A; }
 .aw-proto-badge[data-proto="openai"] { color: var(--ok); background: var(--ok-soft); border-color: #CFE5D9; }
+
+/* sidebar Connections の各行に protocol を示す小バッジ。
+   .aw-proto-badge と同じカラートークンを使い、 サイズだけ少し小さく揃える。 */
+.conn-proto-badge {
+  font-family: var(--f-mono);
+  font-size: calc(8.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 1px 5px;
+  border-radius: 2px;
+  text-transform: uppercase;
+  margin-right: 6px;
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+.conn-proto-badge[data-proto="a2a"]    { color: var(--accent-ink); background: var(--accent-soft); border-color: #BFE7F5; }
+.conn-proto-badge[data-proto="mcp"]    { color: var(--warn); background: var(--warn-soft); border-color: #F4D5C6; }
+.conn-proto-badge[data-proto="slack"]  { color: #8B5300; background: #FFF1D6; border-color: #F4D89A; }
+.conn-proto-badge[data-proto="openai"] { color: var(--ok); background: var(--ok-soft); border-color: #CFE5D9; }
 
 .aw-title {
   margin: 0;
@@ -4015,11 +4037,14 @@ body { transition: background-color 0.25s ease, color 0.25s ease; }
    ════════════════════════════════════════════════════════ */
 .pane-tools {
   padding: 18px 20px 16px;
-  overflow-y: auto;
+  /* form が出ている時は内部 (.tool-result) を伸ばすので overflow は中に任せる */
+  overflow: hidden;
   gap: 14px;
 }
 .tools-list {
   display: flex; flex-direction: column; gap: 8px;
+  flex: 1; min-height: 0;
+  overflow-y: auto;
 }
 .tools-empty {
   color: var(--ink-4);
@@ -4057,6 +4082,7 @@ body { transition: background-color 0.25s ease, color 0.25s ease; }
 
 .tool-form {
   display: flex; flex-direction: column; gap: 12px;
+  flex: 1; min-height: 0;   /* result を pane の残り高さに伸ばす */
 }
 .tool-form-head {
   display: flex; align-items: center; gap: 10px;
@@ -4089,6 +4115,9 @@ body { transition: background-color 0.25s ease, color 0.25s ease; }
 }
 .tool-form-fields {
   display: flex; flex-direction: column; gap: 10px;
+  /* fields が多くても result が確実に見えるよう、 上限を切ってスクロール */
+  max-height: 40%;
+  overflow-y: auto;
 }
 .tool-field {
   display: flex; flex-direction: column; gap: 4px;
@@ -4155,7 +4184,7 @@ body { transition: background-color 0.25s ease, color 0.25s ease; }
   color: var(--ink);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 320px;
+  flex: 1; min-height: 80px;
   overflow: auto;
 }
 body.is-dark .tool-result {

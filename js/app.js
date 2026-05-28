@@ -581,10 +581,12 @@ function renderBookmarks() {
       if (!fromKey || fromKey === b.key) return;
       reorderBookmark(fromKey, b.key, before ? "before" : "after");
     });
+    const protoLabel = (getProtocol(b.protoId)?.label) || b.protoId.toUpperCase();
     li.innerHTML = `
       <button class="conn-toggle" aria-label="${expanded ? 'collapse' : 'expand'} window list" title="${canExpand ? (expanded ? 'collapse' : 'expand') : 'no open windows'}" ${canExpand ? '' : 'disabled'}>
         <svg viewBox="0 0 12 12" width="9" height="9"><polyline points="3,4.5 6,8 9,4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
+      <span class="conn-proto-badge" data-proto="${escapeHtml(b.protoId)}" title="${escapeHtml(protoLabel)} connection">${escapeHtml(protoLabel)}</span>
       <span class="agent-name">${escapeHtml(displayName)}</span>
       <span class="bm-count" title="${wins.length} window(s)">${wins.length}</span>
       <button class="bookmark-new" title="${wins.length ? 'Open another window to the same agent' : 'Open a window'}" aria-label="new window">
