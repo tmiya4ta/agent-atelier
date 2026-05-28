@@ -1,0 +1,471 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+          http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+          http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+          http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd
+          http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <configuration-properties file="config.properties"/>
+
+    <http:listener-config name="HTTP_Listener_config">
+        <http:listener-connection host="0.0.0.0" port="8081"/>
+    </http:listener-config>
+
+    <http:request-config name="Incident_System_Request_config" basePath="/">
+        <http:request-connection host="${backend.incident.host}"
+                                 port="${backend.incident.port}"
+                                 protocol="${backend.incident.protocol}"/>
+    </http:request-config>
+
+    <apikit:config name="atelier-mcp-incident-config"
+                   api="api/atelier-mcp-incident.yaml"
+                   outboundHeadersMapName="outboundHeaders"
+                   httpStatusVarName="httpStatus"/>
+
+    <flow name="atelier-mcp-incident-main">
+        <http:listener config-ref="HTTP_Listener_config" path="/*">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:body>#[payload]</http:body>
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:error-response>
+        </http:listener>
+        <apikit:router config-ref="atelier-mcp-incident-config"/>
+        <error-handler>
+            <on-error-propagate type="APIKIT:BAD_REQUEST">
+                <ee:transform>
+                    <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ code: "BAD_REQUEST", message: error.description default (error.message default "bad request") }]]></ee:set-payload></ee:message>
+                    <ee:variables><ee:set-variable variableName="httpStatus">400</ee:set-variable></ee:variables>
+                </ee:transform>
+            </on-error-propagate>
+            <on-error-propagate type="APIKIT:NOT_FOUND">
+                <ee:transform>
+                    <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ code: "NOT_FOUND", message: error.description default "resource not found" }]]></ee:set-payload></ee:message>
+                    <ee:variables><ee:set-variable variableName="httpStatus">404</ee:set-variable></ee:variables>
+                </ee:transform>
+            </on-error-propagate>
+            <on-error-propagate type="APIKIT:METHOD_NOT_ALLOWED">
+                <ee:transform>
+                    <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ code: "METHOD_NOT_ALLOWED", message: error.description default "method not allowed" }]]></ee:set-payload></ee:message>
+                    <ee:variables><ee:set-variable variableName="httpStatus">405</ee:set-variable></ee:variables>
+                </ee:transform>
+            </on-error-propagate>
+        </error-handler>
+    </flow>
+
+    <flow name="post:\mcp:application\json:atelier-mcp-incident-config">
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="rpcId"><![CDATA[%dw 2.0
+output application/java
+---
+payload.id default null]]></ee:set-variable>
+                <ee:set-variable variableName="rpcMethod"><![CDATA[%dw 2.0
+output application/java
+---
+(payload.method default "") as String]]></ee:set-variable>
+                <ee:set-variable variableName="rpcParams"><![CDATA[%dw 2.0
+output application/java
+---
+payload.params default {}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <choice>
+            <when expression='#[vars.rpcMethod == "initialize"]'>
+                <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ jsonrpc: "2.0", id: vars.rpcId, result: { protocolVersion: "2025-03-26", serverInfo: { name: "atelier-mcp-incident", version: "1.0.0" }, capabilities: { tools: { listChanged: false } } } }]]></ee:set-payload></ee:message></ee:transform>
+            </when>
+            <when expression='#[vars.rpcMethod == "notifications/initialized"]'>
+                <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{}]]></ee:set-payload></ee:message></ee:transform>
+            </when>
+            <when expression='#[vars.rpcMethod == "tools/list"]'>
+                <flow-ref name="build-tools-list-mcp"/>
+                <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ jsonrpc: "2.0", id: vars.rpcId, result: payload }]]></ee:set-payload></ee:message></ee:transform>
+            </when>
+            <when expression='#[vars.rpcMethod == "tools/call"]'>
+                <ee:transform>
+                    <ee:variables>
+                        <ee:set-variable variableName="toolName"><![CDATA[%dw 2.0
+output application/java
+---
+(vars.rpcParams.name default "") as String]]></ee:set-variable>
+                        <ee:set-variable variableName="toolInput"><![CDATA[%dw 2.0
+output application/java
+---
+vars.rpcParams.arguments default {}]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <flow-ref name="dispatch-tool"/>
+                <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var resultBody = payload.result default {}
+var isError = (payload.status default "") == "error"
+---
+{ jsonrpc: "2.0", id: vars.rpcId, result: { content: [{ "type": "text", text: write(resultBody, "application/json") }], isError: isError } }]]></ee:set-payload></ee:message></ee:transform>
+            </when>
+            <otherwise>
+                <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ jsonrpc: "2.0", id: vars.rpcId, error: { code: -32601, message: "Method not found: " ++ (vars.rpcMethod default "") } }]]></ee:set-payload></ee:message></ee:transform>
+            </otherwise>
+        </choice>
+    </flow>
+
+    <flow name="get:\mcp:atelier-mcp-incident-config">
+        <ee:transform>
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ code: "METHOD_NOT_ALLOWED", message: "server-initiated stream not supported" }]]></ee:set-payload></ee:message>
+            <ee:variables><ee:set-variable variableName="httpStatus">405</ee:set-variable></ee:variables>
+        </ee:transform>
+    </flow>
+
+    <flow name="get:\mcp\tools:atelier-mcp-incident-config">
+        <flow-ref name="build-tools-list-legacy"/>
+    </flow>
+
+    <flow name="post:\mcp\execute:application\json:atelier-mcp-incident-config">
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="toolName"><![CDATA[%dw 2.0
+output application/java
+---
+(payload.toolName default "") as String]]></ee:set-variable>
+                <ee:set-variable variableName="toolInput"><![CDATA[%dw 2.0
+output application/java
+---
+payload."input" default {}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <flow-ref name="dispatch-tool"/>
+    </flow>
+
+    <flow name="build-tools-list-mcp">
+        <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  tools: [
+    {
+      name: "lookup_incident",
+      description: "incidentId で既存 Incident__c を 1 件取得する。404 のときは exists=false を返す。",
+      inputSchema: {
+        "type": "object",
+        properties: { incidentId: { "type": "string" } },
+        required: ["incidentId"]
+      }
+    },
+    {
+      name: "register_incident",
+      description: "Incident__c を新規作成する。incidentId 未指定なら incident-system が採番。",
+      inputSchema: {
+        "type": "object",
+        properties: {
+          incidentId:       { "type": "string" },
+          supplierGoldenId: { "type": "string" },
+          partNumber:       { "type": "string" },
+          quantity:         { "type": "integer" },
+          severity:         { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+          rawMessage:       { "type": "string" },
+          slackChannel:     { "type": "string" },
+          slackThreadTs:    { "type": "string" }
+        },
+        required: ["supplierGoldenId", "partNumber", "severity", "rawMessage"]
+      }
+    },
+    {
+      name: "update_incident_status",
+      description: "incidentId のステータスを更新する。OPEN / IN_PROGRESS / RESOLVED。",
+      inputSchema: {
+        "type": "object",
+        properties: {
+          incidentId: { "type": "string" },
+          "status":   { "type": "string", "enum": ["OPEN", "IN_PROGRESS", "RESOLVED"] }
+        },
+        required: ["incidentId", "status"]
+      }
+    }
+  ]
+}]]></ee:set-payload></ee:message></ee:transform>
+    </flow>
+
+    <flow name="build-tools-list-legacy">
+        <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  tools: [
+    {
+      name: "lookup_incident",
+      description: "incidentId で既存 Incident__c を 1 件取得する。",
+      input_schema: {
+        "type": "object",
+        properties: { incidentId: { "type": "string" } },
+        required: ["incidentId"]
+      }
+    },
+    {
+      name: "register_incident",
+      description: "Incident__c を新規作成する。",
+      input_schema: {
+        "type": "object",
+        properties: {
+          incidentId:       { "type": "string" },
+          supplierGoldenId: { "type": "string" },
+          partNumber:       { "type": "string" },
+          quantity:         { "type": "integer" },
+          severity:         { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+          rawMessage:       { "type": "string" },
+          slackChannel:     { "type": "string" },
+          slackThreadTs:    { "type": "string" }
+        },
+        required: ["supplierGoldenId", "partNumber", "severity", "rawMessage"]
+      }
+    },
+    {
+      name: "update_incident_status",
+      description: "incidentId のステータスを更新する。",
+      input_schema: {
+        "type": "object",
+        properties: {
+          incidentId: { "type": "string" },
+          "status":   { "type": "string", "enum": ["OPEN", "IN_PROGRESS", "RESOLVED"] }
+        },
+        required: ["incidentId", "status"]
+      }
+    }
+  ]
+}]]></ee:set-payload></ee:message></ee:transform>
+    </flow>
+
+    <flow name="dispatch-tool">
+        <choice>
+            <when expression='#[vars.toolName == "lookup_incident"]'>
+                <flow-ref name="tool-lookup-incident"/>
+            </when>
+            <when expression='#[vars.toolName == "register_incident"]'>
+                <flow-ref name="tool-register-incident"/>
+            </when>
+            <when expression='#[vars.toolName == "update_incident_status"]'>
+                <flow-ref name="tool-update-incident-status"/>
+            </when>
+            <otherwise>
+                <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ status: "error", tool: vars.toolName, result: { code: "UNKNOWN_TOOL", message: "tool not supported: " ++ (vars.toolName default "") } }]]></ee:set-payload></ee:message></ee:transform>
+            </otherwise>
+        </choice>
+    </flow>
+
+    <sub-flow name="tool-lookup-incident">
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="incidentId"><![CDATA[%dw 2.0
+output application/java
+---
+(vars.toolInput.incidentId default "") as String]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <try>
+            <http:request method="GET"
+                          path="#[output application/java --- '/incidents/' ++ ((vars.incidentId default '') as String)]"
+                          config-ref="Incident_System_Request_config">
+                <http:response-validator>
+                    <http:success-status-code-validator values="0..599"/>
+                </http:response-validator>
+            </http:request>
+            <ee:transform>
+                <ee:variables>
+                    <ee:set-variable variableName="status"><![CDATA[%dw 2.0
+output application/java
+---
+(attributes.statusCode default 0) as Number]]></ee:set-variable>
+                    <ee:set-variable variableName="bodyObj"><![CDATA[%dw 2.0
+output application/java
+fun safeReadJson(s) = if (s == null or trim(s) == "") {} else read(s, "application/json")
+---
+if (payload == null) {}
+else if (payload is Binary) safeReadJson(payload as String { encoding: "UTF-8" })
+else if (payload is String) safeReadJson(payload)
+else payload]]></ee:set-variable>
+                </ee:variables>
+            </ee:transform>
+            <ee:transform>
+                <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+if ((vars.status default 0) >= 200 and (vars.status default 0) < 300)
+  { status: "success", tool: vars.toolName, result: { exists: true, incident: vars.bodyObj } }
+else if ((vars.status default 0) == 404)
+  { status: "success", tool: vars.toolName, result: { exists: false, incidentId: vars.incidentId default "" } }
+else
+  { status: "error", tool: vars.toolName, result: { code: "BACKEND_ERROR", httpStatus: vars.status, body: vars.bodyObj } }]]></ee:set-payload></ee:message>
+            </ee:transform>
+            <error-handler>
+                <on-error-continue type="ANY">
+                    <ee:transform>
+                        <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ status: "error", tool: vars.toolName, result: { code: "BACKEND_CALL_FAILED", message: error.description default "unknown" } }]]></ee:set-payload></ee:message>
+                    </ee:transform>
+                </on-error-continue>
+            </error-handler>
+        </try>
+    </sub-flow>
+
+    <sub-flow name="tool-register-incident">
+        <ee:transform>
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+vars.toolInput]]></ee:set-payload></ee:message>
+        </ee:transform>
+        <try>
+            <http:request method="POST" path="/incidents" config-ref="Incident_System_Request_config">
+                <http:headers><![CDATA[#[{ "Content-Type": "application/json" }]]]></http:headers>
+                <http:response-validator>
+                    <http:success-status-code-validator values="0..599"/>
+                </http:response-validator>
+            </http:request>
+            <ee:transform>
+                <ee:variables>
+                    <ee:set-variable variableName="status"><![CDATA[%dw 2.0
+output application/java
+---
+(attributes.statusCode default 0) as Number]]></ee:set-variable>
+                    <ee:set-variable variableName="bodyObj"><![CDATA[%dw 2.0
+output application/java
+fun safeReadJson(s) = if (s == null or trim(s) == "") {} else read(s, "application/json")
+---
+if (payload == null) {}
+else if (payload is Binary) safeReadJson(payload as String { encoding: "UTF-8" })
+else if (payload is String) safeReadJson(payload)
+else payload]]></ee:set-variable>
+                </ee:variables>
+            </ee:transform>
+            <ee:transform>
+                <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+if ((vars.status default 0) >= 200 and (vars.status default 0) < 300)
+  { status: "success", tool: vars.toolName, result: ((vars.bodyObj default {}) ++ { "status": "CREATED" }) }
+else if ((vars.status default 0) == 409 and ((vars.bodyObj.code default "") as String) == "ALREADY_EXISTS")
+  { status: "success", tool: vars.toolName, result: { "status": "EXISTS", incidentId: ((vars.bodyObj.incidentId default "") as String), supplierGoldenId: ((vars.toolInput.supplierGoldenId default "") as String), partNumber: ((vars.toolInput.partNumber default "") as String), severity: ((vars.toolInput.severity default "") as String), rawMessage: ((vars.toolInput.rawMessage default "") as String) } }
+else
+  { status: "error", tool: vars.toolName, result: { "status": "ERROR", code: ((vars.bodyObj.code default "BACKEND_ERROR") as String), httpStatus: vars.status, message: ((vars.bodyObj.message default "incident-system returned non-2xx") as String), body: vars.bodyObj } }]]></ee:set-payload></ee:message>
+            </ee:transform>
+            <error-handler>
+                <on-error-continue type="ANY">
+                    <ee:transform>
+                        <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ status: "error", tool: vars.toolName, result: { "status": "ERROR", code: "BACKEND_CALL_FAILED", message: error.description default "unknown" } }]]></ee:set-payload></ee:message>
+                    </ee:transform>
+                </on-error-continue>
+            </error-handler>
+        </try>
+    </sub-flow>
+
+    <sub-flow name="tool-update-incident-status">
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="incidentId"><![CDATA[%dw 2.0
+output application/java
+---
+(vars.toolInput.incidentId default "") as String]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <ee:transform>
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ "status": vars.toolInput."status" default "IN_PROGRESS" }]]></ee:set-payload></ee:message>
+        </ee:transform>
+        <try>
+            <http:request method="PATCH"
+                          path="#[output application/java --- '/incidents/' ++ ((vars.incidentId default '') as String)]"
+                          config-ref="Incident_System_Request_config">
+                <http:headers><![CDATA[#[{ "Content-Type": "application/json" }]]]></http:headers>
+                <http:response-validator>
+                    <http:success-status-code-validator values="0..599"/>
+                </http:response-validator>
+            </http:request>
+            <flow-ref name="wrap-system-response"/>
+            <error-handler>
+                <on-error-continue type="ANY">
+                    <ee:transform>
+                        <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ status: "error", tool: vars.toolName, result: { code: "BACKEND_CALL_FAILED", message: error.description default "unknown" } }]]></ee:set-payload></ee:message>
+                    </ee:transform>
+                </on-error-continue>
+            </error-handler>
+        </try>
+    </sub-flow>
+
+    <sub-flow name="wrap-system-response">
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="status"><![CDATA[%dw 2.0
+output application/java
+---
+(attributes.statusCode default 0) as Number]]></ee:set-variable>
+                <ee:set-variable variableName="bodyObj"><![CDATA[%dw 2.0
+output application/java
+fun safeReadJson(s) = if (s == null or trim(s) == "") {} else read(s, "application/json")
+---
+if (payload == null) {}
+else if (payload is Binary) safeReadJson(payload as String { encoding: "UTF-8" })
+else if (payload is String) safeReadJson(payload)
+else payload]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <ee:transform>
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ status: (if ((vars.status default 0) >= 200 and (vars.status default 0) < 300) "success" else "error"), tool: vars.toolName, result: vars.bodyObj default {} }]]></ee:set-payload></ee:message>
+        </ee:transform>
+    </sub-flow>
+
+    <flow name="get:\health:atelier-mcp-incident-config">
+        <ee:transform>
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ status: "UP", app: "atelier-mcp-incident" }]]></ee:set-payload></ee:message>
+        </ee:transform>
+    </flow>
+
+</mule>

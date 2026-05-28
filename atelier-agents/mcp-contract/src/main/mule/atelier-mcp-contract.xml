@@ -1,0 +1,380 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+          http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+          http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+          http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd
+          http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <configuration-properties file="config.properties"/>
+
+    <http:listener-config name="HTTP_Listener_config">
+        <http:listener-connection host="0.0.0.0" port="8081"/>
+    </http:listener-config>
+
+    <apikit:config name="atelier-mcp-contract-config"
+                   api="api/atelier-mcp-contract.yaml"
+                   outboundHeadersMapName="outboundHeaders"
+                   httpStatusVarName="httpStatus"/>
+
+    <flow name="atelier-mcp-contract-main">
+        <http:listener config-ref="HTTP_Listener_config" path="/*">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:body>#[payload]</http:body>
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:error-response>
+        </http:listener>
+        <apikit:router config-ref="atelier-mcp-contract-config"/>
+        <error-handler>
+            <on-error-propagate type="APIKIT:BAD_REQUEST">
+                <ee:transform>
+                    <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ code: "BAD_REQUEST", message: error.description default (error.message default "bad request") }]]></ee:set-payload></ee:message>
+                    <ee:variables><ee:set-variable variableName="httpStatus">400</ee:set-variable></ee:variables>
+                </ee:transform>
+            </on-error-propagate>
+            <on-error-propagate type="APIKIT:NOT_FOUND">
+                <ee:transform>
+                    <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ code: "NOT_FOUND", message: error.description default "resource not found" }]]></ee:set-payload></ee:message>
+                    <ee:variables><ee:set-variable variableName="httpStatus">404</ee:set-variable></ee:variables>
+                </ee:transform>
+            </on-error-propagate>
+            <on-error-propagate type="APIKIT:METHOD_NOT_ALLOWED">
+                <ee:transform>
+                    <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ code: "METHOD_NOT_ALLOWED", message: error.description default "method not allowed" }]]></ee:set-payload></ee:message>
+                    <ee:variables><ee:set-variable variableName="httpStatus">405</ee:set-variable></ee:variables>
+                </ee:transform>
+            </on-error-propagate>
+        </error-handler>
+    </flow>
+
+    <!-- ============================================================
+         MCP JSON-RPC dispatcher (POST /mcp)
+         ============================================================ -->
+    <flow name="post:\mcp:application\json:atelier-mcp-contract-config">
+        <ee:transform doc:name="capture rpc fields">
+            <ee:variables>
+                <ee:set-variable variableName="rpcId"><![CDATA[%dw 2.0
+output application/java
+---
+payload.id default null]]></ee:set-variable>
+                <ee:set-variable variableName="rpcMethod"><![CDATA[%dw 2.0
+output application/java
+---
+(payload.method default "") as String]]></ee:set-variable>
+                <ee:set-variable variableName="rpcParams"><![CDATA[%dw 2.0
+output application/java
+---
+payload.params default {}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <choice doc:name="dispatch by JSON-RPC method">
+            <when expression='#[vars.rpcMethod == "initialize"]'>
+                <ee:transform>
+                    <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  jsonrpc: "2.0",
+  id:      vars.rpcId,
+  result: {
+    protocolVersion: "2025-03-26",
+    serverInfo: { name: "atelier-mcp-contract", version: "1.0.0" },
+    capabilities: { tools: { listChanged: false } }
+  }
+}]]></ee:set-payload></ee:message>
+                </ee:transform>
+            </when>
+            <when expression='#[vars.rpcMethod == "notifications/initialized"]'>
+                <ee:transform>
+                    <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{}]]></ee:set-payload></ee:message>
+                </ee:transform>
+            </when>
+            <when expression='#[vars.rpcMethod == "tools/list"]'>
+                <flow-ref name="build-tools-list-mcp"/>
+                <ee:transform>
+                    <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ jsonrpc: "2.0", id: vars.rpcId, result: payload }]]></ee:set-payload></ee:message>
+                </ee:transform>
+            </when>
+            <when expression='#[vars.rpcMethod == "tools/call"]'>
+                <ee:transform>
+                    <ee:variables>
+                        <ee:set-variable variableName="toolName"><![CDATA[%dw 2.0
+output application/java
+---
+(vars.rpcParams.name default "") as String]]></ee:set-variable>
+                        <ee:set-variable variableName="toolInput"><![CDATA[%dw 2.0
+output application/java
+---
+vars.rpcParams.arguments default {}]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <flow-ref name="dispatch-tool"/>
+                <ee:transform doc:name="wrap tools/call result">
+                    <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var resultBody = payload.result default {}
+var isError = (payload.status default "") == "error"
+---
+{
+  jsonrpc: "2.0",
+  id:      vars.rpcId,
+  result: {
+    content: [{ "type": "text", text: write(resultBody, "application/json") }],
+    isError: isError
+  }
+}]]></ee:set-payload></ee:message>
+                </ee:transform>
+            </when>
+            <otherwise>
+                <ee:transform>
+                    <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  jsonrpc: "2.0",
+  id:      vars.rpcId,
+  error:   { code: -32601, message: "Method not found: " ++ (vars.rpcMethod default "") }
+}]]></ee:set-payload></ee:message>
+                </ee:transform>
+            </otherwise>
+        </choice>
+    </flow>
+
+    <flow name="get:\mcp:atelier-mcp-contract-config">
+        <ee:transform>
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ code: "METHOD_NOT_ALLOWED", message: "server-initiated stream not supported" }]]></ee:set-payload></ee:message>
+            <ee:variables><ee:set-variable variableName="httpStatus">405</ee:set-variable></ee:variables>
+        </ee:transform>
+    </flow>
+
+    <!-- Legacy: GET /mcp/tools -->
+    <flow name="get:\mcp\tools:atelier-mcp-contract-config">
+        <flow-ref name="build-tools-list-legacy"/>
+    </flow>
+
+    <!-- Legacy: POST /mcp/execute -->
+    <flow name="post:\mcp\execute:application\json:atelier-mcp-contract-config">
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="toolName"><![CDATA[%dw 2.0
+output application/java
+---
+(payload.toolName default "") as String]]></ee:set-variable>
+                <ee:set-variable variableName="toolInput"><![CDATA[%dw 2.0
+output application/java
+---
+payload."input" default {}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <flow-ref name="dispatch-tool"/>
+    </flow>
+
+    <!-- ============================================================
+         Tool catalog (MCP shape: inputSchema; legacy shape: input_schema)
+         ============================================================ -->
+    <flow name="build-tools-list-mcp">
+        <ee:transform>
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  tools: [
+    {
+      name: "get_quality_agreement",
+      description: "サプライヤーの品質保証協定書サマリ(条項・ペナルティ上限)を取得する。",
+      inputSchema: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          partNumber:       { "type": "string" }
+        },
+        required: ["supplierGoldenId"]
+      }
+    },
+    {
+      name: "generate_return_request",
+      description: "返品要求書を生成する。requestId を返す。",
+      inputSchema: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          partNumber:       { "type": "string" },
+          incidentId:       { "type": "string" },
+          quantity:         { "type": "integer" },
+          reason:           { "type": "string" }
+        },
+        required: ["supplierGoldenId", "partNumber", "incidentId"]
+      }
+    },
+    {
+      name: "send_penalty_notice",
+      description: "ペナルティ通知書を送付する。noticeId を返す。",
+      inputSchema: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          incidentId:       { "type": "string" },
+          amount:           { "type": "number" },
+          currency:         { "type": "string" }
+        },
+        required: ["supplierGoldenId", "incidentId", "amount"]
+      }
+    }
+  ]
+}]]></ee:set-payload></ee:message>
+        </ee:transform>
+    </flow>
+
+    <flow name="build-tools-list-legacy">
+        <ee:transform>
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  tools: [
+    {
+      name: "get_quality_agreement",
+      description: "サプライヤーの品質保証協定書サマリ(条項・ペナルティ上限)を取得する。",
+      input_schema: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          partNumber:       { "type": "string" }
+        },
+        required: ["supplierGoldenId"]
+      }
+    },
+    {
+      name: "generate_return_request",
+      description: "返品要求書を生成する。requestId を返す。",
+      input_schema: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          partNumber:       { "type": "string" },
+          incidentId:       { "type": "string" },
+          quantity:         { "type": "integer" },
+          reason:           { "type": "string" }
+        },
+        required: ["supplierGoldenId", "partNumber", "incidentId"]
+      }
+    },
+    {
+      name: "send_penalty_notice",
+      description: "ペナルティ通知書を送付する。noticeId を返す。",
+      input_schema: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          incidentId:       { "type": "string" },
+          amount:           { "type": "number" },
+          currency:         { "type": "string" }
+        },
+        required: ["supplierGoldenId", "incidentId", "amount"]
+      }
+    }
+  ]
+}]]></ee:set-payload></ee:message>
+        </ee:transform>
+    </flow>
+
+    <!-- ============================================================
+         dispatch-tool: stub data (no backend), shared by /mcp/execute & tools/call
+         ============================================================ -->
+    <flow name="dispatch-tool">
+        <ee:transform>
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+import * from dw::core::Strings
+var tool = (vars.toolName default "") as String
+var inp = vars.toolInput default {}
+var ts = now() as String {format: "yyyyMMddHHmmss"}
+var rnd = (randomInt(9999) as String)
+---
+tool match {
+  case "get_quality_agreement" -> {
+    status: "success",
+    tool: tool,
+    result: {
+      supplierGoldenId: (inp.supplierGoldenId default "") as String,
+      partNumber:       (inp.partNumber default "") as String,
+      agreementId:      "QA-2024-" ++ ((inp.supplierGoldenId default "GENERIC") as String),
+      clause:           "§7.3",
+      penaltyCap:       2500000,
+      currency:         "JPY",
+      summary:          "品質不良発生時の返品およびペナルティ条項。上限¥2,500,000。"
+    }
+  }
+  case "generate_return_request" -> {
+    status: "success",
+    tool: tool,
+    result: {
+      requestId:        "RTN-" ++ ts ++ "-" ++ leftPad(rnd, 4, "0"),
+      "status":         "GENERATED",
+      supplierGoldenId: (inp.supplierGoldenId default "") as String,
+      partNumber:       (inp.partNumber default "") as String,
+      quantity:         ((inp.quantity default 0) as Number),
+      incidentId:       (inp.incidentId default "") as String,
+      reason:           (inp.reason default "") as String,
+      generatedAt:      now() as String {format: "yyyy-MM-dd'T'HH:mm:ssXXX"}
+    }
+  }
+  case "send_penalty_notice" -> {
+    status: "success",
+    tool: tool,
+    result: {
+      noticeId:         "PEN-" ++ ts ++ "-" ++ leftPad(rnd, 4, "0"),
+      "status":         "SENT",
+      supplierGoldenId: (inp.supplierGoldenId default "") as String,
+      incidentId:       (inp.incidentId default "") as String,
+      amount:           ((inp.amount default 0) as Number),
+      currency:         ((inp.currency default "JPY") as String),
+      sentAt:           now() as String {format: "yyyy-MM-dd'T'HH:mm:ssXXX"}
+    }
+  }
+  else -> {
+    status: "error",
+    tool: tool,
+    result: { code: "UNKNOWN_TOOL", message: "tool not supported: " ++ tool }
+  }
+}]]></ee:set-payload></ee:message>
+        </ee:transform>
+    </flow>
+
+    <flow name="get:\health:atelier-mcp-contract-config">
+        <ee:transform>
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ status: "UP", app: "atelier-mcp-contract" }]]></ee:set-payload></ee:message>
+        </ee:transform>
+    </flow>
+
+</mule>

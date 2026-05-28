@@ -1,0 +1,362 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+          http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+          http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+          http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd
+          http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <configuration-properties file="config.properties"/>
+
+    <http:listener-config name="HTTP_Listener_config">
+        <http:listener-connection host="0.0.0.0" port="8081"/>
+    </http:listener-config>
+
+    <http:request-config name="Inventory_System_Request_config" basePath="/">
+        <http:request-connection host="${backend.inventory.host}"
+                                 port="${backend.inventory.port}"
+                                 protocol="${backend.inventory.protocol}"/>
+    </http:request-config>
+
+    <apikit:config name="atelier-mcp-inventory-config"
+                   api="api/atelier-mcp-inventory.yaml"
+                   outboundHeadersMapName="outboundHeaders"
+                   httpStatusVarName="httpStatus"/>
+
+    <flow name="atelier-mcp-inventory-main">
+        <http:listener config-ref="HTTP_Listener_config" path="/*">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:body>#[payload]</http:body>
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:error-response>
+        </http:listener>
+        <apikit:router config-ref="atelier-mcp-inventory-config"/>
+        <error-handler>
+            <on-error-propagate type="APIKIT:BAD_REQUEST">
+                <ee:transform>
+                    <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ code: "BAD_REQUEST", message: error.description default (error.message default "bad request") }]]></ee:set-payload></ee:message>
+                    <ee:variables><ee:set-variable variableName="httpStatus">400</ee:set-variable></ee:variables>
+                </ee:transform>
+            </on-error-propagate>
+            <on-error-propagate type="APIKIT:NOT_FOUND">
+                <ee:transform>
+                    <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ code: "NOT_FOUND", message: error.description default "resource not found" }]]></ee:set-payload></ee:message>
+                    <ee:variables><ee:set-variable variableName="httpStatus">404</ee:set-variable></ee:variables>
+                </ee:transform>
+            </on-error-propagate>
+            <on-error-propagate type="APIKIT:METHOD_NOT_ALLOWED">
+                <ee:transform>
+                    <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ code: "METHOD_NOT_ALLOWED", message: error.description default "method not allowed" }]]></ee:set-payload></ee:message>
+                    <ee:variables><ee:set-variable variableName="httpStatus">405</ee:set-variable></ee:variables>
+                </ee:transform>
+            </on-error-propagate>
+        </error-handler>
+    </flow>
+
+    <!-- POST /mcp JSON-RPC -->
+    <flow name="post:\mcp:application\json:atelier-mcp-inventory-config">
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="rpcId"><![CDATA[%dw 2.0
+output application/java
+---
+payload.id default null]]></ee:set-variable>
+                <ee:set-variable variableName="rpcMethod"><![CDATA[%dw 2.0
+output application/java
+---
+(payload.method default "") as String]]></ee:set-variable>
+                <ee:set-variable variableName="rpcParams"><![CDATA[%dw 2.0
+output application/java
+---
+payload.params default {}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <choice>
+            <when expression='#[vars.rpcMethod == "initialize"]'>
+                <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ jsonrpc: "2.0", id: vars.rpcId, result: { protocolVersion: "2025-03-26", serverInfo: { name: "atelier-mcp-inventory", version: "1.0.0" }, capabilities: { tools: { listChanged: false } } } }]]></ee:set-payload></ee:message></ee:transform>
+            </when>
+            <when expression='#[vars.rpcMethod == "notifications/initialized"]'>
+                <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{}]]></ee:set-payload></ee:message></ee:transform>
+            </when>
+            <when expression='#[vars.rpcMethod == "tools/list"]'>
+                <flow-ref name="build-tools-list-mcp"/>
+                <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ jsonrpc: "2.0", id: vars.rpcId, result: payload }]]></ee:set-payload></ee:message></ee:transform>
+            </when>
+            <when expression='#[vars.rpcMethod == "tools/call"]'>
+                <ee:transform>
+                    <ee:variables>
+                        <ee:set-variable variableName="toolName"><![CDATA[%dw 2.0
+output application/java
+---
+(vars.rpcParams.name default "") as String]]></ee:set-variable>
+                        <ee:set-variable variableName="toolInput"><![CDATA[%dw 2.0
+output application/java
+---
+vars.rpcParams.arguments default {}]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <flow-ref name="dispatch-tool"/>
+                <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var resultBody = payload.result default {}
+var isError = (payload.status default "") == "error"
+---
+{ jsonrpc: "2.0", id: vars.rpcId, result: { content: [{ "type": "text", text: write(resultBody, "application/json") }], isError: isError } }]]></ee:set-payload></ee:message></ee:transform>
+            </when>
+            <otherwise>
+                <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ jsonrpc: "2.0", id: vars.rpcId, error: { code: -32601, message: "Method not found: " ++ (vars.rpcMethod default "") } }]]></ee:set-payload></ee:message></ee:transform>
+            </otherwise>
+        </choice>
+    </flow>
+
+    <flow name="get:\mcp:atelier-mcp-inventory-config">
+        <ee:transform>
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ code: "METHOD_NOT_ALLOWED", message: "server-initiated stream not supported" }]]></ee:set-payload></ee:message>
+            <ee:variables><ee:set-variable variableName="httpStatus">405</ee:set-variable></ee:variables>
+        </ee:transform>
+    </flow>
+
+    <flow name="get:\mcp\tools:atelier-mcp-inventory-config">
+        <flow-ref name="build-tools-list-legacy"/>
+    </flow>
+
+    <flow name="post:\mcp\execute:application\json:atelier-mcp-inventory-config">
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="toolName"><![CDATA[%dw 2.0
+output application/java
+---
+(payload.toolName default "") as String]]></ee:set-variable>
+                <ee:set-variable variableName="toolInput"><![CDATA[%dw 2.0
+output application/java
+---
+payload."input" default {}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <flow-ref name="dispatch-tool"/>
+    </flow>
+
+    <flow name="build-tools-list-mcp">
+        <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  tools: [
+    {
+      name: "check_inventory",
+      description: "部品の在庫レベル(quantityOnHand / available / leadTimeHours)を照会する。",
+      inputSchema: {
+        "type": "object",
+        properties: {
+          partNumber:       { "type": "string" },
+          requiredQuantity: { "type": "integer" }
+        },
+        required: ["partNumber"]
+      }
+    },
+    {
+      name: "reserve_inventory",
+      description: "部品在庫を仮確保(RESERVED)する。reservationId を返す。",
+      inputSchema: {
+        "type": "object",
+        properties: {
+          partNumber: { "type": "string" },
+          quantity:   { "type": "integer" },
+          incidentId: { "type": "string" },
+          ttlSeconds: { "type": "integer" }
+        },
+        required: ["partNumber", "quantity", "incidentId"]
+      }
+    },
+    {
+      name: "cancel_inventory_reservation",
+      description: "仮確保(reservationId)をキャンセルする。",
+      inputSchema: {
+        "type": "object",
+        properties: { reservationId: { "type": "string" } },
+        required: ["reservationId"]
+      }
+    }
+  ]
+}]]></ee:set-payload></ee:message></ee:transform>
+    </flow>
+
+    <flow name="build-tools-list-legacy">
+        <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  tools: [
+    {
+      name: "check_inventory",
+      description: "部品の在庫レベル(quantityOnHand / available / leadTimeHours)を照会する。",
+      input_schema: {
+        "type": "object",
+        properties: {
+          partNumber:       { "type": "string" },
+          requiredQuantity: { "type": "integer" }
+        },
+        required: ["partNumber"]
+      }
+    },
+    {
+      name: "reserve_inventory",
+      description: "部品在庫を仮確保(RESERVED)する。reservationId を返す。",
+      input_schema: {
+        "type": "object",
+        properties: {
+          partNumber: { "type": "string" },
+          quantity:   { "type": "integer" },
+          incidentId: { "type": "string" },
+          ttlSeconds: { "type": "integer" }
+        },
+        required: ["partNumber", "quantity", "incidentId"]
+      }
+    },
+    {
+      name: "cancel_inventory_reservation",
+      description: "仮確保(reservationId)をキャンセルする。",
+      input_schema: {
+        "type": "object",
+        properties: { reservationId: { "type": "string" } },
+        required: ["reservationId"]
+      }
+    }
+  ]
+}]]></ee:set-payload></ee:message></ee:transform>
+    </flow>
+
+    <flow name="dispatch-tool">
+        <choice>
+            <when expression='#[vars.toolName == "check_inventory"]'>
+                <flow-ref name="tool-check-inventory"/>
+            </when>
+            <when expression='#[vars.toolName == "reserve_inventory"]'>
+                <flow-ref name="tool-reserve-inventory"/>
+            </when>
+            <when expression='#[vars.toolName == "cancel_inventory_reservation"]'>
+                <flow-ref name="tool-cancel-inventory-reservation"/>
+            </when>
+            <otherwise>
+                <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ status: "error", tool: vars.toolName, result: { code: "UNKNOWN_TOOL", message: "tool not supported: " ++ (vars.toolName default "") } }]]></ee:set-payload></ee:message></ee:transform>
+            </otherwise>
+        </choice>
+    </flow>
+
+    <flow name="tool-check-inventory">
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="qp"><![CDATA[%dw 2.0
+output application/java
+---
+if (vars.toolInput.requiredQuantity != null)
+  { "partNumber": (vars.toolInput.partNumber default "") as String, "requiredQuantity": (vars.toolInput.requiredQuantity as String) }
+else
+  { "partNumber": (vars.toolInput.partNumber default "") as String }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <http:request method="GET" path="/inventory/check" config-ref="Inventory_System_Request_config">
+            <http:query-params>#[vars.qp]</http:query-params>
+            <http:response-validator>
+                <http:success-status-code-validator values="0..599"/>
+            </http:response-validator>
+        </http:request>
+        <flow-ref name="wrap-system-response"/>
+    </flow>
+
+    <flow name="tool-reserve-inventory">
+        <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+vars.toolInput]]></ee:set-payload></ee:message></ee:transform>
+        <http:request method="POST" path="/inventory/reservations" config-ref="Inventory_System_Request_config">
+            <http:headers><![CDATA[#[{ "Content-Type": "application/json" }]]]></http:headers>
+            <http:response-validator>
+                <http:success-status-code-validator values="0..599"/>
+            </http:response-validator>
+        </http:request>
+        <flow-ref name="wrap-system-response"/>
+    </flow>
+
+    <flow name="tool-cancel-inventory-reservation">
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="up"><![CDATA[%dw 2.0
+output application/java
+---
+{ "id": (vars.toolInput.reservationId default "") as String }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <http:request method="DELETE" path="/inventory/reservations/{id}" config-ref="Inventory_System_Request_config">
+            <http:uri-params>#[vars.up]</http:uri-params>
+            <http:response-validator>
+                <http:success-status-code-validator values="0..599"/>
+            </http:response-validator>
+        </http:request>
+        <ee:transform>
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var status = attributes.statusCode default 0
+---
+if (status >= 200 and status < 300)
+  { status: "success", tool: vars.toolName, result: { reservationId: (vars.toolInput.reservationId default "") as String, "status": "CANCELLED" } }
+else
+  { status: "error",   tool: vars.toolName, result: (payload default { code: "BACKEND_ERROR", message: "inventory-system returned HTTP " ++ (status as String) }) }]]></ee:set-payload></ee:message>
+        </ee:transform>
+    </flow>
+
+    <flow name="wrap-system-response">
+        <ee:transform>
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var status = attributes.statusCode default 0
+---
+{ status: (if (status >= 200 and status < 300) "success" else "error"), tool: vars.toolName, result: (payload default {}) }]]></ee:set-payload></ee:message>
+        </ee:transform>
+    </flow>
+
+    <flow name="get:\health:atelier-mcp-inventory-config">
+        <ee:transform>
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ status: "UP", app: "atelier-mcp-inventory" }]]></ee:set-payload></ee:message>
+        </ee:transform>
+    </flow>
+
+</mule>
