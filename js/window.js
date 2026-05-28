@@ -1034,14 +1034,15 @@ export class AgentWindow {
     // MCP の場合は agent card レンダリングが意味をなさないので no-op になるだけで害はない。
     // tools list 描画は別途ここで購読。
     this.adapter.addEventListener("open", (e) => {
-      this._mcpTools = Array.isArray(e.detail?.tools) ? e.detail.tools : [];
-      this._renderMcpToolsList();
-      // tab count を更新
-      const cnt = node.querySelector('.aw-tab[data-tab="tools"] .tab-count');
-      if (cnt) cnt.textContent = String(this._mcpTools.length);
-      // server info を card pane に
-      this._renderMcpServerInfo(e.detail?.serverInfo, this._mcpTools);
+      this._mcpApplyOpen(e.detail?.tools, e.detail?.serverInfo, node);
     });
+
+    // adapter.connect() は AgentWindow 作成前に awaited されるので、
+    // この listener より先に "open" が emit されている可能性がある。
+    // その場合は adapter.tools / adapter.serverInfo を直接読んで即時描画する。
+    if (this.adapter.state === "open") {
+      this._mcpApplyOpen(this.adapter.tools, this.adapter.serverInfo, node);
+    }
 
     // tools-list / tool-form の DOM ハンドラ
     const list   = toolsPane.querySelector(".tools-list");
@@ -1074,6 +1075,14 @@ export class AgentWindow {
     });
 
     this._mcpDom = { list, form, fields, result };
+  }
+
+  _mcpApplyOpen(tools, serverInfo, node) {
+    this._mcpTools = Array.isArray(tools) ? tools : [];
+    this._renderMcpToolsList();
+    const cnt = (node || this.el).querySelector('.aw-tab[data-tab="tools"] .tab-count');
+    if (cnt) cnt.textContent = String(this._mcpTools.length);
+    this._renderMcpServerInfo(serverInfo, this._mcpTools);
   }
 
   _renderMcpToolsList() {
