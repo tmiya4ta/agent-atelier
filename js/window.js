@@ -1211,14 +1211,17 @@ export class AgentWindow {
 
     result.hidden = false;
     result.textContent = "calling…";
+    result.classList.remove("is-error");
     try {
       const out = await this.adapter.callTool(tool.name, args);
       const body = out.parsed != null ? out.parsed : out.raw;
-      result.textContent = (typeof body === "string")
-        ? body
-        : JSON.stringify(body, null, 2);
+      if (typeof body === "string") {
+        result.textContent = body;
+      } else {
+        // syntax-highlighted JSON (theme-aware via .k/.s/.n/.b spans)
+        result.innerHTML = syntaxJson(body);
+      }
       if (out.isError) result.classList.add("is-error");
-      else result.classList.remove("is-error");
     } catch (err) {
       result.classList.add("is-error");
       result.textContent = String(err.message || err);

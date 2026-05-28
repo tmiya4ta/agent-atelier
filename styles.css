@@ -2912,16 +2912,33 @@ body.is-dark .compose-caps[aria-expanded="true"] {
   white-space: pre;
   margin: 6px 0 0 14px;
 }
-/* 白基調の syntax 色 */
-.card-raw .k { color: var(--accent-ink); font-weight: 500; }   /* keys     — 濃い青 */
-.card-raw .s { color: #1B7A4A; }                                /* strings  — 緑 */
-.card-raw .n { color: #B45B00; }                                /* numbers  — 橙 */
-.card-raw .b { color: var(--warn); }                            /* booleans — 赤 */
-/* Debug pane の dark 表示はそのまま */
-.dbg-body .k { color: #8FA0FF; }
-.dbg-body .s { color: #C6E48B; }
-.dbg-body .n { color: #F0BB29; }
-.dbg-body .b { color: #F45D4C; }
+/* 白基調の syntax 色 (light テーマ default) */
+.card-raw .k,
+.dbg-body .k,
+.tool-result .k { color: var(--accent-ink); font-weight: 500; }   /* keys     — 濃い青 */
+.card-raw .s,
+.dbg-body .s,
+.tool-result .s { color: #1B7A4A; }                                /* strings  — 緑 */
+.card-raw .n,
+.dbg-body .n,
+.tool-result .n { color: #B45B00; }                                /* numbers  — 橙 */
+.card-raw .b,
+.dbg-body .b,
+.tool-result .b { color: var(--warn); }                            /* booleans — 赤 */
+
+/* dark テーマでは色を上げて navy 背景でも読みやすく */
+body.is-dark .card-raw .k,
+body.is-dark .dbg-body .k,
+body.is-dark .tool-result .k { color: #8FA0FF; }
+body.is-dark .card-raw .s,
+body.is-dark .dbg-body .s,
+body.is-dark .tool-result .s { color: #C6E48B; }
+body.is-dark .card-raw .n,
+body.is-dark .dbg-body .n,
+body.is-dark .tool-result .n { color: #F0BB29; }
+body.is-dark .card-raw .b,
+body.is-dark .dbg-body .b,
+body.is-dark .tool-result .b { color: #F45D4C; }
 
 /* ─── DEBUG pane ─── */
 .debug-toolbar {
@@ -2981,14 +2998,20 @@ body.is-dark .compose-caps[aria-expanded="true"] {
   grid-column: 1 / -1;
   margin-top: 6px;
   padding: 10px 12px;
-  background: #0A1B3F;
-  color: #D6E0F0;
+  background: var(--panel-soft);
+  color: var(--ink);
+  border: 1px solid var(--line);
   border-radius: 4px;
   font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
   line-height: 1.55;
   white-space: pre;
   overflow-x: auto;
   display: none;
+}
+body.is-dark .dbg-body {
+  background: #0A1B3F;
+  color: #D6E0F0;
+  border-color: #1A2E5C;
 }
 .dbg-entry.is-open .dbg-body { display: block; }
 
@@ -4122,22 +4145,33 @@ body { transition: background-color 0.25s ease, color 0.25s ease; }
 }
 .tool-result {
   margin: 0;
-  background: var(--code-bg, #f5f7fa);
+  background: var(--panel-soft);
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 10px 12px;
   font-family: var(--f-mono);
   font-size: calc(11.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  line-height: 1.55;
   color: var(--ink);
   white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 280px;
+  word-break: break-word;
+  max-height: 320px;
   overflow: auto;
 }
+body.is-dark .tool-result {
+  background: #0A1B3F;
+  color: #D6E0F0;
+  border-color: #1A2E5C;
+}
 .tool-result.is-error {
-  background: rgba(211, 47, 47, 0.08);
-  border-color: rgba(211, 47, 47, 0.4);
-  color: #b71c1c;
+  background: var(--warn-soft);
+  border-color: var(--warn);
+  color: var(--warn);
+}
+body.is-dark .tool-result.is-error {
+  background: rgba(255, 100, 120, 0.08);
+  border-color: var(--warn);
+  color: var(--warn);
 }
 
 /* MCP server-info panel inside the agent-card pane */
