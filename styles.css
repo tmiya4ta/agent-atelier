@@ -3414,27 +3414,30 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
   position: relative;
   min-height: 0;
   overflow: hidden;
-  /* gutter 幅を変数化して highlight と textarea の left padding に流用 */
+  /* gutter 幅 / 1 行の高さ を変数化。 line-height は font-size と同じ計算式で
+     px 値に固定 (CJK 行で行高が伸びて gutter とずれるのを防ぐ)。 */
   --gutter-w: 44px;
+  --line-h: calc(12.5px * var(--fs-mul, 1.1) * var(--fs, 1) * 1.6);
+  --pad-top: 14px;
 }
 /* highlight overlay と textarea を完全に同じ寸法・フォントで重ねる。
-   gutter 分だけ左に寄せて表示。 */
+   gutter 分だけ左に寄せて表示。
+   wrap は無効 (pre)。 長い行は水平スクロールする — gutter と content の行数を
+   1:1 にするため。 */
 .script-highlight,
 #scriptEditor {
   position: absolute;
   inset: 0 0 0 var(--gutter-w);
   margin: 0;
-  padding: 14px 18px 14px 10px;
+  padding: var(--pad-top) 18px 14px 10px;
   font-family: var(--f-mono);
   font-size: calc(12.5px * var(--fs-mul, 1.1) * var(--fs, 1));
-  line-height: 1.6;
+  line-height: var(--line-h);
   tab-size: 2;
   border: 0;
   outline: 0;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  overflow-wrap: break-word;
-  overflow-y: auto;
+  white-space: pre;
+  overflow: auto;
   box-sizing: border-box;
 }
 
@@ -3445,10 +3448,10 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
   top: 0; bottom: 0; left: 0;
   width: var(--gutter-w);
   margin: 0;
-  padding: 14px 6px 14px 0;
+  padding: var(--pad-top) 6px 14px 0;
   font-family: var(--f-mono);
   font-size: calc(12.5px * var(--fs-mul, 1.1) * var(--fs, 1));
-  line-height: 1.6;
+  line-height: var(--line-h);
   text-align: right;
   color: var(--ink-4);
   background: var(--panel-soft);
@@ -3462,10 +3465,34 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
 }
 .script-gutter .ln {
   display: block;
+  height: var(--line-h);
 }
 .script-gutter .ln.is-cursor {
   color: var(--accent-ink);
   font-weight: 600;
+}
+
+/* カーソル行に重なる薄いハイライトバー。 行が変わるたびに一瞬フラッシュして
+   フェードして 15% の薄い背景に落ち着く。 */
+.script-cursor-bar {
+  position: absolute;
+  left: var(--gutter-w);
+  right: 0;
+  height: var(--line-h);
+  background: var(--accent-soft);
+  pointer-events: none;
+  opacity: 0.15;
+  transition: top 0.08s ease, opacity 0.4s ease;
+  z-index: 0;
+  border-left: 2px solid var(--accent);
+}
+.script-cursor-bar.is-flash {
+  animation: cursor-flash 0.6s ease;
+}
+@keyframes cursor-flash {
+  0%   { opacity: 0; }
+  25%  { opacity: 0.55; }
+  100% { opacity: 0.15; }
 }
 .script-highlight {
   pointer-events: none;

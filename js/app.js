@@ -2209,14 +2209,14 @@ function updateScriptHighlight() {
 
 // 行番号 gutter の更新。 行数 +1 (末尾改行ぶん) を出力し、
 // 現在カーソル行に is-cursor を付けてアクセントカラーで強調。
+// カーソル行ハイライトバーも併せて配置 (行が変わったら 1 回だけ flash)。
+let _lastCursorLine = -1;
 function updateScriptGutter() {
   const ed = $("#scriptEditor");
   const g  = $("#scriptGutter");
   if (!ed || !g) return;
   const lines = (ed.value + "\n").split("\n");
-  // 末尾の空 line は表示しない (split で 1 個多く出るため)
   const visibleCount = Math.max(1, lines.length - 1);
-  // カーソル行 (1-based) を計算
   const before = ed.value.slice(0, ed.selectionStart);
   const cursorLine = (before.match(/\n/g) || []).length + 1;
   let html = "";
@@ -2226,6 +2226,26 @@ function updateScriptGutter() {
   }
   g.innerHTML = html;
   g.scrollTop = ed.scrollTop;
+
+  // cursor bar 位置: line-height (px) を CSS 変数から読み出して計算
+  const bar = $("#scriptCursorBar");
+  if (bar) {
+    const stack = ed.parentElement;
+    const csStack = getComputedStyle(stack);
+    const lineH = parseFloat(csStack.getPropertyValue("--line-h")) || 20;
+    const padTop = parseFloat(csStack.getPropertyValue("--pad-top")) || 14;
+    const top = padTop + (cursorLine - 1) * lineH - ed.scrollTop;
+    bar.style.top = top + "px";
+    bar.style.height = lineH + "px";
+    bar.hidden = false;
+    if (cursorLine !== _lastCursorLine) {
+      bar.classList.remove("is-flash");
+      // re-trigger animation
+      void bar.offsetWidth;
+      bar.classList.add("is-flash");
+      _lastCursorLine = cursorLine;
+    }
+  }
 }
 
 // debounced auto-save
