@@ -297,6 +297,7 @@ function wireWorkspaceBlur() {
     if (t.closest(".modal-backdrop"))  return;  // confirm/alert/prompt が出ているとき
     if (t.closest("#scriptList"))      return;  // sidebar の script リスト
     if (t.closest("#scriptAdd"))       return;  // sidebar の "+" 新規シナリオボタン
+    if (t.closest("#scriptCtxMenu"))   return;  // editor から spawn された右クリックメニュー
     closeScriptPanel();
   }, true);
 }
@@ -2085,6 +2086,10 @@ function loadActiveScriptIntoPanel() {
     return;
   }
   editor.value = s.body || "";
+  // value 代入直後はキャレットが末尾に行き scroll もそこに飛ぶ。 先頭に戻す。
+  editor.selectionStart = editor.selectionEnd = 0;
+  editor.scrollTop  = 0;
+  editor.scrollLeft = 0;
   const ts = (typeof s.updatedAt === "number") ? s.updatedAt
            : (s.updatedAt ? Date.parse(s.updatedAt) : 0)
            || (typeof s.createdAt === "number" ? s.createdAt : Date.parse(s.createdAt || ""));
@@ -2209,8 +2214,7 @@ function updateScriptHighlight() {
 
 // 行番号 gutter の更新。 行数 +1 (末尾改行ぶん) を出力し、
 // 現在カーソル行に is-cursor を付けてアクセントカラーで強調。
-// カーソル行ハイライトバーも併せて配置 (行が変わったら 1 回だけ flash)。
-let _lastCursorLine = -1;
+// カーソル行ハイライトバーも併せて配置 (常時ハイライト、 flash なし)。
 function updateScriptGutter() {
   const ed = $("#scriptEditor");
   const g  = $("#scriptGutter");
@@ -2222,29 +2226,23 @@ function updateScriptGutter() {
   let html = "";
   for (let i = 1; i <= visibleCount; i++) {
     const cls = i === cursorLine ? "ln is-cursor" : "ln";
-    html += `<span class="${cls}">${i}</span>\n`;
+    // 改行は spans 間に入れない: \n が text node として描画され番号が 2 行飛びになる。
+    html += `<span class="${cls}">${i}</span>`;
   }
   g.innerHTML = html;
   g.scrollTop = ed.scrollTop;
 
-  // cursor bar 位置: line-height (px) を CSS 変数から読み出して計算
+  // cursor bar 位置: textarea の computed line-height / padding-top を直接読む。
+  // CSS 変数 (--line-h) は calc() 文字列で返るので parseFloat が壊れる ため不可。
   const bar = $("#scriptCursorBar");
   if (bar) {
-    const stack = ed.parentElement;
-    const csStack = getComputedStyle(stack);
-    const lineH = parseFloat(csStack.getPropertyValue("--line-h")) || 20;
-    const padTop = parseFloat(csStack.getPropertyValue("--pad-top")) || 14;
+    const cs = getComputedStyle(ed);
+    const lineH = parseFloat(cs.lineHeight) || 20;
+    const padTop = parseFloat(cs.paddingTop) || 14;
     const top = padTop + (cursorLine - 1) * lineH - ed.scrollTop;
     bar.style.top = top + "px";
     bar.style.height = lineH + "px";
     bar.hidden = false;
-    if (cursorLine !== _lastCursorLine) {
-      bar.classList.remove("is-flash");
-      // re-trigger animation
-      void bar.offsetWidth;
-      bar.classList.add("is-flash");
-      _lastCursorLine = cursorLine;
-    }
   }
 }
 
@@ -2470,6 +2468,116 @@ async function runScript(opts = {}) {
   }
 }
 
+// editor 上の右クリックメニュー。 マウス位置に対応する行へカーソルを動かしてから menu 表示。
+// 「Run this line」 を主役にして、 マウスを toolbar に上げに行かなくて済むようにする。
+function showScriptContextMenu(ev) {
+  ev.preventDefault();
+  const ed = $("#scriptEditor");
+  const menu = $("#scriptCtxMenu");
+  if (!ed || !menu) return;
+
+  // クリック位置の行にキャレットを移動 — caretPositionFromPoint 系を試して、
+  // 失敗したら現状の selection を尊重する。
+  let pos = null;
+  if (typeof document.caretPositionFromPoint === "function") {
+    const cp = document.caretPositionFromPoint(ev.clientX, ev.clientY);
+    if (cp && cp.offsetNode === ed) pos = cp.offset;
+  } else if (typeof document.caretRangeFromPoint === "function") {
+    const r = document.caretRangeFromPoint(ev.clientX, ev.clientY);
+    if (r) pos = r.startOffset;
+  }
+  if (pos != null) {
+    ed.focus();
+    ed.selectionStart = ed.selectionEnd = pos;
+    refreshScriptChips();
+    updateScriptHighlight();
+  }
+
+  // 位置決め: viewport 内に収める。 panel 外には出ない (overflow hidden の中でも
+  // body 直下に配置するので問題ない)。
+  menu.hidden = false;
+  menu.style.left = "0px";
+  menu.style.top  = "0px";
+  // 一旦表示してサイズ取得
+  const w = menu.offsetWidth;
+  const h = menu.offsetHeight;
+  let x = ev.clientX;
+  let y = ev.clientY;
+  if (x + w > window.innerWidth)  x = Math.max(4, window.innerWidth  - w - 4);
+  if (y + h > window.innerHeight) y = Math.max(4, window.innerHeight - h - 4);
+  menu.style.left = x + "px";
+  menu.style.top  = y + "px";
+}
+
+function hideScriptContextMenu() {
+  const menu = $("#scriptCtxMenu");
+  if (menu) menu.hidden = true;
+}
+
+function dispatchScriptContextAction(act) {
+  const ed = $("#scriptEditor");
+  if (!ed) return;
+  switch (act) {
+    case "run-line":
+      runCurrentLine();
+      return;
+    case "run-all":
+      runScript();
+      return;
+    case "cut":
+      ed.focus();
+      document.execCommand("cut");
+      return;
+    case "copy":
+      ed.focus();
+      document.execCommand("copy");
+      return;
+    case "paste":
+      ed.focus();
+      // ブラウザは contextmenu 由来 click でも paste 権限を出さない場合がある
+      navigator.clipboard?.readText().then(t => {
+        if (t == null) return;
+        const s = ed.selectionStart, e = ed.selectionEnd;
+        ed.value = ed.value.slice(0, s) + t + ed.value.slice(e);
+        ed.selectionStart = ed.selectionEnd = s + t.length;
+        autoSaveScript();
+        updateScriptHighlight();
+      }).catch(() => { /* 権限なし: 黙って諦める */ });
+      return;
+    case "select-line": {
+      const value = ed.value;
+      const before = value.slice(0, ed.selectionStart);
+      const start = before.lastIndexOf("\n") + 1;
+      const nl = value.indexOf("\n", start);
+      const end = nl === -1 ? value.length : nl;
+      ed.focus();
+      ed.selectionStart = start;
+      ed.selectionEnd = end;
+      updateScriptHighlight();
+      return;
+    }
+    case "delete-line": {
+      const value = ed.value;
+      const before = value.slice(0, ed.selectionStart);
+      const start = before.lastIndexOf("\n") + 1;
+      const nl = value.indexOf("\n", start);
+      const end = nl === -1 ? value.length : nl + 1;
+      ed.focus();
+      ed.selectionStart = start;
+      ed.selectionEnd = end;
+      // execCommand で消すと undo に乗る
+      const ok = document.execCommand("delete");
+      if (!ok) {
+        ed.value = value.slice(0, start) + value.slice(end);
+        ed.selectionStart = ed.selectionEnd = start;
+      }
+      autoSaveScript();
+      updateScriptHighlight();
+      return;
+    }
+  }
+}
+
 function wireScriptPanel() {
   $("#scriptCollapse").addEventListener("click", closeScriptPanel);
   $("#scriptRun").addEventListener("click",  runScript);
@@ -2502,8 +2610,30 @@ function wireScriptPanel() {
     hl.scrollTop  = ed.scrollTop;
     hl.scrollLeft = ed.scrollLeft;
     if (g) g.scrollTop = ed.scrollTop;
+    // cursor-bar の絶対位置を再計算しないと、 textarea スクロールだけ動いて
+    // bar が取り残される。 gutter 番号の再描画も走るが、 これがバーの top も更新する。
+    updateScriptGutter();
   });
   $("#scriptRunLine").addEventListener("click", runCurrentLine);
+
+  // editor 上で右クリック → 独自メニュー
+  $("#scriptEditor").addEventListener("contextmenu", showScriptContextMenu);
+  // メニュー外をクリック / scroll / Escape で閉じる
+  document.addEventListener("click", (e) => {
+    const menu = $("#scriptCtxMenu");
+    if (!menu || menu.hidden) return;
+    if (!e.target.closest("#scriptCtxMenu")) hideScriptContextMenu();
+  });
+  document.addEventListener("scroll", hideScriptContextMenu, true);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") hideScriptContextMenu();
+  });
+  $("#scriptCtxMenu").addEventListener("click", (e) => {
+    const item = e.target.closest(".ctx-item");
+    if (!item) return;
+    hideScriptContextMenu();
+    dispatchScriptContextAction(item.dataset.act);
+  });
   $("#scriptEditor").addEventListener("keydown", (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();

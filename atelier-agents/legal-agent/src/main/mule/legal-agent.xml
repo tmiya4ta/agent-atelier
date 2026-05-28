@@ -272,7 +272,7 @@ var sysPrompt =
 "NEED_INFO 出力フォーマット (これだけを返す。 他のテキスト/テーブル/絵文字は書かない):\n" ++
 "\n" ++
 "    [NEED_INFO]\n" ++
-"    - <question 1 in English, asking for a normalized ID or value>\n" ++
+"    - <question 1 — ユーザの最後のメッセージと同じ言語で書く。 日本語で来たら日本語で問い返す。 normalized ID or value を要求すること>\n" ++
 "    - <question 2 ...>\n" ++
 "    [/NEED_INFO]\n" ++
 "\n" ++

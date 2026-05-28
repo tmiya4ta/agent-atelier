@@ -571,6 +571,7 @@ clear
 &lt; Atelier Bistro: what skills do you have?
 &gt; Atelier Bistro 30s"></textarea>
       </div>
+
     </div>
   </section>
 
@@ -727,6 +728,20 @@ clear
       </div>
     </article>
   </template>
+
+  <!-- editor right-click menu — body 直下に置いて position:fixed が viewport 基準で効くようにする
+       (script-panel は transform: translateY を持つので、 その内側だと containing block が変わる) -->
+  <ul id="scriptCtxMenu" class="ctx-menu" role="menu" hidden>
+    <li class="ctx-item" data-act="run-line"   role="menuitem"><span class="ctx-label">Run this line</span><span class="ctx-key">Alt+↵</span></li>
+    <li class="ctx-item" data-act="run-all"    role="menuitem"><span class="ctx-label">Run all</span><span class="ctx-key">Ctrl+↵</span></li>
+    <li class="ctx-sep" role="separator"></li>
+    <li class="ctx-item" data-act="cut"        role="menuitem"><span class="ctx-label">Cut</span><span class="ctx-key">⌘X</span></li>
+    <li class="ctx-item" data-act="copy"       role="menuitem"><span class="ctx-label">Copy</span><span class="ctx-key">⌘C</span></li>
+    <li class="ctx-item" data-act="paste"      role="menuitem"><span class="ctx-label">Paste</span><span class="ctx-key">⌘V</span></li>
+    <li class="ctx-sep" role="separator"></li>
+    <li class="ctx-item" data-act="select-line" role="menuitem"><span class="ctx-label">Select line</span></li>
+    <li class="ctx-item" data-act="delete-line" role="menuitem"><span class="ctx-label">Delete line</span></li>
+  </ul>
 
   <script type="module" src="./js/app.js"></script>
 </body>

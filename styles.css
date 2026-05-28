@@ -3459,7 +3459,6 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
   overflow: hidden;
   user-select: none;
   pointer-events: none;
-  white-space: pre;
   z-index: 3;
   box-sizing: border-box;
 }
@@ -3472,27 +3471,15 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
   font-weight: 600;
 }
 
-/* カーソル行に重なる薄いハイライトバー。 行が変わるたびに一瞬フラッシュして
-   フェードして 15% の薄い背景に落ち着く。 */
+/* カーソル行に重なる薄いハイライトバー (常時表示、 アニメーションなし)。 */
 .script-cursor-bar {
   position: absolute;
   left: var(--gutter-w);
   right: 0;
-  height: var(--line-h);
   background: var(--accent-soft);
   pointer-events: none;
-  opacity: 0.15;
-  transition: top 0.08s ease, opacity 0.4s ease;
   z-index: 0;
   border-left: 2px solid var(--accent);
-}
-.script-cursor-bar.is-flash {
-  animation: cursor-flash 0.6s ease;
-}
-@keyframes cursor-flash {
-  0%   { opacity: 0; }
-  25%  { opacity: 0.55; }
-  100% { opacity: 0.15; }
 }
 .script-highlight {
   pointer-events: none;
@@ -4285,4 +4272,44 @@ body.is-dark .tool-result.is-error {
 .mcp-server-info dd {
   margin: 0;
   color: var(--ink);
+}
+
+/* ════════════════════════════════════════════════════════
+   SCRIPT EDITOR · context menu (right-click)
+   ──────────────────────────────────────────────────────── */
+.ctx-menu {
+  position: fixed;
+  z-index: 9999;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: var(--shadow-md);
+  min-width: 200px;
+  font-family: var(--f-ui);
+  font-size: calc(12px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink);
+  user-select: none;
+}
+.ctx-item {
+  display: flex; align-items: center;
+  padding: 6px 12px;
+  gap: 16px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ctx-item:hover { background: var(--accent-soft); color: var(--accent-ink); }
+.ctx-label { flex: 1; }
+.ctx-key {
+  font-family: var(--f-mono);
+  font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink-4);
+}
+.ctx-item:hover .ctx-key { color: var(--accent-ink); }
+.ctx-sep {
+  height: 1px;
+  background: var(--line);
+  margin: 4px 0;
 }
