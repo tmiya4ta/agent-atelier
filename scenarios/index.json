@@ -3,8 +3,8 @@
   "items": [
     {
       "id": "scrs-a",
-      "name": "SCRS — シナリオ A (Broker の優位性)",
-      "description": "同じ自然文インシデントを (A1) 5 agent に直接送って人間がハブになる痛みを見せ、 (A2) broker に 1 通投げて 1 ターン完結を見せる対比デモ。 workspace は A1 (5 ウインドウ) と A2 (broker 1 ウインドウ) の 2 つ。",
+      "name": "SCRS — シナリオ A (九州製作所 / ターボ分子ポンプ)",
+      "description": "九州製作所の半導体製造装置部品 (P-2024-KYU-001 ターボ分子ポンプ TMP-A310) の品質トラブルを題材にした broker 優位性デモ。 (A1) 5 agent に直接投げて人間がハブになる痛みを見せ、 (A2) broker に 1 通投げて 1 ターン完結。 代替品は中部マテリアルの P-2024-CHU-001 / P-2024-CHU-002。",
       "url": "/scenarios/scrs-a.json"
     }
   ]

@@ -1030,21 +1030,9 @@ export class AgentWindow {
       if (lbl) lbl.textContent = "server";
     }
 
-    // 既存の "open" イベントは _wireAdapter で chat 用ロジックも走るが、
-    // MCP の場合は agent card レンダリングが意味をなさないので no-op になるだけで害はない。
-    // tools list 描画は別途ここで購読。
-    this.adapter.addEventListener("open", (e) => {
-      this._mcpApplyOpen(e.detail?.tools, e.detail?.serverInfo, node);
-    });
-
-    // adapter.connect() は AgentWindow 作成前に awaited されるので、
-    // この listener より先に "open" が emit されている可能性がある。
-    // その場合は adapter.tools / adapter.serverInfo を直接読んで即時描画する。
-    if (this.adapter.state === "open") {
-      this._mcpApplyOpen(this.adapter.tools, this.adapter.serverInfo, node);
-    }
-
-    // tools-list / tool-form の DOM ハンドラ
+    // tools-list / tool-form の DOM ハンドラ。
+    // _mcpApplyOpen で参照する this._mcpDom を **先に** 設定することが重要 —
+    // 後段の state==="open" チェックで即時描画が走ったとき undefined だと何も描かれない。
     const list   = toolsPane.querySelector(".tools-list");
     const form   = toolsPane.querySelector(".tool-form");
     const fields = form.querySelector(".tool-form-fields");
@@ -1075,6 +1063,25 @@ export class AgentWindow {
     });
 
     this._mcpDom = { list, form, fields, result };
+
+    // tools タブを再クリックしたら form を閉じて一覧に戻す。
+    if (toolsTab) {
+      toolsTab.addEventListener("click", () => this._closeMcpToolForm());
+    }
+
+    // ── adapter "open" 購読 + 既に open 済みなら即時描画 ──
+    // 既存の "open" イベントは _wireAdapter で chat 用ロジックも走るが、
+    // MCP の場合は agent card レンダリングが意味をなさないので no-op になるだけで害はない。
+    this.adapter.addEventListener("open", (e) => {
+      this._mcpApplyOpen(e.detail?.tools, e.detail?.serverInfo, node);
+    });
+
+    // adapter.connect() は AgentWindow 作成前に awaited されるので、
+    // この listener より先に "open" が emit されている可能性がある。
+    // その場合は adapter.tools / adapter.serverInfo を直接読んで即時描画する。
+    if (this.adapter.state === "open") {
+      this._mcpApplyOpen(this.adapter.tools, this.adapter.serverInfo, node);
+    }
   }
 
   _mcpApplyOpen(tools, serverInfo, node) {

@@ -6,7 +6,7 @@
 
     <groupId>fe1db8fb-8261-4b5c-a591-06fea582f980</groupId>
     <artifactId>atelier-logistics-agent</artifactId>
-    <version>1.5.0</version>
+    <version>1.6.0</version>
     <packaging>mule-application</packaging>
 
     <name>atelier-logistics-agent</name>
