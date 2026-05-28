@@ -3,6 +3,7 @@
 
 import { A2AAdapter }   from "./a2a.js";
 import { SlackAdapter } from "./slack.js";
+import { MCPAdapter }   from "./mcp.js";
 
 export const PROTOCOLS = [
   {
@@ -25,9 +26,9 @@ export const PROTOCOLS = [
     id: "mcp",
     label: "MCP",
     sub: "model context",
-    description: "Model Context Protocol — coming soon",
-    AdapterClass: null,
-    status: "planned"
+    description: "Model Context Protocol · JSON-RPC 2.0 over HTTP",
+    AdapterClass: MCPAdapter,
+    status: "ready"
   },
   {
     id: "openai",

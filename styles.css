@@ -3984,3 +3984,184 @@ body { transition: background-color 0.25s ease, color 0.25s ease; }
 .agent-window, .sidebar, .rail, .ghost-btn, .field-input, .field-textarea {
   transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }
+
+/* ════════════════════════════════════════════════════════
+   MCP TOOLS PANE (pane-tools)
+   tool list + dynamic form + result. Tools tab is hidden
+   for non-MCP windows; window.js shows it on protoId="mcp".
+   ════════════════════════════════════════════════════════ */
+.pane-tools {
+  padding: 18px 20px 16px;
+  overflow-y: auto;
+  gap: 14px;
+}
+.tools-list {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.tools-empty {
+  color: var(--ink-4);
+  font-style: italic;
+  padding: 12px;
+}
+.tool-item {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 10px 14px;
+  text-align: left;
+  cursor: pointer;
+  display: flex; flex-direction: column; gap: 4px;
+  font-family: inherit;
+  color: var(--ink);
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.tool-item:hover {
+  border-color: var(--accent, #1976d2);
+  background: var(--panel-2, var(--panel));
+}
+.tool-item-name {
+  font-family: var(--f-mono);
+  font-size: calc(13px * var(--fs-mul, 1.1) * var(--fs, 1));
+  font-weight: 600;
+  color: var(--ink);
+}
+.tool-item-desc {
+  font-size: calc(11.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink-3, var(--ink-4));
+  line-height: 1.45;
+}
+
+.tool-form {
+  display: flex; flex-direction: column; gap: 12px;
+}
+.tool-form-head {
+  display: flex; align-items: center; gap: 10px;
+}
+.tool-back {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--accent, #1976d2);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: calc(12px * var(--fs-mul, 1.1) * var(--fs, 1));
+  padding: 0;
+}
+.tool-form-title {
+  font-family: var(--f-mono);
+  font-size: calc(15px * var(--fs-mul, 1.1) * var(--fs, 1));
+  margin: 0;
+  color: var(--ink);
+}
+.tool-form-desc {
+  margin: 0;
+  font-size: calc(12px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink-3, var(--ink-4));
+}
+.tool-form-empty {
+  margin: 0;
+  font-style: italic;
+  color: var(--ink-4);
+}
+.tool-form-fields {
+  display: flex; flex-direction: column; gap: 10px;
+}
+.tool-field {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: calc(12px * var(--fs-mul, 1.1) * var(--fs, 1));
+}
+.tool-field-label {
+  font-family: var(--f-mono);
+  font-weight: 500;
+  color: var(--ink);
+}
+.tool-field-desc {
+  color: var(--ink-4);
+  font-size: calc(11px * var(--fs-mul, 1.1) * var(--fs, 1));
+}
+.tool-field-input {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font-family: inherit;
+  font-size: calc(12.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink);
+}
+.tool-field-input[type="checkbox"] {
+  align-self: flex-start;
+  width: 16px; height: 16px;
+  padding: 0;
+}
+.tool-field-input:focus {
+  outline: none;
+  border-color: var(--accent, #1976d2);
+}
+.tool-form-actions {
+  display: flex; justify-content: flex-end; gap: 8px;
+}
+.tool-cancel, .tool-run {
+  appearance: none;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-family: inherit;
+  font-size: calc(12px * var(--fs-mul, 1.1) * var(--fs, 1));
+  cursor: pointer;
+}
+.tool-cancel {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+.tool-run {
+  background: var(--accent, #1976d2);
+  border: 1px solid var(--accent, #1976d2);
+  color: #fff;
+}
+.tool-result {
+  margin: 0;
+  background: var(--code-bg, #f5f7fa);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-family: var(--f-mono);
+  font-size: calc(11.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 280px;
+  overflow: auto;
+}
+.tool-result.is-error {
+  background: rgba(211, 47, 47, 0.08);
+  border-color: rgba(211, 47, 47, 0.4);
+  color: #b71c1c;
+}
+
+/* MCP server-info panel inside the agent-card pane */
+.mcp-server-info {
+  padding: 16px 20px;
+}
+.mcp-server-info h4 {
+  margin: 0 0 10px;
+  font-family: var(--f-mono);
+  font-size: calc(13px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink);
+}
+.mcp-server-info dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  margin: 0;
+  font-size: calc(12px * var(--fs-mul, 1.1) * var(--fs, 1));
+}
+.mcp-server-info dt {
+  font-family: var(--f-mono);
+  color: var(--ink-4);
+}
+.mcp-server-info dd {
+  margin: 0;
+  color: var(--ink);
+}

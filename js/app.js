@@ -1925,19 +1925,25 @@ function renderProtoGrid() {
 }
 
 function applyProtoSpecificFields() {
-  const isSlack = state.selectedProto === "slack";
+  const proto = state.selectedProto;
+  const isSlack = proto === "slack";
+  const isMcp   = proto === "mcp";
   const channelField = $("#dlgSlackChannelField");
   if (channelField) channelField.hidden = !isSlack;
   // placeholder の切替
   const urlInput  = $("#dlgUrl");
   const authInput = $("#dlgAuth");
   if (urlInput) {
-    urlInput.placeholder = isSlack
-      ? "https://slack.com   ·   https://slack.example.com   (compatible server)"
-      : "https://api.example.com";
-    urlInput.title = isSlack
-      ? ""
-      : "Base URL is fine — Atelier appends /.well-known/agent-card.json automatically (falls back to /.well-known/agent.json for the legacy spec).";
+    if (isSlack) {
+      urlInput.placeholder = "https://slack.com   ·   https://slack.example.com   (compatible server)";
+      urlInput.title = "";
+    } else if (isMcp) {
+      urlInput.placeholder = "https://example.com/mcp   (MCP JSON-RPC endpoint)";
+      urlInput.title = "Point at the MCP server's JSON-RPC endpoint (e.g., https://atelier-mcp-mdm-znutqp.pnwfdv.jpn-e1.cloudhub.io/mcp).";
+    } else {
+      urlInput.placeholder = "https://api.example.com";
+      urlInput.title = "Base URL is fine — Atelier appends /.well-known/agent-card.json automatically (falls back to /.well-known/agent.json for the legacy spec).";
+    }
   }
   if (authInput) {
     authInput.placeholder = isSlack

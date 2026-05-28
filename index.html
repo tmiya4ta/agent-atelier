@@ -612,6 +612,10 @@ clear
         <button class="aw-tab is-active" data-tab="chat">
           <span class="tab-glyph">◐</span><span>chat</span>
         </button>
+        <button class="aw-tab" data-tab="tools" hidden>
+          <span class="tab-glyph">◈</span><span>tools</span>
+          <span class="tab-count">0</span>
+        </button>
         <button class="aw-tab" data-tab="debug">
           <span class="tab-glyph">◉</span><span>debug</span>
           <span class="tab-count">0</span>
@@ -673,6 +677,24 @@ clear
               <span class="compose-meta-spacer"></span>
               <span class="compose-meta-item"><kbd>Enter</kbd> send &nbsp;<kbd>Shift+Enter</kbd> newline</span>
             </div>
+          </div>
+        </section>
+
+        <!-- TOOLS PANE (MCP) -->
+        <section class="pane pane-tools" data-pane="tools">
+          <div class="tools-list" aria-label="MCP tools list"></div>
+          <div class="tool-form" hidden>
+            <div class="tool-form-head">
+              <button class="tool-back" type="button" title="Back to tool list">‹ back</button>
+              <h4 class="tool-form-title"></h4>
+            </div>
+            <p class="tool-form-desc"></p>
+            <form class="tool-form-fields"></form>
+            <div class="tool-form-actions">
+              <button type="button" class="tool-cancel">cancel</button>
+              <button type="button" class="tool-run">call</button>
+            </div>
+            <pre class="tool-result" hidden></pre>
           </div>
         </section>
 

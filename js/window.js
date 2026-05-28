@@ -196,6 +196,9 @@ export class AgentWindow {
     this.layer.appendChild(node);
     this.focus();
 
+    // MCP モード: tools タブを露出し、 chat タブを使わない構成に切り替える。
+    if (this.protoId === "mcp") this._setupMcpMode(node);
+
     // 既に open 済み adapter を渡された場合は、 open event 相当の初期描画を即時実行
     if (this.adapter.state === "open" && this.adapter.agentCard) {
       this._setStatus("live");
@@ -829,6 +832,7 @@ export class AgentWindow {
   // Card
   // ───────────────────────────────────────────
   _renderCard(card) {
+    if (!card) return;   // adapter が agent-card を発行しない (e.g., MCP) ときはスキップ
     const box = this.el.querySelector(".card-scroll");
     const initial = (card.name || "?").charAt(0).toUpperCase();
 
@@ -998,6 +1002,233 @@ export class AgentWindow {
         if (e.key === "Enter") { e.preventDefault(); nameInput.blur(); }
       });
     }
+  }
+
+  // ───────────────────────────────────────────
+  // MCP mode (tools tab + dynamic form)
+  // ───────────────────────────────────────────
+  // MCP は会話 protocol ではないので chat tab を隠し、 tools tab を主役にする。
+  // tool-list は adapter "open" で渡される { tools } を使う。
+  // tool をクリックすると inputSchema (or input_schema) から form を生成し、
+  // call ボタンで adapter.callTool(name, args) を叩いて結果を pre 表示する。
+  _setupMcpMode(node) {
+    const chatTab  = node.querySelector('.aw-tab[data-tab="chat"]');
+    const toolsTab = node.querySelector('.aw-tab[data-tab="tools"]');
+    const cardTab  = node.querySelector('.aw-tab[data-tab="card"]');
+    if (chatTab)  chatTab.hidden  = true;
+    if (toolsTab) toolsTab.hidden = false;
+    // chat の代わりに tools を初期 active に
+    if (chatTab)  chatTab.classList.remove("is-active");
+    if (toolsTab) toolsTab.classList.add("is-active");
+    const chatPane  = node.querySelector('.pane-chat');
+    const toolsPane = node.querySelector('.pane-tools');
+    if (chatPane)  chatPane.classList.remove("is-active");
+    if (toolsPane) toolsPane.classList.add("is-active");
+    // agent card タブのラベルを "server info" に張り替え (MCP では agentCard 由来 ではないが view を流用)
+    if (cardTab) {
+      const lbl = cardTab.querySelector("span:last-child");
+      if (lbl) lbl.textContent = "server";
+    }
+
+    // 既存の "open" イベントは _wireAdapter で chat 用ロジックも走るが、
+    // MCP の場合は agent card レンダリングが意味をなさないので no-op になるだけで害はない。
+    // tools list 描画は別途ここで購読。
+    this.adapter.addEventListener("open", (e) => {
+      this._mcpTools = Array.isArray(e.detail?.tools) ? e.detail.tools : [];
+      this._renderMcpToolsList();
+      // tab count を更新
+      const cnt = node.querySelector('.aw-tab[data-tab="tools"] .tab-count');
+      if (cnt) cnt.textContent = String(this._mcpTools.length);
+      // server info を card pane に
+      this._renderMcpServerInfo(e.detail?.serverInfo, this._mcpTools);
+    });
+
+    // tools-list / tool-form の DOM ハンドラ
+    const list   = toolsPane.querySelector(".tools-list");
+    const form   = toolsPane.querySelector(".tool-form");
+    const fields = form.querySelector(".tool-form-fields");
+    const result = form.querySelector(".tool-result");
+    const back   = form.querySelector(".tool-back");
+    const cancel = form.querySelector(".tool-cancel");
+    const run    = form.querySelector(".tool-run");
+
+    list.addEventListener("click", (ev) => {
+      const item = ev.target.closest(".tool-item");
+      if (!item) return;
+      const name = item.dataset.tool;
+      const tool = (this._mcpTools || []).find(t => t.name === name);
+      if (!tool) return;
+      this._openMcpToolForm(tool);
+    });
+
+    back.addEventListener("click",   () => this._closeMcpToolForm());
+    cancel.addEventListener("click", () => this._closeMcpToolForm());
+    run.addEventListener("click",    () => this._runMcpTool());
+
+    // form 内 Enter で submit (textarea を除き)
+    fields.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") {
+        e.preventDefault();
+        this._runMcpTool();
+      }
+    });
+
+    this._mcpDom = { list, form, fields, result };
+  }
+
+  _renderMcpToolsList() {
+    if (!this._mcpDom) return;
+    const { list } = this._mcpDom;
+    list.innerHTML = "";
+    const tools = this._mcpTools || [];
+    if (!tools.length) {
+      list.innerHTML = '<div class="tools-empty">no tools</div>';
+      return;
+    }
+    for (const t of tools) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "tool-item";
+      btn.dataset.tool = t.name;
+      btn.innerHTML = `
+        <span class="tool-item-name">${escapeHtml(t.name)}</span>
+        <span class="tool-item-desc">${escapeHtml(t.description || "")}</span>
+      `;
+      list.appendChild(btn);
+    }
+  }
+
+  _openMcpToolForm(tool) {
+    if (!this._mcpDom) return;
+    const { list, form, fields, result } = this._mcpDom;
+    list.hidden = true;
+    form.hidden = false;
+    result.hidden = true;
+    result.textContent = "";
+    form.querySelector(".tool-form-title").textContent = tool.name;
+    form.querySelector(".tool-form-desc").textContent  = tool.description || "";
+    fields.innerHTML = "";
+    this._mcpCurrentTool = tool;
+
+    const schema = tool.inputSchema || tool.input_schema || { properties: {}, required: [] };
+    const props  = schema.properties || {};
+    const required = new Set(schema.required || []);
+    const keys = Object.keys(props);
+    if (!keys.length) {
+      const note = document.createElement("p");
+      note.className = "tool-form-empty";
+      note.textContent = "(no input fields — call directly)";
+      fields.appendChild(note);
+    }
+    for (const name of keys) {
+      const def = props[name] || {};
+      const row = document.createElement("label");
+      row.className = "tool-field";
+      const label = document.createElement("span");
+      label.className = "tool-field-label";
+      label.textContent = name + (required.has(name) ? " *" : "");
+      const desc = document.createElement("span");
+      desc.className = "tool-field-desc";
+      desc.textContent = def.description || "";
+
+      let input;
+      const type = def.type;
+      if (type === "integer" || type === "number") {
+        input = document.createElement("input");
+        input.type = "number";
+        if (type === "integer") input.step = "1";
+      } else if (type === "boolean") {
+        input = document.createElement("input");
+        input.type = "checkbox";
+      } else if (type === "object" || type === "array") {
+        input = document.createElement("textarea");
+        input.rows = 3;
+        input.placeholder = type === "object" ? "{ }" : "[ ]";
+      } else {
+        input = document.createElement("input");
+        input.type = "text";
+      }
+      input.className = "tool-field-input";
+      input.dataset.name = name;
+      input.dataset.type = type || "string";
+
+      row.appendChild(label);
+      if (def.description) row.appendChild(desc);
+      row.appendChild(input);
+      fields.appendChild(row);
+    }
+  }
+
+  _closeMcpToolForm() {
+    if (!this._mcpDom) return;
+    const { list, form } = this._mcpDom;
+    list.hidden = false;
+    form.hidden = true;
+    this._mcpCurrentTool = null;
+  }
+
+  async _runMcpTool() {
+    if (!this._mcpDom || !this._mcpCurrentTool) return;
+    const { fields, result } = this._mcpDom;
+    const tool = this._mcpCurrentTool;
+    const args = {};
+    const inputs = fields.querySelectorAll(".tool-field-input");
+    for (const el of inputs) {
+      const name = el.dataset.name;
+      const type = el.dataset.type;
+      if (type === "boolean") {
+        args[name] = !!el.checked;
+        continue;
+      }
+      const raw = el.value;
+      if (raw === "" || raw == null) continue;       // 未入力は省略 (required は server 側で判定)
+      if (type === "integer") {
+        const n = parseInt(raw, 10);
+        if (!Number.isNaN(n)) args[name] = n;
+      } else if (type === "number") {
+        const n = Number(raw);
+        if (!Number.isNaN(n)) args[name] = n;
+      } else if (type === "object" || type === "array") {
+        try { args[name] = JSON.parse(raw); }
+        catch (e) {
+          result.hidden = false;
+          result.textContent = `invalid JSON for "${name}": ${e.message}`;
+          return;
+        }
+      } else {
+        args[name] = raw;
+      }
+    }
+
+    result.hidden = false;
+    result.textContent = "calling…";
+    try {
+      const out = await this.adapter.callTool(tool.name, args);
+      const body = out.parsed != null ? out.parsed : out.raw;
+      result.textContent = (typeof body === "string")
+        ? body
+        : JSON.stringify(body, null, 2);
+      if (out.isError) result.classList.add("is-error");
+      else result.classList.remove("is-error");
+    } catch (err) {
+      result.classList.add("is-error");
+      result.textContent = String(err.message || err);
+    }
+  }
+
+  _renderMcpServerInfo(info, tools) {
+    const cardScroll = this.el.querySelector(".card-scroll");
+    if (!cardScroll) return;
+    const lines = [];
+    if (info?.name)    lines.push(`<dt>name</dt><dd>${escapeHtml(info.name)}</dd>`);
+    if (info?.version) lines.push(`<dt>version</dt><dd>${escapeHtml(info.version)}</dd>`);
+    lines.push(`<dt>tools</dt><dd>${(tools || []).length}</dd>`);
+    cardScroll.innerHTML = `
+      <div class="mcp-server-info">
+        <h4>MCP server</h4>
+        <dl>${lines.join("")}</dl>
+      </div>
+    `;
   }
 }
 
