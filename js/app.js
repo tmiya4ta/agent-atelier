@@ -2204,6 +2204,28 @@ function updateScriptHighlight() {
   // scroll 同期
   hl.scrollTop  = ed.scrollTop;
   hl.scrollLeft = ed.scrollLeft;
+  updateScriptGutter();
+}
+
+// 行番号 gutter の更新。 行数 +1 (末尾改行ぶん) を出力し、
+// 現在カーソル行に is-cursor を付けてアクセントカラーで強調。
+function updateScriptGutter() {
+  const ed = $("#scriptEditor");
+  const g  = $("#scriptGutter");
+  if (!ed || !g) return;
+  const lines = (ed.value + "\n").split("\n");
+  // 末尾の空 line は表示しない (split で 1 個多く出るため)
+  const visibleCount = Math.max(1, lines.length - 1);
+  // カーソル行 (1-based) を計算
+  const before = ed.value.slice(0, ed.selectionStart);
+  const cursorLine = (before.match(/\n/g) || []).length + 1;
+  let html = "";
+  for (let i = 1; i <= visibleCount; i++) {
+    const cls = i === cursorLine ? "ln is-cursor" : "ln";
+    html += `<span class="${cls}">${i}</span>\n`;
+  }
+  g.innerHTML = html;
+  g.scrollTop = ed.scrollTop;
 }
 
 // debounced auto-save
@@ -2356,6 +2378,34 @@ function appendScriptLog({ level, text }) {
   }
 }
 
+// カーソル行 (1 行) だけ抜き出して runScript に流し込む。
+// 空行 / コメントは何もしない。 副作用 tool まで含めた script DSL の通常規則で実行。
+function runCurrentLine() {
+  const ed = $("#scriptEditor");
+  if (!ed) return;
+  const value = ed.value;
+  const before = value.slice(0, ed.selectionStart);
+  const lineStart = before.lastIndexOf("\n") + 1;
+  const lineEnd   = (() => {
+    const idx = value.indexOf("\n", lineStart);
+    return idx === -1 ? value.length : idx;
+  })();
+  const line = value.slice(lineStart, lineEnd);
+  const trimmed = line.trim();
+  if (!trimmed) {
+    setScriptStatus("empty line", "err");
+    setTimeout(() => setScriptStatus("", ""), 2000);
+    return;
+  }
+  if (trimmed.startsWith("#")) {
+    setScriptStatus("comment line — skipped", "err");
+    setTimeout(() => setScriptStatus("", ""), 2000);
+    return;
+  }
+  // loop モードを無効にして 1 行だけ走らせる
+  runScript({ text: line, scriptId: null, _ephemeral: true });
+}
+
 async function runScript(opts = {}) {
   // opts.text + opts.scriptId でサイドバーから呼べる。引数なしならエディタの内容を使う。
   const text = opts.text != null ? opts.text : $("#scriptEditor").value;
@@ -2426,14 +2476,23 @@ function wireScriptPanel() {
   );
   $("#scriptEditor").addEventListener("input", autoSaveScript);
   $("#scriptEditor").addEventListener("scroll", () => {
+    const ed = $("#scriptEditor");
     const hl = $("#scriptHighlight");
-    hl.scrollTop  = $("#scriptEditor").scrollTop;
-    hl.scrollLeft = $("#scriptEditor").scrollLeft;
+    const g  = $("#scriptGutter");
+    hl.scrollTop  = ed.scrollTop;
+    hl.scrollLeft = ed.scrollLeft;
+    if (g) g.scrollTop = ed.scrollTop;
   });
+  $("#scriptRunLine").addEventListener("click", runCurrentLine);
   $("#scriptEditor").addEventListener("keydown", (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
       runScript();
+      return;
+    }
+    if (e.altKey && e.key === "Enter") {
+      e.preventDefault();
+      runCurrentLine();
       return;
     }
     if (e.key === "Tab") {
@@ -2441,7 +2500,8 @@ function wireScriptPanel() {
       if (chip) { e.preventDefault(); chip.click(); }
       return;
     }
-    // 素の Enter: 現在行が `> name: text` (text 有り) なら `\n< name\n` を挿入
+    // 素の Enter: 現在行が `< name: text` (text 有り) なら `\n> name\n` を挿入
+    // (送信のあとに自動で wait を補完)
     if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
       const ed = e.target;
       const cursor = ed.selectionStart;
@@ -2449,11 +2509,11 @@ function wireScriptPanel() {
       const after  = ed.value.slice(ed.selectionEnd);
       const lineStart = before.lastIndexOf("\n") + 1;
       const currentLine = before.slice(lineStart);
-      const m = currentLine.match(/^>\s+(.+?)\s*:\s*(\S.*?)\s*$/);
+      const m = currentLine.match(/^<\s+(.+?)\s*:\s*(\S.*?)\s*$/);
       if (m) {
         const name = m[1].trim();
         e.preventDefault();
-        const insert = `\n< ${name}\n`;
+        const insert = `\n> ${name}\n`;
         ed.value = before + insert + after;
         ed.selectionStart = ed.selectionEnd = before.length + insert.length;
         autoSaveScript();

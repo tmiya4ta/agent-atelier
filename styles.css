@@ -3414,14 +3414,17 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
   position: relative;
   min-height: 0;
   overflow: hidden;
+  /* gutter 幅を変数化して highlight と textarea の left padding に流用 */
+  --gutter-w: 44px;
 }
-/* highlight overlay と textarea を完全に同じ寸法・フォントで重ねる */
+/* highlight overlay と textarea を完全に同じ寸法・フォントで重ねる。
+   gutter 分だけ左に寄せて表示。 */
 .script-highlight,
 #scriptEditor {
   position: absolute;
-  inset: 0;
+  inset: 0 0 0 var(--gutter-w);
   margin: 0;
-  padding: 14px 18px;
+  padding: 14px 18px 14px 10px;
   font-family: var(--f-mono);
   font-size: calc(12.5px * var(--fs-mul, 1.1) * var(--fs, 1));
   line-height: 1.6;
@@ -3433,6 +3436,36 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
   overflow-wrap: break-word;
   overflow-y: auto;
   box-sizing: border-box;
+}
+
+/* 行番号 gutter — 左端固定。 textarea と同じ font / line-height で
+   overlay と垂直に整列する。 scrollTop は app.js から同期。 */
+.script-gutter {
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  width: var(--gutter-w);
+  margin: 0;
+  padding: 14px 6px 14px 0;
+  font-family: var(--f-mono);
+  font-size: calc(12.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  line-height: 1.6;
+  text-align: right;
+  color: var(--ink-4);
+  background: var(--panel-soft);
+  border-right: 1px solid var(--line);
+  overflow: hidden;
+  user-select: none;
+  pointer-events: none;
+  white-space: pre;
+  z-index: 3;
+  box-sizing: border-box;
+}
+.script-gutter .ln {
+  display: block;
+}
+.script-gutter .ln.is-cursor {
+  color: var(--accent-ink);
+  font-weight: 600;
 }
 .script-highlight {
   pointer-events: none;
