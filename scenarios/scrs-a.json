@@ -1,7 +1,7 @@
 {
   "app": "atelier",
-  "exportedAt": "2026-05-27T00:00:00.000Z",
-  "_doc": "Step2 SCRS シナリオの A/B/C 版。mule-infa-demo-20260527-1.json (Downloads export) のウインドウ layout (5 ウインドウ Multi Agents: 法務/調達・在庫/物流/組織・人事/インシデント) と bookmarks を引き継ぎ、scripts だけ新ID体系 (A, B, C) に置き換える。シナリオ A は正常系 — インシデント agent でインシデントを起票してから、法務/調達・在庫/物流/組織・人事 の 4 agent に順番に 1 タスクずつ依頼する happy path。B/C は順次追加予定。",
+  "exportedAt": "2026-05-28T00:00:00.000Z",
+  "_doc": "シナリオ A — broker の優位性デモ。 同じ自然文インシデント (会社名: 関西部品 / 部品: P-2024-KAN-001 / 不良率 15% / 500 個) を、 (A1) broker なしで 5 agent に直接投げる → 全員 [NEED_INFO] を返し、 人間が goldenId / severity / region / category を解決して再投入するハブ作業が発生する、 (A2) broker に 1 通投げる → broker が IDs 解決と並列ディスパッチを担い、 1 ターンで 4 agent からの統合レポートを返す。 broker のいないコストを目で見せ、 broker の価値 (人間が中継しない) をそのまま体験させる構成。",
   "state": {
     "v": 1,
     "zoom": 1.0,
@@ -9,14 +9,21 @@
     "catalogs": [],
     "scripts": [
       {
-        "id": "A",
-        "name": "A — 正常系: インシデント起票 → 4 agent 順次タスク",
-        "body": "# ────────────────────────────────────────────────────────────\n# A. 正常系シナリオ — incident-driven happy path\n#\n# 流れ:\n#   1) インシデント agent — 関西部品の品質トラブルを INC-2026-0527 として新規登録\n#   2) 法務 agent — 品質保証協定書を確認のうえ返品要求書を1通作成\n#   3) 調達・在庫 agent — 代替部品 P-2024-ALT-005 を 500 個 発注ドラフト\n#   4) 物流 agent — 元予約 RSV-2026-1134 キャンセル + 代替仮確保\n#   5) 組織・人事 agent — 関西エリア / 機構部品 の調達担当者を1名選定し承認依頼\n#\n# 各 agent は 1 タスクのみ受け取り、自分の MCP に対する LLM tool-use ループで処理する。\n# Step2 の Slack デモを Atelier に置き換えた素直な流れで、デモの導入として使う。\n# ────────────────────────────────────────────────────────────\n\nclear\nsleep 1s\n\n# 1) インシデント agent — 新規インシデント起票\n> インシデント: 関西部品 (G-KANSAI-PARTS-001) の P-2024-KAN-001 で不良率 15%、影響数量 500 個 が判明しました。インシデント ID `INC-2026-0527`、重要度 HIGH で新規登録してください。\n< インシデント 240s\nsleep 3s\n\n# 2) 法務 — 返品要求書 1 通\n> 法務: インシデント `INC-2026-0527` (関西部品 / P-2024-KAN-001 / 500 個) について、品質保証協定書を確認のうえ返品要求書を 1 通作成してください。\n< 法務 240s\nsleep 3s\n\n# 3) 調達・在庫 — 代替部品の発注ドラフト 1 件\n> 調達・在庫: インシデント `INC-2026-0527` に伴い、代替部品 P-2024-ALT-005 を 500 個 発注ドラフトを 1 件作成してください。\n< 調達・在庫 240s\nsleep 3s\n\n# 4) 物流 — 元予約キャンセル + 代替仮確保\n> 物流: インシデント `INC-2026-0527` に伴い、元予約 RSV-2026-1134 をキャンセルし、代替部品 P-2024-ALT-005 を 500 個 仮確保してください。\n< 物流 240s\nsleep 3s\n\n# 5) 組織・人事 — バイヤー選定 + 承認依頼 1 通\n> 組織・人事: インシデント `INC-2026-0527` の代替発注 (関西エリア / 機構部品) について、最適な調達担当者を 1 名選定し、承認依頼を 1 通送ってください。\n< 組織・人事 240s\n",
-        "createdAt": "2026-05-27T00:00:00.000Z",
-        "updatedAt": "2026-05-27T00:00:00.000Z"
+        "id": "A1",
+        "name": "A1 — Broker なし: 人間がハブになる痛みを見せる",
+        "body": "# ────────────────────────────────────────────────────────────\n# A1. Broker なし — 人間がハブ\n#\n# 同じ自然文インシデントを 5 agent に直接送る。\n# 各 agent は domain 外の正規化 ID (supplierGoldenId / region / category) を\n# 持たないので [NEED_INFO] block を返す。\n# 人間が agent 間を行き来して足りない情報を集める必要がある — それが broker の不在コスト。\n# ────────────────────────────────────────────────────────────\n\nclear\nsleep 1s\n\n# 1) インシデント — 起票しようとするが supplierGoldenId / severity が未解決\n> インシデント: 関西部品の P-2024-KAN-001 で不良率 15%、 影響 500 個 出ています。 INC-2026-0527 で登録してください。\n< インシデント 60s\nsleep 2s\n\n# 2) 法務 — 契約参照したいが supplierGoldenId が未解決\n> 法務: 関西部品との品質保証協定書を確認して、 P-2024-KAN-001 の不良 15% で返品請求できますか?\n< 法務 60s\nsleep 2s\n\n# 3) 調達 — 代替部品 / PO ドラフトしたいが supplierGoldenId が未解決\n> 調達・在庫: 関西部品の P-2024-KAN-001 の代替部品で 500 個の PO ドラフトを作ってください。\n< 調達・在庫 60s\nsleep 2s\n\n# 4) 物流 — 仮確保したいが partNumber 以外は分かっても、 incident コンテキスト未解決\n> 物流: P-2024-KAN-001 の代替部品を 500 個 仮確保しておいてください。\n< 物流 60s\nsleep 2s\n\n# 5) 組織・人事 — 承認依頼したいが region / category が未解決\n> 組織・人事: 関西部品の P-2024-KAN-001 の不良対応で、 担当バイヤーに承認依頼を出したい。\n< 組織・人事 60s\n\n# ここで人間がハブになる必要が見える:\n#   - 全員から [NEED_INFO] が返ってくる\n#   - 「supplierGoldenId は MDM から G-KANSAI-PARTS-001 だ」 と人間が調べて 5 agent に再投入\n#   - region は JP-KANSAI、 category は Mechanical、 と人間が補足\n#   - これを 1 タスクごとに繰り返す = 人間がブローカ役\n#\n# 次の A2 で、 同じ自然文を broker に投げると 1 通で完結することを示す。\n",
+        "createdAt": "2026-05-28T00:00:00.000Z",
+        "updatedAt": "2026-05-28T00:00:00.000Z"
+      },
+      {
+        "id": "A2",
+        "name": "A2 — Broker あり: 1 通で IDs 解決 + 並列ディスパッチ",
+        "body": "# ────────────────────────────────────────────────────────────\n# A2. Broker あり — broker がハブ\n#\n# A1 と完全に同じ自然文を broker (SCRS Broker) に 1 度だけ投げる。\n# broker が MDM 参照で supplierGoldenId / region / category を解決し、\n# legal / procurement / logistics / org の 4 agent に並列ディスパッチ。\n# 各 agent からのサマリを統合レポートで返す — 人間は 1 通送るだけ。\n# ────────────────────────────────────────────────────────────\n\nclear\nsleep 1s\n\n> SCRS Broker: 関西部品の P-2024-KAN-001 で不良率 15%、 影響 500 個 出ています。 INC-2026-0527 で登録対応をお願いします。\n< SCRS Broker 240s\n\n# 1 ターンで完了:\n#   - broker が \"関西部品\" → G-KANSAI-PARTS-001 を MDM から解決\n#   - severity=HIGH, region=JP-KANSAI, category=Mechanical を抽出\n#   - 4 agent に並列ディスパッチ (LLM tool-use なし、 直接 MCP 叩く)\n#   - 統合レポート 1 本で帰ってくる\n# 人間は agent 間を行き来しない = broker の存在価値\n",
+        "createdAt": "2026-05-28T00:00:00.000Z",
+        "updatedAt": "2026-05-28T00:00:00.000Z"
       }
     ],
-    "selectedScriptId": "A",
+    "selectedScriptId": "A1",
     "openScriptIds": [],
     "scriptPanelOpen": false,
     "scriptPanelHeight": 480,
@@ -61,20 +68,44 @@
         "key": "a2a::https://atelier-incident-agent-znutqp.pnwfdv.jpn-e1.cloudhub.io/",
         "protoId": "a2a",
         "url": "https://atelier-incident-agent-znutqp.pnwfdv.jpn-e1.cloudhub.io/",
-        "name": "インシデント"
+        "name": "インシデント",
+        "auth": "",
+        "persona": "",
+        "channel": ""
       },
       {
-        "key": "a2a::https://agent-network-ingress-gw-df8af0.xdfpbh.jpn-e1.cloudhub.io/scrsBroker/.well-known/agent-card.json",
+        "key": "a2a::https://agent-network-ingress-gw-df8af0.xdfpbh.jpn-e1.cloudhub.io/scrsBroker/",
         "protoId": "a2a",
-        "url": "https://agent-network-ingress-gw-df8af0.xdfpbh.jpn-e1.cloudhub.io/scrsBroker/.well-known/agent-card.json",
-        "name": "SCRS Broker"
+        "url": "https://agent-network-ingress-gw-df8af0.xdfpbh.jpn-e1.cloudhub.io/scrsBroker/",
+        "name": "SCRS Broker",
+        "auth": "",
+        "persona": "",
+        "channel": ""
       }
     ],
     "activeWsIdx": 0,
     "workspaces": [
       {
-        "name": "Multi Agents",
+        "name": "A1 — Broker なし (5 agents)",
         "windows": [
+          {
+            "protoId": "a2a",
+            "config": {
+              "url": "https://atelier-incident-agent-znutqp.pnwfdv.jpn-e1.cloudhub.io/",
+              "name": "インシデント",
+              "auth": "",
+              "persona": "",
+              "channel": ""
+            },
+            "pos": {
+              "left": "16px",
+              "top": "16px",
+              "width": "522px",
+              "height": "378px",
+              "zIndex": "190"
+            },
+            "activeTab": "chat"
+          },
           {
             "protoId": "a2a",
             "config": {
@@ -85,11 +116,11 @@
               "channel": ""
             },
             "pos": {
-              "left": "16px",
-              "top": "410px",
-              "width": "594px",
-              "height": "393px",
-              "zIndex": "186"
+              "left": "554px",
+              "top": "16px",
+              "width": "522px",
+              "height": "378px",
+              "zIndex": "189"
             },
             "activeTab": "chat"
           },
@@ -103,11 +134,11 @@
               "channel": ""
             },
             "pos": {
-              "left": "16px",
+              "left": "1092px",
               "top": "16px",
               "width": "522px",
               "height": "378px",
-              "zIndex": "185"
+              "zIndex": "188"
             },
             "activeTab": "chat"
           },
@@ -121,11 +152,11 @@
               "channel": ""
             },
             "pos": {
-              "left": "554px",
-              "top": "16px",
-              "width": "522px",
-              "height": "378px",
-              "zIndex": "158"
+              "left": "16px",
+              "top": "410px",
+              "width": "790px",
+              "height": "393px",
+              "zIndex": "187"
             },
             "activeTab": "chat"
           },
@@ -139,34 +170,38 @@
               "channel": ""
             },
             "pos": {
-              "left": "1092px",
-              "top": "16px",
-              "width": "524px",
-              "height": "378px",
-              "zIndex": "177"
-            },
-            "activeTab": "chat"
-          },
-          {
-            "protoId": "a2a",
-            "config": {
-              "url": "https://atelier-incident-agent-znutqp.pnwfdv.jpn-e1.cloudhub.io/",
-              "name": "インシデント"
-            },
-            "pos": {
-              "left": "626px",
+              "left": "822px",
               "top": "410px",
-              "width": "990px",
+              "width": "794px",
               "height": "393px",
-              "zIndex": "188"
+              "zIndex": "186"
             },
             "activeTab": "chat"
           }
         ]
       },
       {
-        "name": "Broker",
-        "windows": []
+        "name": "A2 — Broker あり",
+        "windows": [
+          {
+            "protoId": "a2a",
+            "config": {
+              "url": "https://agent-network-ingress-gw-df8af0.xdfpbh.jpn-e1.cloudhub.io/scrsBroker/",
+              "name": "SCRS Broker",
+              "auth": "",
+              "persona": "",
+              "channel": ""
+            },
+            "pos": {
+              "left": "16px",
+              "top": "16px",
+              "width": "1600px",
+              "height": "787px",
+              "zIndex": "200"
+            },
+            "activeTab": "chat"
+          }
+        ]
       }
     ]
   }
