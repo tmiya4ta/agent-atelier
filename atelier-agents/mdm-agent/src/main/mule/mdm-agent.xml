@@ -1,0 +1,739 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:a2a="http://www.mulesoft.org/schema/mule/a2a"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:jmx="http://www.mulesoft.org/schema/mule/jmx"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+          http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+          http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+          http://www.mulesoft.org/schema/mule/a2a http://www.mulesoft.org/schema/mule/a2a/current/mule-a2a.xsd
+          http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+          http://www.mulesoft.org/schema/mule/jmx http://www.mulesoft.org/schema/mule/jmx/current/mule-jmx.xsd
+          http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <configuration-properties file="config.properties"/>
+
+    <http:listener-config name="HTTP_Listener_config">
+        <http:listener-connection host="0.0.0.0" port="${http.listener.port}"/>
+    </http:listener-config>
+
+    <a2a:server-config name="A2A_Server_config">
+        <a2a:connection listenerConfig="HTTP_Listener_config" agentPath="${a2a.path}"/>
+        <a2a:agent-card>
+            <a2a:json><![CDATA[{
+  "protocolVersion": "0.3.0",
+  "name": "atelier-mdm-agent",
+  "description": "MDM/KG 担当 AI エージェント (Atelier 用 同期 A2A 版)。 自然文のサプライヤー名・部品名を正規化された GoldenId / partNumber に解決し、 過去インシデントや代替部品候補の照会、 リスクスコア更新・KG トリプル登録を LLM tool-use ループで実施する。 上位 broker や他の atelier agent から呼ばれることを想定。",
+  "url": "${agent.public.url}",
+  "version": "1.0.0",
+  "preferredTransport": "JSONRPC",
+  "capabilities": { "streaming": false, "pushNotifications": false, "stateTransitionHistory": false },
+  "defaultInputModes": ["text/plain", "application/json"],
+  "defaultOutputModes": ["text/plain", "application/json"],
+  "skills": [
+    {
+      "id": "mdm_resolve_and_query",
+      "name": "MDM 解決・照会 (LLM tool-use)",
+      "description": "サプライヤー名 → goldenId、 部品名 → 正規化 partNumber、 部品 → 代替候補・供給元、 サプライヤー → 過去インシデント などの解決・照会を自然文で受ける。 broker や他 agent から「関西部品の goldenId は?」のような問いを A2A で投げられる前提。",
+      "examples": [
+        "関西部品のゴールデン ID は?",
+        "P-2024-KYU-001 の代替部品候補を教えて",
+        "九州製作所の過去インシデントを見せて",
+        "G-KANSAI-PARTS-001 のリスクスコアを 0.7 に更新して"
+      ],
+      "inputModes": ["text/plain", "application/json"],
+      "outputModes": ["text/plain", "application/json"],
+      "tags": ["mdm", "kg", "lookup", "resolve"]
+    }
+  ]
+}]]></a2a:json>
+        </a2a:agent-card>
+    </a2a:server-config>
+
+    <http:request-config name="LLM_Request_config" basePath="/" responseTimeout="${llm.timeout}">
+        <http:request-connection host="openai-proxy.demos.mulesoft.com"
+                                 port="443"
+                                 protocol="HTTPS"/>
+        <http:default-headers>
+            <http:default-header key="Authorization" value="Basic ${llm.token}"/>
+            <http:default-header key="Content-Type" value="application/json; charset=utf-8"/>
+        </http:default-headers>
+    </http:request-config>
+
+    <http:request-config name="MDM_MCP_Request_config" basePath="/">
+        <http:request-connection host="${mcp.mdm.host}"
+                                 port="${mcp.mdm.port}"
+                                 protocol="${mcp.mdm.protocol}"/>
+    </http:request-config>
+
+    <jmx:config name="JMX_Config" logBufferSize="5000"/>
+
+    <!-- 会話履歴 (memory) を contextId 単位で保存。 TTL 1 時間。 -->
+    <os:object-store name="MEMORY_STORE"
+                     entryTtl="1" entryTtlUnit="HOURS"
+                     expirationInterval="5" expirationIntervalUnit="MINUTES"
+                     maxEntries="500"
+                     persistent="false"/>
+
+    <!-- ============================================================
+         A2A task listener
+         ============================================================ -->
+    <flow name="mdmAgentTaskFlow">
+        <a2a:task-listener config-ref="A2A_Server_config">
+            <a2a:response>
+                <a2a:response>#[vars.taskJson]</a2a:response>
+            </a2a:response>
+        </a2a:task-listener>
+
+        <logger level="INFO"
+                message="#['atelier-mdm-agent A2A task received. method=' ++ (attributes.jsonRpcMethod default '?') ++ ' taskId=' ++ (attributes.taskId default '?')]"/>
+
+        <ee:transform doc:name="snapshot raw payload">
+            <ee:variables>
+                <ee:set-variable variableName="rawPayloadJson"><![CDATA[%dw 2.0
+output application/java
+---
+write((payload default {}), "application/json") as String]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <logger level="INFO"
+                message="#['rawPayload=' ++ (vars.rawPayloadJson default '')]"/>
+
+        <ee:transform doc:name="extract user text + task ids + contextId">
+            <ee:variables>
+                <ee:set-variable variableName="taskId"><![CDATA[%dw 2.0
+output application/java
+---
+((attributes.taskId default (now() as String)) as String)]]></ee:set-variable>
+                <ee:set-variable variableName="msgObj"><![CDATA[%dw 2.0
+output application/java
+---
+if (payload is String) read(payload, "application/json") else payload]]></ee:set-variable>
+                <ee:set-variable variableName="contextId"><![CDATA[%dw 2.0
+output application/java
+var p = if (payload is String) read(payload, "application/json") else payload
+var fromAttr = (attributes.contextId default "") as String
+var fromMsg  = (p.message.contextId default "") as String
+---
+if (fromAttr != "") fromAttr else fromMsg]]></ee:set-variable>
+                <ee:set-variable variableName="userText"><![CDATA[%dw 2.0
+output application/java
+var p = if (payload is String) read(payload, "application/json") else payload
+---
+(((p.message.parts default [])[0].text default "") as String)]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="INFO"
+                message="#['userText='   ++ ((vars.userText default '') as String) ++ ' contextId=' ++ ((vars.contextId default '') as String)]"/>
+
+        <flow-ref name="loadMemoryFlow"/>
+
+        <try doc:name="agent loop (best effort)">
+            <flow-ref name="initAgentStateFlow"/>
+            <flow-ref name="agentLoopFlow"/>
+            <error-handler>
+                <on-error-continue type="ANY">
+                    <logger level="WARN"
+                            message="#['Agent loop failed: ' ++ (error.description default error.message default 'unknown')]"/>
+                    <ee:transform doc:name="build error text">
+                        <ee:variables>
+                            <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"⚠️ atelier-mdm-agent: Agent ループ中にエラーが発生しました。\n" ++
+"  " ++ ((error.description default (error.message default "unknown")) as String)]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                </on-error-continue>
+            </error-handler>
+        </try>
+
+        <ee:transform doc:name="prepare reply text">
+            <ee:variables>
+                <ee:set-variable variableName="replyText"><![CDATA[%dw 2.0
+output application/java
+var t = ((vars.finalText default "") as String)
+var msgs = (vars.messages default [])
+var lastAssistant = (msgs filter ((m) -> ((m.role default "") as String) == "assistant" and ((m.content default "") as String) != ""))
+var lastAssistantContent = if (sizeOf(lastAssistant) > 0) ((lastAssistant[-1].content default "") as String) else ""
+var fallbackByReason =
+  if ((vars.finishReason default "") as String == "length")
+    "ℹ️ MDM (atelier-mdm-agent) です。\n\n回答が文字数上限に達しました。\nサプライヤー名 / 部品番号 / GoldenId のいずれかを指定してください。"
+  else
+    "ℹ️ MDM (atelier-mdm-agent) です。\n\n**実行可能な操作**\n- サプライヤー名 → GoldenId 解決 (resolve_supplier)\n- サプライヤー一覧 (region / status / risk score / limit で絞込み)\n- region 一覧 (各 region の件数付き)\n- 部品番号 → 詳細解決 (resolve_part)\n- 部品一覧 (supplierGoldenId / category / location / nameLike で絞込み)\n- 部品の代替候補一覧 (互換スコア DESC)\n- 部品 → 供給可能サプライヤー一覧 (リスク ASC)\n- サプライヤーの親子・過去インシデント・代替候補 (get_supplier_relations)\n- インシデント一覧 (supplier / part / status / severity / since で絞込み)\n- リスクスコア更新 (update_supplier_risk_score、 副作用)\n- KG にトリプル登録 (update_ontology、 副作用)\n\nサプライヤー名・部品番号・GoldenId のいずれかを指定してください。"
+---
+if (t != "") t
+else if (lastAssistantContent != "") lastAssistantContent
+else fallbackByReason]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <flow-ref name="saveMemoryFlow"/>
+
+        <ee:transform doc:name="build A2A Task response">
+            <ee:variables>
+                <ee:set-variable variableName="taskJson"><![CDATA[%dw 2.0
+output application/json
+---
+{
+  id: vars.taskId,
+  contextId: vars.contextId,
+  kind: "task",
+  status: {
+    state: "completed",
+    message: {
+      role: "agent",
+      kind: "message",
+      messageId: (now() as String) ++ "-" ++ vars.taskId,
+      parts: [
+        { kind: "text", text: vars.replyText default "" }
+      ]
+    },
+    timestamp: now() as String { format: "yyyy-MM-dd'T'HH:mm:ss'Z'" }
+  }
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+    </flow>
+
+    <!-- Health -->
+    <flow name="healthFlow">
+        <http:listener config-ref="HTTP_Listener_config" path="/health"/>
+        <ee:transform>
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ status: "UP", app: "atelier-mdm-agent" }]]></ee:set-payload></ee:message>
+        </ee:transform>
+    </flow>
+
+    <flow name="debugLogsFlow">
+        <http:listener config-ref="HTTP_Listener_config" path="/debug/logs"/>
+        <jmx:get-recent-logs config-ref="JMX_Config"
+                             lines="#[(attributes.queryParams.lines default 200) as Number]"
+                             level="#[attributes.queryParams.level default null]"
+                             pattern="#[attributes.queryParams.pattern default null]"/>
+    </flow>
+
+    <!-- ============================================================
+         initAgentStateFlow — sysPrompt + 11 tools
+         ============================================================ -->
+    <sub-flow name="initAgentStateFlow">
+        <ee:transform doc:name="seed messages, tools, counters">
+            <ee:variables>
+                <ee:set-variable variableName="loopCount"><![CDATA[%dw 2.0
+output application/java
+---
+0]]></ee:set-variable>
+                <ee:set-variable variableName="finishReason"><![CDATA[%dw 2.0
+output application/java
+---
+""]]></ee:set-variable>
+                <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+""]]></ee:set-variable>
+                <ee:set-variable variableName="actionsLog"><![CDATA[%dw 2.0
+output application/java
+---
+[]]]></ee:set-variable>
+                <ee:set-variable variableName="messages"><![CDATA[%dw 2.0
+output application/java
+var sysPrompt =
+"あなたは MDM 担当 AI (atelier-mdm-agent)。 マスターデータ管理と Knowledge Graph (KG) の操作のみを担当する。\n" ++
+"\n" ++
+"=== STEP 0: メタ質問 (scope / capability) は STEP 1 を飛ばして自然文で答える ===\n" ++
+"\n" ++
+"ユーザが「何ができる?」「インシデント登録もできる?」「君の役割は?」のようなツール実行を伴わない質問をしてきたら、 NEED_INFO ゲートを発動せず、 1〜3 行の自然文で簡潔に答える。\n" ++
+"  - できる: サプライヤー / 部品 の解決と照会 (read-only) / リスクスコア更新 / KG トリプル登録 (write-only with explicit confirmation)。\n" ++
+"  - できない (担当外): インシデント起票 (incident-agent) / 法務 (legal-agent) / 在庫 (logistics-agent) / 発注 (procurement-agent) / 承認依頼 (org-agent)。\n" ++
+"  → 担当外の依頼は、 担当する agent に直接話すか broker に投げてもらうよう案内する。\n" ++
+"\n" ++
+"具体的な MDM/KG 操作 (解決・照会・更新) を頼まれたときだけ、 STEP 1 のゲートに進む。\n" ++
+"\n" ++
+"=== STEP 1: ガードレール (ツール実行依頼に対してのみ) ===\n" ++
+"\n" ++
+"  - サプライヤー名や部品名が **自然文** で来たら、 まず resolve_supplier / resolve_part を呼んで正規化 ID を取りに行く。 ID を勝手に作らない。\n" ++
+"  - resolve_supplier の結果が matched=false なら、 ユーザに 「該当 supplier が見つかりません。 ヒント (region / 業種 / 別名) を追加してください」 と返す。 推測で goldenId を作らない。\n" ++
+"  - WRITE tool (update_supplier_risk_score / update_ontology) は **ユーザの明示指示** (「更新して」「登録して」「記録して」) があるときだけ呼ぶ。 それ以外は read-only tool で情報を引いてアドバイス。\n" ++
+"  - 同じ会話で既に解決済みの goldenId / partNumber は再呼び出しせず流用する。\n" ++
+"\n" ++
+"  **絶対禁止例**:\n" ++
+"    - サプライヤー名「関西部品」を見て supplierGoldenId=\"G-KANSAI-PARTS-001\" を勝手に書く → ❌ (resolve_supplier を呼ぶ)\n" ++
+"    - 部品名「ターボ分子ポンプ」を見て partNumber=\"P-2024-KYU-001\" を勝手に書く → ❌ (resolve_part を呼ぶ)\n" ++
+"    - WRITE tool を 「念のため」 で呼ぶ → ❌\n" ++
+"\n" ++
+"=== STEP 2: 利用可能 tool (11 個) ===\n" ++
+"\n" ++
+"  [READ-ONLY 9 個]\n" ++
+"    1) resolve_supplier (supplierName, hint?) — サプライヤー名 → goldenId 解決。 matched=false でも success で返る。\n" ++
+"    2) list_suppliers (region?, status?, riskScoreMin?, riskScoreMax?, limit?) — 取引先一覧。\n" ++
+"    3) list_regions () — 登録 region と各 region の ACTIVE 件数。\n" ++
+"    4) resolve_part (partNumber) — 部品番号 → 詳細 (在庫・LT・主供給元・代替候補数)。\n" ++
+"    5) list_parts (supplierGoldenId?, category?, location?, nameLike?, limit?) — 部品一覧。\n" ++
+"    6) list_part_alternatives (partNumber, limit?) — 代替候補 (CompatibilityScore DESC)。\n" ++
+"    7) find_suppliers_for_part (partNumber, limit?) — 部品を供給可能なサプライヤー (RiskScore ASC)。\n" ++
+"    8) get_supplier_relations (supplierGoldenId, depth?) — 親会社・子会社・過去インシデント・代替部品候補。\n" ++
+"    9) list_incidents (supplierGoldenId?, partNumber?, status?, severity?, since?, limit?) — インシデント一覧 (CreatedDate DESC)。\n" ++
+"\n" ++
+"  [WRITE / 副作用あり — 明示指示時のみ 2 個]\n" ++
+"    10) update_supplier_risk_score (supplierGoldenId, riskScore, reason?, incidentId?) — リスクスコア更新。 previousRiskScore を返す。\n" ++
+"    11) update_ontology (subject, predicate, object, incidentId?) — KG トリプル登録。 tripleId を返す。\n" ++
+"\n" ++
+"=== STEP 3: 出力 ===\n" ++
+"\n" ++
+"出力はユーザの最後のメッセージと同じ言語 (日本語で来たら日本語) で、 Markdown で構造化する。\n" ++
+"  - resolve 結果: GoldenId / 名称 / region / RiskScore / Status を箇条書き。\n" ++
+"  - list 結果: 上位 5〜10 件を表で。 truncated=true なら「絞込み推奨」と添える。\n" ++
+"  - get_supplier_relations: 親会社 / 子会社 / 過去インシデント / 代替候補 をセクションで分ける。\n" ++
+"  - update 系 success: previousScore → newScore のような変化を明示。"
+---
+if ((vars.priorMessages default []) != [])
+  (vars.priorMessages default []) ++ [{ role: "user", content: (vars.userText default "") as String }]
+else
+  [
+    { role: "system", content: sysPrompt },
+    { role: "user",   content: (vars.userText default "") as String }
+  ]]]></ee:set-variable>
+                <ee:set-variable variableName="tools"><![CDATA[%dw 2.0
+output application/java
+---
+[
+  { "type": "function", "function": {
+      name: "resolve_supplier",
+      description: "サプライヤー名/ヒントから ゴールデン ID を解決。matched=false でも success で返る",
+      parameters: {
+        "type": "object",
+        properties: {
+          supplierName: { "type": "string" },
+          hint:         { "type": "string" }
+        },
+        required: ["supplierName"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "list_suppliers",
+      description: "条件指定 (region / status / リスクスコア範囲 / limit) で ACTIVE な取引先一覧を返す",
+      parameters: {
+        "type": "object",
+        properties: {
+          region:       { "type": "string" },
+          status:       { "type": "string" },
+          riskScoreMin: { "type": "number" },
+          riskScoreMax: { "type": "number" },
+          limit:        { "type": "integer" }
+        },
+        required: []
+      }
+  }},
+  { "type": "function", "function": {
+      name: "list_regions",
+      description: "Region__c のユニーク値と各 region の ACTIVE 取引先件数を返す",
+      parameters: { "type": "object", properties: {}, required: [] }
+  }},
+  { "type": "function", "function": {
+      name: "resolve_part",
+      description: "部品番号 (Part__c.Name) から部品詳細を 1 件解決 (READ-ONLY)。在庫/LT/主供給元/代替候補数",
+      parameters: {
+        "type": "object",
+        properties: {
+          partNumber: { "type": "string" }
+        },
+        required: ["partNumber"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "list_parts",
+      description: "条件指定 (supplierGoldenId / category / location / nameLike / limit) で部品一覧",
+      parameters: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          category:         { "type": "string" },
+          location:         { "type": "string" },
+          nameLike:         { "type": "string" },
+          limit:            { "type": "integer" }
+        },
+        required: []
+      }
+  }},
+  { "type": "function", "function": {
+      name: "list_part_alternatives",
+      description: "部品の代替品一覧 (CompatibilityScore DESC)",
+      parameters: {
+        "type": "object",
+        properties: {
+          partNumber: { "type": "string" },
+          limit:      { "type": "integer" }
+        },
+        required: ["partNumber"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "find_suppliers_for_part",
+      description: "部品を供給可能なサプライヤー一覧 (主+代替経由、 RiskScore ASC)",
+      parameters: {
+        "type": "object",
+        properties: {
+          partNumber: { "type": "string" },
+          limit:      { "type": "integer" }
+        },
+        required: ["partNumber"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "get_supplier_relations",
+      description: "ゴールデン ID から親会社・子会社・過去インシデント・代替部品候補を取得",
+      parameters: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          depth:            { "type": "integer" }
+        },
+        required: ["supplierGoldenId"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "list_incidents",
+      description: "インシデント一覧 (CreatedDate DESC、 既定 limit=10、 上限 50)",
+      parameters: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          partNumber:       { "type": "string" },
+          status:           { "type": "string" },
+          severity:         { "type": "string" },
+          since:            { "type": "string" },
+          limit:            { "type": "integer" }
+        },
+        required: []
+      }
+  }},
+  { "type": "function", "function": {
+      name: "update_supplier_risk_score",
+      description: "サプライヤーのリスクスコア (0..1) を更新。previousRiskScore を返す",
+      parameters: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          riskScore:        { "type": "number" },
+          reason:           { "type": "string" },
+          incidentId:       { "type": "string" }
+        },
+        required: ["supplierGoldenId", "riskScore"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "update_ontology",
+      description: "KG に subject/predicate/object のトリプルを記録。tripleId を返す",
+      parameters: {
+        "type": "object",
+        properties: {
+          subject:    { "type": "string" },
+          predicate:  { "type": "string" },
+          "object":   { "type": "string" },
+          incidentId: { "type": "string" }
+        },
+        required: ["subject", "predicate", "object"]
+      }
+  }}
+]]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+    </sub-flow>
+
+    <!-- ============================================================
+         agentLoopFlow — bounded foreach (max_loops iterations).
+         ============================================================ -->
+    <sub-flow name="agentLoopFlow">
+        <ee:transform doc:name="seed loop range">
+            <ee:variables>
+                <ee:set-variable variableName="loopRange"><![CDATA[%dw 2.0
+output application/java
+---
+1 to (p('agent.max_loops') as Number)]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <foreach collection="#[vars.loopRange]" doc:name="bounded loop">
+            <choice doc:name="terminate early?">
+                <when expression="#[(vars.finishReason default '') == 'stop' or (vars.finishReason default '') == 'length' or (vars.finishReason default '') == 'content_filter']">
+                    <logger level="INFO" message="#['Skipping iter ' ++ (payload as String) ++ ' (finishReason=' ++ (vars.finishReason default '') ++ ')']"/>
+                </when>
+                <otherwise>
+                    <ee:transform doc:name="loopCount = current iteration">
+                        <ee:variables>
+                            <ee:set-variable variableName="loopCount"><![CDATA[%dw 2.0
+output application/java
+---
+((payload default 0) - 1) as Number]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                    <flow-ref name="agentInferenceFlow"/>
+                    <flow-ref name="agentExecuteToolsFlow"/>
+                </otherwise>
+            </choice>
+        </foreach>
+        <logger level="INFO" message="#['Agent loop done. iterations=' ++ (vars.loopCount as String) ++ ' finishReason=' ++ (vars.finishReason default '')]"/>
+    </sub-flow>
+
+    <!-- ============================================================
+         agentInferenceFlow — POST /chat/completions
+         ============================================================ -->
+    <sub-flow name="agentInferenceFlow">
+        <ee:transform doc:name="build chat/completions body">
+            <ee:variables>
+                <ee:set-variable variableName="llmBody"><![CDATA[%dw 2.0
+output application/json
+---
+{
+  model:       (p('llm.model') default "gpt-5-mini") as String,
+  max_completion_tokens:  (p('llm.max_tokens') default 2048) as Number,
+  messages:    vars.messages default [],
+  tools:       vars.tools default [],
+  tool_choice: "auto"
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <http:request method="POST" path="/openai/v1/chat/completions" config-ref="LLM_Request_config" doc:name="POST LLM /chat/completions">
+            <http:body>#[vars.llmBody]</http:body>
+            <http:response-validator>
+                <http:success-status-code-validator values="0..599"/>
+            </http:response-validator>
+        </http:request>
+
+        <ee:transform doc:name="capture assistant + finishReason">
+            <ee:variables>
+                <ee:set-variable variableName="assistantMsg"><![CDATA[%dw 2.0
+output application/java
+---
+(((payload default {}).choices default [])[0].message) default { role: "assistant", content: "" }]]></ee:set-variable>
+                <ee:set-variable variableName="finishReason"><![CDATA[%dw 2.0
+output application/java
+---
+((((payload default {}).choices default [])[0].finish_reason) default "") as String]]></ee:set-variable>
+                <ee:set-variable variableName="messages"><![CDATA[%dw 2.0
+output application/java
+---
+(vars.messages default []) ++ [(((payload default {}).choices default [])[0].message) default { role: "assistant", content: "" }]]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <choice doc:name="finished?">
+            <when expression="#[(vars.finishReason default '') == 'stop']">
+                <ee:transform doc:name="capture final text">
+                    <ee:variables>
+                        <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+((vars.assistantMsg.content default "") as String)]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </when>
+            <otherwise>
+                <logger level="INFO" message="#['Loop iter=' ++ (vars.loopCount as String) ++ ' finishReason=' ++ (vars.finishReason default '') ++ ' tool_calls=' ++ ((sizeOf(vars.assistantMsg.tool_calls default []) as String))]"/>
+            </otherwise>
+        </choice>
+    </sub-flow>
+
+    <!-- ============================================================
+         agentExecuteToolsFlow — call MCP for each tool_call
+         (mdm-agent は単一 MCP backend なので mcpKind 分岐は不要)
+         ============================================================ -->
+    <sub-flow name="agentExecuteToolsFlow">
+        <choice doc:name="any tool_calls?">
+            <when expression="#[sizeOf((vars.assistantMsg.tool_calls default [])) == 0]">
+                <logger level="INFO" message="No tool_calls in assistant message"/>
+            </when>
+            <otherwise>
+                <foreach collection="#[vars.assistantMsg.tool_calls default []]" doc:name="for each tool_call">
+                    <ee:transform doc:name="capture tool_call">
+                        <ee:variables>
+                            <ee:set-variable variableName="toolCallId"><![CDATA[%dw 2.0
+output application/java
+---
+((payload."id" default "") as String)]]></ee:set-variable>
+                            <ee:set-variable variableName="toolName"><![CDATA[%dw 2.0
+output application/java
+---
+((payload.function.name default "") as String)]]></ee:set-variable>
+                            <ee:set-variable variableName="toolArgsRaw"><![CDATA[%dw 2.0
+output application/java
+---
+((payload.function.arguments default "{}") as String)]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                    <ee:transform doc:name="parse args">
+                        <ee:variables>
+                            <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+---
+read((vars.toolArgsRaw default "{}") as String, "application/json")]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                    <logger level="INFO"
+                            message="#['tool_call: ' ++ (vars.toolName default '') ++ ' args=' ++ (vars.toolArgsRaw default '')]"/>
+                    <flow-ref name="callMcpExecuteFlow"/>
+                    <ee:transform doc:name="append tool result message">
+                        <ee:variables>
+                            <ee:set-variable variableName="messages"><![CDATA[%dw 2.0
+output application/java
+---
+(vars.messages default []) ++ [{
+  role: "tool",
+  tool_call_id: (vars.toolCallId default "") as String,
+  content: write((vars.toolResult default {}), "application/json") as String
+}]]]></ee:set-variable>
+                            <ee:set-variable variableName="actionsLog"><![CDATA[%dw 2.0
+output application/java
+---
+(vars.actionsLog default []) ++ [{
+  tool: (vars.toolName default "") as String,
+  result: (vars.toolResult default {})
+}]]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                </foreach>
+            </otherwise>
+        </choice>
+    </sub-flow>
+
+    <!-- ============================================================
+         callMcpExecuteFlow — POST /mcp/execute (legacy custom shape) on atelier-mcp-mdm
+         ============================================================ -->
+    <sub-flow name="callMcpExecuteFlow">
+        <ee:transform doc:name="build /mcp/execute body">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  toolName: (vars.toolName default "") as String,
+  "input":  (vars.toolArgs default {})
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+
+        <try>
+            <http:request method="POST" path="/mcp/execute" config-ref="MDM_MCP_Request_config" doc:name="POST mdm-mcp /mcp/execute">
+                <http:body>#[payload]</http:body>
+                <http:response-validator>
+                    <http:success-status-code-validator values="0..599"/>
+                </http:response-validator>
+            </http:request>
+            <error-handler>
+                <on-error-continue type="ANY">
+                    <ee:transform>
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ status: "error", tool: (vars.toolName default "") as String, result: { code: "MCP_CALL_FAILED", message: (error.description default error.message default "unknown") as String } }]]></ee:set-payload>
+                        </ee:message>
+                    </ee:transform>
+                    <logger level="WARN"
+                            message="#['MCP call failed tool=' ++ (vars.toolName default '') ++ ' err=' ++ (error.description default error.message default 'unknown')]"/>
+                </on-error-continue>
+            </error-handler>
+        </try>
+
+        <ee:transform doc:name="capture toolResult">
+            <ee:variables>
+                <ee:set-variable variableName="toolResult"><![CDATA[%dw 2.0
+output application/java
+fun safeReadJson(s: String) =
+  if (s == null or trim(s) == "") {}
+  else read(s, "application/json")
+---
+if (payload == null) {}
+else if (payload is Binary) safeReadJson(payload as String { encoding: "UTF-8" })
+else if (payload is String) safeReadJson(payload as String)
+else payload]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+    </sub-flow>
+
+    <!-- ============================================================
+         loadMemoryFlow / saveMemoryFlow — ObjectStore で会話履歴を保持
+         ============================================================ -->
+    <sub-flow name="loadMemoryFlow">
+        <choice>
+            <when expression="#[(vars.contextId default '') == '']">
+                <ee:transform>
+                    <ee:variables>
+                        <ee:set-variable variableName="priorMessages"><![CDATA[%dw 2.0
+output application/java
+---
+[]]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </when>
+            <otherwise>
+                <try>
+                    <os:retrieve key="#[vars.contextId]" objectStore="MEMORY_STORE" target="priorRaw"/>
+                    <ee:transform>
+                        <ee:variables>
+                            <ee:set-variable variableName="priorMessages"><![CDATA[%dw 2.0
+output application/java
+fun parseList(s) = if (s == null or s == "") [] else read(s, "application/json")
+---
+if (vars.priorRaw == null) []
+else if (vars.priorRaw is String) parseList(vars.priorRaw as String)
+else (vars.priorRaw default [])]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                    <error-handler>
+                        <on-error-continue type="OS:KEY_NOT_FOUND, OS:STORE_NOT_AVAILABLE, ANY">
+                            <ee:transform>
+                                <ee:variables>
+                                    <ee:set-variable variableName="priorMessages"><![CDATA[%dw 2.0
+output application/java
+---
+[]]]></ee:set-variable>
+                                </ee:variables>
+                            </ee:transform>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+            </otherwise>
+        </choice>
+        <logger level="INFO"
+                message="#['memory load: contextId=' ++ (vars.contextId default '') ++ ' priorMessages=' ++ (sizeOf(vars.priorMessages default []) as String)]"/>
+    </sub-flow>
+
+    <sub-flow name="saveMemoryFlow">
+        <choice>
+            <when expression="#[(vars.contextId default '') == '']">
+                <logger level="INFO" message="memory save skipped (no contextId)"/>
+            </when>
+            <otherwise>
+                <try>
+                    <ee:transform>
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+write((vars.messages default []), "application/json") as String]]></ee:set-payload>
+                        </ee:message>
+                    </ee:transform>
+                    <os:store key="#[vars.contextId]" objectStore="MEMORY_STORE">
+                        <os:value>#[payload]</os:value>
+                    </os:store>
+                    <logger level="INFO"
+                            message="#['memory save: contextId=' ++ (vars.contextId default '') ++ ' messages=' ++ (sizeOf(vars.messages default []) as String)]"/>
+                    <error-handler>
+                        <on-error-continue type="ANY">
+                            <logger level="WARN" message="#['memory save failed: ' ++ (error.description default error.message default 'unknown')]"/>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+            </otherwise>
+        </choice>
+    </sub-flow>
+
+</mule>
