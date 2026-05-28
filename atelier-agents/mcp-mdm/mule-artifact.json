@@ -1,0 +1,15 @@
+{
+  "minMuleVersion": "4.9.8",
+  "name": "atelier-mcp-mdm",
+  "requiredProduct": "MULE",
+  "classLoaderModelLoaderDescriptor": {
+    "id": "mule",
+    "attributes": {
+      "exportedResources": []
+    }
+  },
+  "bundleDescriptorLoader": {
+    "id": "mule",
+    "attributes": {}
+  }
+}

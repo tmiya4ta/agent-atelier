@@ -1,0 +1,943 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+          http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+          http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+          http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd
+          http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <configuration-properties file="config.properties"/>
+
+    <http:listener-config name="HTTP_Listener_config">
+        <http:listener-connection host="0.0.0.0" port="8081"/>
+    </http:listener-config>
+
+    <http:request-config name="MDM_System_Request_config" basePath="/">
+        <http:request-connection host="${backend.mdm.host}"
+                                 port="${backend.mdm.port}"
+                                 protocol="${backend.mdm.protocol}"/>
+    </http:request-config>
+
+    <apikit:config name="atelier-mcp-mdm-config"
+                   api="api/atelier-mcp-mdm.yaml"
+                   outboundHeadersMapName="outboundHeaders"
+                   httpStatusVarName="httpStatus"/>
+
+    <flow name="atelier-mcp-mdm-main">
+        <http:listener config-ref="HTTP_Listener_config" path="/*">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:body>#[payload]</http:body>
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:error-response>
+        </http:listener>
+        <apikit:router config-ref="atelier-mcp-mdm-config"/>
+        <error-handler>
+            <on-error-propagate type="APIKIT:BAD_REQUEST">
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ code: "BAD_REQUEST", message: error.description default (error.message default "bad request") }]]></ee:set-payload>
+                    </ee:message>
+                    <ee:variables>
+                        <ee:set-variable variableName="httpStatus">400</ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </on-error-propagate>
+            <on-error-propagate type="APIKIT:NOT_FOUND">
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ code: "NOT_FOUND", message: error.description default "resource not found" }]]></ee:set-payload>
+                    </ee:message>
+                    <ee:variables>
+                        <ee:set-variable variableName="httpStatus">404</ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </on-error-propagate>
+            <on-error-propagate type="APIKIT:METHOD_NOT_ALLOWED">
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ code: "METHOD_NOT_ALLOWED", message: error.description default "method not allowed" }]]></ee:set-payload>
+                    </ee:message>
+                    <ee:variables>
+                        <ee:set-variable variableName="httpStatus">405</ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </on-error-propagate>
+        </error-handler>
+    </flow>
+
+    <!-- ============================================================
+         MCP JSON-RPC dispatcher (POST /mcp)
+         Handles initialize / tools/list / tools/call per MCP spec 2025-03-26.
+         Body: { jsonrpc:"2.0", id, method, params }
+         ============================================================ -->
+    <flow name="post:\mcp:application\json:atelier-mcp-mdm-config">
+        <ee:transform doc:name="capture rpc fields">
+            <ee:variables>
+                <ee:set-variable variableName="rpcId"><![CDATA[%dw 2.0
+output application/java
+---
+payload.id default null]]></ee:set-variable>
+                <ee:set-variable variableName="rpcMethod"><![CDATA[%dw 2.0
+output application/java
+---
+(payload.method default "") as String]]></ee:set-variable>
+                <ee:set-variable variableName="rpcParams"><![CDATA[%dw 2.0
+output application/java
+---
+payload.params default {}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <choice doc:name="dispatch by JSON-RPC method">
+            <when expression='#[vars.rpcMethod == "initialize"]'>
+                <ee:transform doc:name="initialize result">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  jsonrpc: "2.0",
+  id:      vars.rpcId,
+  result: {
+    protocolVersion: "2025-03-26",
+    serverInfo: {
+      name:    "atelier-mcp-mdm",
+      version: "1.0.0"
+    },
+    capabilities: {
+      tools: {
+        listChanged: false
+      }
+    }
+  }
+}]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+            </when>
+
+            <when expression='#[vars.rpcMethod == "notifications/initialized"]'>
+                <!-- MCP notification (no id, no response body required). Reply 200 empty per spec. -->
+                <ee:transform doc:name="ack notification">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{}]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+            </when>
+
+            <when expression='#[vars.rpcMethod == "tools/list"]'>
+                <flow-ref name="build-tools-list-mcp"/>
+                <ee:transform doc:name="wrap tools/list result">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  jsonrpc: "2.0",
+  id:      vars.rpcId,
+  result:  payload
+}]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+            </when>
+
+            <when expression='#[vars.rpcMethod == "tools/call"]'>
+                <ee:transform doc:name="extract tool name + arguments">
+                    <ee:variables>
+                        <ee:set-variable variableName="toolName"><![CDATA[%dw 2.0
+output application/java
+---
+(vars.rpcParams.name default "") as String]]></ee:set-variable>
+                        <ee:set-variable variableName="toolInput"><![CDATA[%dw 2.0
+output application/java
+---
+vars.rpcParams.arguments default {}]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <flow-ref name="dispatch-tool"/>
+                <!-- payload here is { status, tool, result } from wrap-system-response -->
+                <ee:transform doc:name="wrap tools/call result (MCP content format)">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var resultBody = payload.result default {}
+var isError = (payload.status default "") == "error"
+---
+{
+  jsonrpc: "2.0",
+  id:      vars.rpcId,
+  result: {
+    content: [
+      {
+        "type": "text",
+        text:   write(resultBody, "application/json")
+      }
+    ],
+    isError: isError
+  }
+}]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+            </when>
+
+            <otherwise>
+                <ee:transform doc:name="method not found">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  jsonrpc: "2.0",
+  id:      vars.rpcId,
+  error: {
+    code:    -32601,
+    message: "Method not found: " ++ (vars.rpcMethod default "")
+  }
+}]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+            </otherwise>
+        </choice>
+    </flow>
+
+    <!-- GET /mcp — Streamable HTTP server-initiated stream channel.
+         No server-initiated notifications today, so respond 405. -->
+    <flow name="get:\mcp:atelier-mcp-mdm-config">
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ code: "METHOD_NOT_ALLOWED", message: "server-initiated stream not supported" }]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="httpStatus">405</ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+    </flow>
+
+    <!-- ============================================================
+         Legacy: GET /mcp/tools (custom HTTP-RPC, snake_case input_schema)
+         ============================================================ -->
+    <flow name="get:\mcp\tools:atelier-mcp-mdm-config">
+        <flow-ref name="build-tools-list-legacy"/>
+    </flow>
+
+    <!-- ============================================================
+         Legacy: POST /mcp/execute (custom HTTP-RPC)
+         ============================================================ -->
+    <flow name="post:\mcp\execute:application\json:atelier-mcp-mdm-config">
+        <ee:transform doc:name="capture toolName + input">
+            <ee:variables>
+                <ee:set-variable variableName="toolName"><![CDATA[%dw 2.0
+output application/java
+---
+(payload.toolName default "") as String]]></ee:set-variable>
+                <ee:set-variable variableName="toolInput"><![CDATA[%dw 2.0
+output application/java
+---
+payload."input" default {}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <flow-ref name="dispatch-tool"/>
+    </flow>
+
+    <!-- ============================================================
+         Tool dispatcher (shared by /mcp/execute and /mcp tools/call).
+         Reads vars.toolName + vars.toolInput, leaves
+         { status, tool, result } in payload via wrap-system-response.
+         ============================================================ -->
+    <flow name="dispatch-tool">
+        <choice doc:name="dispatch by toolName">
+            <when expression='#[vars.toolName == "resolve_supplier"]'>
+                <flow-ref name="tool-resolve-supplier"/>
+            </when>
+            <when expression='#[vars.toolName == "get_supplier_relations"]'>
+                <flow-ref name="tool-get-supplier-relations"/>
+            </when>
+            <when expression='#[vars.toolName == "update_supplier_risk_score"]'>
+                <flow-ref name="tool-update-supplier-risk-score"/>
+            </when>
+            <when expression='#[vars.toolName == "update_ontology"]'>
+                <flow-ref name="tool-update-ontology"/>
+            </when>
+            <when expression='#[vars.toolName == "list_suppliers"]'>
+                <flow-ref name="tool-list-suppliers"/>
+            </when>
+            <when expression='#[vars.toolName == "list_regions"]'>
+                <flow-ref name="tool-list-regions"/>
+            </when>
+            <when expression='#[vars.toolName == "list_parts"]'>
+                <flow-ref name="tool-list-parts"/>
+            </when>
+            <when expression='#[vars.toolName == "resolve_part"]'>
+                <flow-ref name="tool-resolve-part"/>
+            </when>
+            <when expression='#[vars.toolName == "list_part_alternatives"]'>
+                <flow-ref name="tool-list-part-alternatives"/>
+            </when>
+            <when expression='#[vars.toolName == "find_suppliers_for_part"]'>
+                <flow-ref name="tool-find-suppliers-for-part"/>
+            </when>
+            <when expression='#[vars.toolName == "list_incidents"]'>
+                <flow-ref name="tool-list-incidents"/>
+            </when>
+            <otherwise>
+                <ee:transform doc:name="UNKNOWN_TOOL">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  status: "error",
+  tool:   vars.toolName,
+  result: { code: "UNKNOWN_TOOL", message: "tool not supported: " ++ (vars.toolName default "") }
+}]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+            </otherwise>
+        </choice>
+    </flow>
+
+    <!-- ============================================================
+         Tool catalogue (definitions). Two variants:
+         - build-tools-list-mcp: official MCP shape, key "inputSchema" (camelCase),
+           top-level wrapper is { tools: [...] } (already MCP shape)
+         - build-tools-list-legacy: legacy custom shape, key "input_schema" (snake_case)
+         ============================================================ -->
+    <flow name="build-tools-list-mcp">
+        <ee:transform doc:name="MCP-shape tool definitions">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  tools: [
+    {
+      name: "resolve_supplier",
+      description: "サプライヤー名/ヒントから ゴールデン ID を解決する。matched=false でも success で返す。",
+      inputSchema: {
+        "type": "object",
+        properties: {
+          supplierName: { "type": "string", description: "サプライヤー名(例: 関西部品)" },
+          hint:         { "type": "string", description: "追加文脈 [地域名、業種など]" }
+        },
+        required: ["supplierName"]
+      }
+    },
+    {
+      name: "get_supplier_relations",
+      description: "ゴールデン ID から親会社・子会社・過去インシデント・代替部品候補を取得する。",
+      inputSchema: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string", description: "ゴールデン ID(例: G-KANSAI-PARTS-001)" },
+          depth:            { "type": "integer", description: "関係の深さ(任意・既定 1、最大 2)" }
+        },
+        required: ["supplierGoldenId"]
+      }
+    },
+    {
+      name: "update_supplier_risk_score",
+      description: "サプライヤーのリスクスコア(0..1)を更新する。previousRiskScore を返す。",
+      inputSchema: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          riskScore:        { "type": "number", description: "新しいスコア [0..1]" },
+          reason:           { "type": "string", description: "更新理由(任意)" },
+          incidentId:       { "type": "string", description: "紐付ける Incident__c.Name(任意)" }
+        },
+        required: ["supplierGoldenId", "riskScore"]
+      }
+    },
+    {
+      name: "update_ontology",
+      description: "Knowledge Graph に subject/predicate/object のトリプルを記録する。tripleId を返す。",
+      inputSchema: {
+        "type": "object",
+        properties: {
+          subject:    { "type": "string", description: "主語(例: ゴールデン ID)" },
+          predicate:  { "type": "string", description: "述語(例: hasRiskFactor)" },
+          "object":   { "type": "string", description: "目的語" },
+          incidentId: { "type": "string", description: "紐付ける Incident__c.Name(任意)" }
+        },
+        required: ["subject", "predicate", "object"]
+      }
+    },
+    {
+      name: "list_suppliers",
+      description: "条件指定 (region / status / リスクスコア範囲 / limit) でアクティブな取引先一覧を返す。region 未指定なら全 region。",
+      inputSchema: {
+        "type": "object",
+        properties: {
+          region:       { "type": "string", description: "Region__c の値 (例: 関西、 中部、 兵庫)。 完全一致。" },
+          status:       { "type": "string", description: "ACTIVE / INACTIVE / BLOCKED / ALL (既定 ACTIVE)" },
+          riskScoreMin: { "type": "number", description: "0..1 の下限。 省略時は無制限。" },
+          riskScoreMax: { "type": "number", description: "0..1 の上限。 省略時は無制限。" },
+          limit:        { "type": "integer", description: "1..200 (既定 50)" }
+        },
+        required: []
+      }
+    },
+    {
+      name: "list_regions",
+      description: "Supplier__c.Region__c に登録されているユニーク値と、各 region の ACTIVE 取引先件数を返す。",
+      inputSchema: {
+        "type": "object",
+        properties: {},
+        required: []
+      }
+    },
+    {
+      name: "list_parts",
+      description: "条件指定 (supplierGoldenId / category / location / nameLike / limit) で部品一覧を返す (READ-ONLY)。 既定 limit=10、 上限 50。 truncated=true なら絞り込み推奨。",
+      inputSchema: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string", description: "PrimarySupplier__c の GoldenId__c (例: G-TOHOKU-MET-001)。 完全一致。" },
+          category:         { "type": "string", description: "電力設備 / 機械部品 / 電子部品 / 素材 のいずれか。" },
+          location:         { "type": "string", description: "倉庫拠点コード (例: KOBE-W1)。 完全一致。" },
+          nameLike:         { "type": "string", description: "部品番号の部分一致 (例: TOH-500)。" },
+          limit:            { "type": "integer", description: "1..50 (既定 10)" }
+        },
+        required: []
+      }
+    },
+    {
+      name: "resolve_part",
+      description: "部品番号 (Part__c.Name) から部品詳細を 1 件解決 (READ-ONLY)。 在庫 / リードタイム / 主たるサプライヤー / 代替候補数を返す。",
+      inputSchema: {
+        "type": "object",
+        properties: {
+          partNumber: { "type": "string", description: "部品番号 (例: P-2024-TOH-500)。 完全一致。" }
+        },
+        required: ["partNumber"]
+      }
+    },
+    {
+      name: "list_part_alternatives",
+      description: "部品の代替品一覧を取得 (READ-ONLY)。 CompatibilityScore DESC で並ぶ。",
+      inputSchema: {
+        "type": "object",
+        properties: {
+          partNumber: { "type": "string", description: "オリジナル部品番号 (例: P-2024-TOH-500)。" },
+          limit:      { "type": "integer", description: "1..50 (既定 10)" }
+        },
+        required: ["partNumber"]
+      }
+    },
+    {
+      name: "find_suppliers_for_part",
+      description: "部品を供給可能なサプライヤー一覧 (主+代替経由) を返す (READ-ONLY)。 RiskScore ASC (低リスク優先) で並ぶ。 source='PRIMARY' or 'ALTERNATIVE'。",
+      inputSchema: {
+        "type": "object",
+        properties: {
+          partNumber: { "type": "string", description: "部品番号 (例: P-2024-TOH-500)。" },
+          limit:      { "type": "integer", description: "1..50 (既定 10)" }
+        },
+        required: ["partNumber"]
+      }
+    },
+    {
+      name: "list_incidents",
+      description: "インシデント一覧を取得 (READ-ONLY)。 ORDER BY CreatedDate DESC。 既定 limit=10、 上限 50。 truncated=true なら絞り込み推奨。",
+      inputSchema: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string", description: "Supplier__c.GoldenId__c で絞り込み。" },
+          partNumber:       { "type": "string", description: "Part__c.Name で絞り込み。" },
+          status:           { "type": "string", description: "OPEN / IN_PROGRESS / RESOLVED / ALL。" },
+          severity:         { "type": "string", description: "CRITICAL / HIGH / MEDIUM / LOW。" },
+          since:            { "type": "string", description: "ISO8601 日付 (例: 2026-05-01)。 これ以降の CreatedDate のみ。" },
+          limit:            { "type": "integer", description: "1..50 (既定 10)" }
+        },
+        required: []
+      }
+    }
+  ]
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+    </flow>
+
+    <flow name="build-tools-list-legacy">
+        <ee:transform doc:name="legacy-shape tool definitions">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  tools: [
+    {
+      name: "resolve_supplier",
+      description: "サプライヤー名/ヒントから ゴールデン ID を解決する。matched=false でも success で返す。",
+      input_schema: {
+        "type": "object",
+        properties: {
+          supplierName: { "type": "string", description: "サプライヤー名(例: 関西部品)" },
+          hint:         { "type": "string", description: "追加文脈 [地域名、業種など]" }
+        },
+        required: ["supplierName"]
+      }
+    },
+    {
+      name: "get_supplier_relations",
+      description: "ゴールデン ID から親会社・子会社・過去インシデント・代替部品候補を取得する。",
+      input_schema: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string", description: "ゴールデン ID(例: G-KANSAI-PARTS-001)" },
+          depth:            { "type": "integer", description: "関係の深さ(任意・既定 1、最大 2)" }
+        },
+        required: ["supplierGoldenId"]
+      }
+    },
+    {
+      name: "update_supplier_risk_score",
+      description: "サプライヤーのリスクスコア(0..1)を更新する。previousRiskScore を返す。",
+      input_schema: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          riskScore:        { "type": "number", description: "新しいスコア [0..1]" },
+          reason:           { "type": "string", description: "更新理由(任意)" },
+          incidentId:       { "type": "string", description: "紐付ける Incident__c.Name(任意)" }
+        },
+        required: ["supplierGoldenId", "riskScore"]
+      }
+    },
+    {
+      name: "update_ontology",
+      description: "Knowledge Graph に subject/predicate/object のトリプルを記録する。tripleId を返す。",
+      input_schema: {
+        "type": "object",
+        properties: {
+          subject:    { "type": "string", description: "主語(例: ゴールデン ID)" },
+          predicate:  { "type": "string", description: "述語(例: hasRiskFactor)" },
+          "object":   { "type": "string", description: "目的語" },
+          incidentId: { "type": "string", description: "紐付ける Incident__c.Name(任意)" }
+        },
+        required: ["subject", "predicate", "object"]
+      }
+    },
+    {
+      name: "list_suppliers",
+      description: "条件指定 (region / status / リスクスコア範囲 / limit) でアクティブな取引先一覧を返す。region 未指定なら全 region。",
+      input_schema: {
+        "type": "object",
+        properties: {
+          region:       { "type": "string", description: "Region__c の値 (例: 関西、 中部、 兵庫)。 完全一致。" },
+          status:       { "type": "string", description: "ACTIVE / INACTIVE / BLOCKED / ALL (既定 ACTIVE)" },
+          riskScoreMin: { "type": "number", description: "0..1 の下限。 省略時は無制限。" },
+          riskScoreMax: { "type": "number", description: "0..1 の上限。 省略時は無制限。" },
+          limit:        { "type": "integer", description: "1..200 (既定 50)" }
+        },
+        required: []
+      }
+    },
+    {
+      name: "list_regions",
+      description: "Supplier__c.Region__c に登録されているユニーク値と、各 region の ACTIVE 取引先件数を返す。",
+      input_schema: {
+        "type": "object",
+        properties: {},
+        required: []
+      }
+    },
+    {
+      name: "list_parts",
+      description: "条件指定 (supplierGoldenId / category / location / nameLike / limit) で部品一覧を返す (READ-ONLY)。 既定 limit=10、 上限 50。 truncated=true なら絞り込み推奨。",
+      input_schema: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string", description: "PrimarySupplier__c の GoldenId__c (例: G-TOHOKU-MET-001)。 完全一致。" },
+          category:         { "type": "string", description: "電力設備 / 機械部品 / 電子部品 / 素材 のいずれか。" },
+          location:         { "type": "string", description: "倉庫拠点コード (例: KOBE-W1)。 完全一致。" },
+          nameLike:         { "type": "string", description: "部品番号の部分一致 (例: TOH-500)。" },
+          limit:            { "type": "integer", description: "1..50 (既定 10)" }
+        },
+        required: []
+      }
+    },
+    {
+      name: "resolve_part",
+      description: "部品番号 (Part__c.Name) から部品詳細を 1 件解決 (READ-ONLY)。 在庫 / リードタイム / 主たるサプライヤー / 代替候補数を返す。",
+      input_schema: {
+        "type": "object",
+        properties: {
+          partNumber: { "type": "string", description: "部品番号 (例: P-2024-TOH-500)。 完全一致。" }
+        },
+        required: ["partNumber"]
+      }
+    },
+    {
+      name: "list_part_alternatives",
+      description: "部品の代替品一覧を取得 (READ-ONLY)。 CompatibilityScore DESC で並ぶ。",
+      input_schema: {
+        "type": "object",
+        properties: {
+          partNumber: { "type": "string", description: "オリジナル部品番号 (例: P-2024-TOH-500)。" },
+          limit:      { "type": "integer", description: "1..50 (既定 10)" }
+        },
+        required: ["partNumber"]
+      }
+    },
+    {
+      name: "find_suppliers_for_part",
+      description: "部品を供給可能なサプライヤー一覧 (主+代替経由) を返す (READ-ONLY)。 RiskScore ASC (低リスク優先) で並ぶ。 source='PRIMARY' or 'ALTERNATIVE'。",
+      input_schema: {
+        "type": "object",
+        properties: {
+          partNumber: { "type": "string", description: "部品番号 (例: P-2024-TOH-500)。" },
+          limit:      { "type": "integer", description: "1..50 (既定 10)" }
+        },
+        required: ["partNumber"]
+      }
+    },
+    {
+      name: "list_incidents",
+      description: "インシデント一覧を取得 (READ-ONLY)。 ORDER BY CreatedDate DESC。 既定 limit=10、 上限 50。 truncated=true なら絞り込み推奨。",
+      input_schema: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string", description: "Supplier__c.GoldenId__c で絞り込み。" },
+          partNumber:       { "type": "string", description: "Part__c.Name で絞り込み。" },
+          status:           { "type": "string", description: "OPEN / IN_PROGRESS / RESOLVED / ALL。" },
+          severity:         { "type": "string", description: "CRITICAL / HIGH / MEDIUM / LOW。" },
+          since:            { "type": "string", description: "ISO8601 日付 (例: 2026-05-01)。 これ以降の CreatedDate のみ。" },
+          limit:            { "type": "integer", description: "1..50 (既定 10)" }
+        },
+        required: []
+      }
+    }
+  ]
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+    </flow>
+
+    <!-- ============================================================
+         tool: resolve_supplier  →  POST /suppliers/resolve
+         ============================================================ -->
+    <flow name="tool-resolve-supplier">
+        <ee:transform doc:name="build POST body from tool input">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+vars.toolInput]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        <http:request method="POST" path="/suppliers/resolve" config-ref="MDM_System_Request_config" doc:name="POST mdm-ix-system /suppliers/resolve">
+            <http:headers><![CDATA[#[{ "Content-Type": "application/json" }]]]></http:headers>
+            <http:response-validator>
+                <http:success-status-code-validator values="0..599"/>
+            </http:response-validator>
+        </http:request>
+        <flow-ref name="wrap-system-response"/>
+    </flow>
+
+    <!-- ============================================================
+         tool: get_supplier_relations  →  GET /suppliers/{goldenId}/relations
+         ============================================================ -->
+    <flow name="tool-get-supplier-relations">
+        <ee:transform doc:name="build uri-params + query-params Maps">
+            <ee:variables>
+                <ee:set-variable variableName="up"><![CDATA[%dw 2.0
+output application/java
+---
+{ "goldenId": (vars.toolInput.supplierGoldenId default "") as String }]]></ee:set-variable>
+                <ee:set-variable variableName="qp"><![CDATA[%dw 2.0
+output application/java
+---
+if (vars.toolInput.depth != null)
+  { "depth": (vars.toolInput.depth as String) }
+else
+  {}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <http:request method="GET" path="/suppliers/{goldenId}/relations" config-ref="MDM_System_Request_config" doc:name="GET mdm-ix-system /suppliers/{goldenId}/relations">
+            <http:uri-params>#[vars.up]</http:uri-params>
+            <http:query-params>#[vars.qp]</http:query-params>
+            <http:response-validator>
+                <http:success-status-code-validator values="0..599"/>
+            </http:response-validator>
+        </http:request>
+        <flow-ref name="wrap-system-response"/>
+    </flow>
+
+    <!-- ============================================================
+         tool: update_supplier_risk_score  →  PATCH /suppliers/{goldenId}/risk-score
+         ============================================================ -->
+    <flow name="tool-update-supplier-risk-score">
+        <ee:transform doc:name="build PATCH body + uri-params">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  riskScore:  (vars.toolInput.riskScore default 0) as Number,
+  reason:     (vars.toolInput.reason default "") as String,
+  incidentId: (vars.toolInput.incidentId default "") as String
+}]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="up"><![CDATA[%dw 2.0
+output application/java
+---
+{ "goldenId": (vars.toolInput.supplierGoldenId default "") as String }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <http:request method="PATCH" path="/suppliers/{goldenId}/risk-score" config-ref="MDM_System_Request_config" doc:name="PATCH mdm-ix-system /suppliers/{goldenId}/risk-score">
+            <http:headers><![CDATA[#[{ "Content-Type": "application/json" }]]]></http:headers>
+            <http:uri-params>#[vars.up]</http:uri-params>
+            <http:response-validator>
+                <http:success-status-code-validator values="0..599"/>
+            </http:response-validator>
+        </http:request>
+        <flow-ref name="wrap-system-response"/>
+    </flow>
+
+    <!-- ============================================================
+         tool: update_ontology  →  POST /ontology/triples
+         ============================================================ -->
+    <flow name="tool-update-ontology">
+        <ee:transform doc:name="build POST body from tool input">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+vars.toolInput]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        <http:request method="POST" path="/ontology/triples" config-ref="MDM_System_Request_config" doc:name="POST mdm-ix-system /ontology/triples">
+            <http:headers><![CDATA[#[{ "Content-Type": "application/json" }]]]></http:headers>
+            <http:response-validator>
+                <http:success-status-code-validator values="0..599"/>
+            </http:response-validator>
+        </http:request>
+        <flow-ref name="wrap-system-response"/>
+    </flow>
+
+    <!-- ============================================================
+         tool: list_suppliers  →  GET /suppliers?region=&status=&riskScoreMin=&riskScoreMax=&limit=
+         ============================================================ -->
+    <flow name="tool-list-suppliers">
+        <ee:transform doc:name="build query-params Map (drop nulls)">
+            <ee:variables>
+                <ee:set-variable variableName="qp"><![CDATA[%dw 2.0
+output application/java
+var ti = (vars.toolInput default {})
+---
+((if (ti.region       != null and (ti.region       as String) != "") {region:       (ti.region as String)} else {})
+ ++ (if (ti.status       != null and (ti.status       as String) != "") {status:       (ti.status as String)} else {})
+ ++ (if (ti.riskScoreMin != null) {riskScoreMin: (ti.riskScoreMin as String)} else {})
+ ++ (if (ti.riskScoreMax != null) {riskScoreMax: (ti.riskScoreMax as String)} else {})
+ ++ (if (ti.limit        != null) {limit:        (ti.limit as String)} else {}))]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <http:request method="GET" path="/suppliers" config-ref="MDM_System_Request_config" doc:name="GET mdm-ix-system /suppliers">
+            <http:query-params>#[vars.qp]</http:query-params>
+            <http:response-validator>
+                <http:success-status-code-validator values="0..599"/>
+            </http:response-validator>
+        </http:request>
+        <flow-ref name="wrap-system-response"/>
+    </flow>
+
+    <!-- ============================================================
+         tool: list_regions  →  GET /regions
+         ============================================================ -->
+    <flow name="tool-list-regions">
+        <http:request method="GET" path="/regions" config-ref="MDM_System_Request_config" doc:name="GET mdm-ix-system /regions">
+            <http:response-validator>
+                <http:success-status-code-validator values="0..599"/>
+            </http:response-validator>
+        </http:request>
+        <flow-ref name="wrap-system-response"/>
+    </flow>
+
+    <!-- ============================================================
+         tool: list_parts  →  GET /parts?supplierGoldenId=&category=&location=&nameLike=&limit=
+         ============================================================ -->
+    <flow name="tool-list-parts">
+        <ee:transform doc:name="build query-params Map (drop nulls)">
+            <ee:variables>
+                <ee:set-variable variableName="qp"><![CDATA[%dw 2.0
+output application/java
+var ti = (vars.toolInput default {})
+---
+((if (ti.supplierGoldenId != null and (ti.supplierGoldenId as String) != "") {supplierGoldenId: (ti.supplierGoldenId as String)} else {})
+ ++ (if (ti.category != null and (ti.category as String) != "") {category: (ti.category as String)} else {})
+ ++ (if (ti.location != null and (ti.location as String) != "") {location: (ti.location as String)} else {})
+ ++ (if (ti.nameLike != null and (ti.nameLike as String) != "") {nameLike: (ti.nameLike as String)} else {})
+ ++ (if (ti.limit    != null) {limit: (ti.limit as String)} else {}))]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <http:request method="GET" path="/parts" config-ref="MDM_System_Request_config" doc:name="GET mdm-ix-system /parts">
+            <http:query-params>#[vars.qp]</http:query-params>
+            <http:response-validator>
+                <http:success-status-code-validator values="0..599"/>
+            </http:response-validator>
+        </http:request>
+        <flow-ref name="wrap-system-response"/>
+    </flow>
+
+    <!-- ============================================================
+         tool: resolve_part  →  GET /parts/{partNumber}
+         ============================================================ -->
+    <flow name="tool-resolve-part">
+        <ee:transform doc:name="build uri-params Map">
+            <ee:variables>
+                <ee:set-variable variableName="up"><![CDATA[%dw 2.0
+output application/java
+---
+{ "partNumber": (vars.toolInput.partNumber default "") as String }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <http:request method="GET" path="/parts/{partNumber}" config-ref="MDM_System_Request_config" doc:name="GET mdm-ix-system /parts/{partNumber}">
+            <http:uri-params>#[vars.up]</http:uri-params>
+            <http:response-validator>
+                <http:success-status-code-validator values="0..599"/>
+            </http:response-validator>
+        </http:request>
+        <flow-ref name="wrap-system-response"/>
+    </flow>
+
+    <!-- ============================================================
+         tool: list_part_alternatives  →  GET /parts/{partNumber}/alternatives
+         ============================================================ -->
+    <flow name="tool-list-part-alternatives">
+        <ee:transform doc:name="build uri-params + query-params Maps">
+            <ee:variables>
+                <ee:set-variable variableName="up"><![CDATA[%dw 2.0
+output application/java
+---
+{ "partNumber": (vars.toolInput.partNumber default "") as String }]]></ee:set-variable>
+                <ee:set-variable variableName="qp"><![CDATA[%dw 2.0
+output application/java
+---
+if (vars.toolInput.limit != null)
+  { "limit": (vars.toolInput.limit as String) }
+else
+  {}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <http:request method="GET" path="/parts/{partNumber}/alternatives" config-ref="MDM_System_Request_config" doc:name="GET mdm-ix-system /parts/{partNumber}/alternatives">
+            <http:uri-params>#[vars.up]</http:uri-params>
+            <http:query-params>#[vars.qp]</http:query-params>
+            <http:response-validator>
+                <http:success-status-code-validator values="0..599"/>
+            </http:response-validator>
+        </http:request>
+        <flow-ref name="wrap-system-response"/>
+    </flow>
+
+    <!-- ============================================================
+         tool: find_suppliers_for_part  →  GET /parts/{partNumber}/suppliers
+         ============================================================ -->
+    <flow name="tool-find-suppliers-for-part">
+        <ee:transform doc:name="build uri-params + query-params Maps">
+            <ee:variables>
+                <ee:set-variable variableName="up"><![CDATA[%dw 2.0
+output application/java
+---
+{ "partNumber": (vars.toolInput.partNumber default "") as String }]]></ee:set-variable>
+                <ee:set-variable variableName="qp"><![CDATA[%dw 2.0
+output application/java
+---
+if (vars.toolInput.limit != null)
+  { "limit": (vars.toolInput.limit as String) }
+else
+  {}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <http:request method="GET" path="/parts/{partNumber}/suppliers" config-ref="MDM_System_Request_config" doc:name="GET mdm-ix-system /parts/{partNumber}/suppliers">
+            <http:uri-params>#[vars.up]</http:uri-params>
+            <http:query-params>#[vars.qp]</http:query-params>
+            <http:response-validator>
+                <http:success-status-code-validator values="0..599"/>
+            </http:response-validator>
+        </http:request>
+        <flow-ref name="wrap-system-response"/>
+    </flow>
+
+    <!-- ============================================================
+         tool: list_incidents  →  GET /incidents?supplierGoldenId=&partNumber=&status=&severity=&since=&limit=
+         ============================================================ -->
+    <flow name="tool-list-incidents">
+        <ee:transform doc:name="build query-params Map (drop nulls)">
+            <ee:variables>
+                <ee:set-variable variableName="qp"><![CDATA[%dw 2.0
+output application/java
+var ti = (vars.toolInput default {})
+---
+((if (ti.supplierGoldenId != null and (ti.supplierGoldenId as String) != "") {supplierGoldenId: (ti.supplierGoldenId as String)} else {})
+ ++ (if (ti.partNumber != null and (ti.partNumber as String) != "") {partNumber: (ti.partNumber as String)} else {})
+ ++ (if (ti.status != null and (ti.status as String) != "") {status: (ti.status as String)} else {})
+ ++ (if (ti.severity != null and (ti.severity as String) != "") {severity: (ti.severity as String)} else {})
+ ++ (if (ti.since != null and (ti.since as String) != "") {since: (ti.since as String)} else {})
+ ++ (if (ti.limit != null) {limit: (ti.limit as String)} else {}))]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <http:request method="GET" path="/incidents" config-ref="MDM_System_Request_config" doc:name="GET mdm-ix-system /incidents">
+            <http:query-params>#[vars.qp]</http:query-params>
+            <http:response-validator>
+                <http:success-status-code-validator values="0..599"/>
+            </http:response-validator>
+        </http:request>
+        <flow-ref name="wrap-system-response"/>
+    </flow>
+
+    <!-- ============================================================
+         Common wrapper: 2xx → { status: "success", tool, result: <body> }
+                         non-2xx → { status: "error", tool, result: <body> }
+         ============================================================ -->
+    <flow name="wrap-system-response">
+        <ee:transform doc:name="wrap System API response">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var status = attributes.statusCode default 0
+---
+{
+  status: (if (status >= 200 and status < 300) "success" else "error"),
+  tool:   vars.toolName,
+  result: (payload default {})
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+    </flow>
+
+    <flow name="get:\health:atelier-mcp-mdm-config">
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ status: "UP", app: "atelier-mcp-mdm" }]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+    </flow>
+
+</mule>
