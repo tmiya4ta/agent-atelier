@@ -1545,7 +1545,8 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .agent-list { display: flex; flex-direction: column; gap: 2px; }
 .agent-item {
   display: grid;
-  grid-template-columns: 16px 1fr auto auto auto;
+  /* chevron / proto-badge / agent-name / bm-count / new-btn / remove-btn */
+  grid-template-columns: 16px auto 1fr auto auto auto;
   align-items: center;
   gap: 6px;
   padding: 6px 8px 6px 6px;
@@ -2179,12 +2180,9 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   letter-spacing: 0.08em;
   color: var(--ink-4);
   text-transform: uppercase;
-  margin-right: 7px;
-  flex-shrink: 0;
   font-weight: 500;
-  /* 等幅 3 字分だけ占有して名前の左端を揃える */
-  display: inline-block;
-  min-width: 28px;
+  /* 等幅 3 字分だけ占有して名前の左端を揃える (slack は 5 字なので 32px) */
+  min-width: 32px;
   text-align: left;
 }
 .conn-proto-badge[data-proto="a2a"]    { color: var(--accent-ink); }
