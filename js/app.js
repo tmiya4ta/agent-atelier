@@ -2164,16 +2164,16 @@ function highlightDslLine(raw) {
     return escapeHtmlInline(lead) + `<span class="tk-comment">${escapeHtmlInline(trimmed)}</span>`;
   }
   let m;
-  // > name: text
-  if ((m = trimmed.match(/^(>)(\s+)(.+?)(\s*)(:)(\s*)(.*)$/))) {
+  // < name: text   (send to agent)
+  if ((m = trimmed.match(/^(<)(\s+)(.+?)(\s*)(:)(\s*)(.*)$/))) {
     return escapeHtmlInline(lead)
       + `<span class="tk-cmd">${escapeHtmlInline(m[1])}</span>${escapeHtmlInline(m[2])}`
       + `<span class="tk-name">${escapeHtmlInline(m[3])}</span>${escapeHtmlInline(m[4])}`
       + `<span class="tk-punct">${escapeHtmlInline(m[5])}</span>${escapeHtmlInline(m[6])}`
       + `<span class="tk-text">${escapeHtmlInline(m[7])}</span>`;
   }
-  // < name [timeout]
-  if ((m = trimmed.match(/^(<)(\s+)(.+?)(\s+(\d+(?:\.\d+)?)\s*s?)?$/))) {
+  // > name [timeout]  (wait for agent reply)
+  if ((m = trimmed.match(/^(>)(\s+)(.+?)(\s+(\d+(?:\.\d+)?)\s*s?)?$/))) {
     let out = escapeHtmlInline(lead)
       + `<span class="tk-cmd">${escapeHtmlInline(m[1])}</span>${escapeHtmlInline(m[2])}`
       + `<span class="tk-name">${escapeHtmlInline(m[3])}</span>`;
@@ -2224,8 +2224,8 @@ function autoSaveScript() {
 
 // DSL コマンド一覧
 const DSL_COMMANDS = [
-  { glyph: ">",     label: "send",    insert: "> ",        cursor: "end",  title: "Send to window — > name: text" },
-  { glyph: "<",     label: "wait",    insert: "< ",        cursor: "end",  title: "Wait for reply — < name [30s]" },
+  { glyph: "<",     label: "send",    insert: "< ",        cursor: "end",  title: "Send to window — < name: text" },
+  { glyph: ">",     label: "wait",    insert: "> ",        cursor: "end",  title: "Wait for reply — > name [30s]" },
   { glyph: "sleep", label: "pause",   insert: "sleep 1s",  cursor: "end",  title: "Pause — sleep Ns" },
   { glyph: "clear", label: "reset",   insert: "clear",     cursor: "end",  title: "Clear chat — clear [name]" },
   { glyph: "#",     label: "comment", insert: "# ",        cursor: "end",  title: "Comment line — # ..." }

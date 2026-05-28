@@ -1,9 +1,9 @@
 // Atelier · script DSL runner
 //
 // Syntax (each line is one directive):
-//   > <window>: <message>       send message to window
-//   < <window>                  wait for next agent reply (default 60s)
-//   < <window> 30s              wait with timeout
+//   < <window>: <message>       send message to window  (chevron 入: agent への入力)
+//   > <window>                  wait for next agent reply (chevron 出: agent からの返信)
+//   > <window> 30s              wait with timeout
 //   sleep 2s                    pause execution
 //   clear                       全 window のチャットをクリア
 //   clear <window>              指定 window のチャットをクリア
@@ -11,8 +11,8 @@
 //
 //  <window> はウインドウ名 (大文字小文字区別なし、部分一致OK) または ID (例 aw-1)
 
-const SEND_RE  = /^>\s*(.+?)\s*:\s*(.+)$/;
-const WAIT_RE  = /^<\s*(.+?)(?:\s+(\d+(?:\.\d+)?)\s*s?)?$/;
+const SEND_RE  = /^<\s*(.+?)\s*:\s*(.+)$/;
+const WAIT_RE  = /^>\s*(.+?)(?:\s+(\d+(?:\.\d+)?)\s*s?)?$/;
 const SLEEP_RE = /^sleep\s+(\d+(?:\.\d+)?)\s*s?$/i;
 const CLEAR_RE = /^clear(?:\s+(.+))?$/i;
 
