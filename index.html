@@ -345,13 +345,13 @@
         </div>
 
         <div class="field">
-          <label class="field-label" for="dlgUrl">
-            <span>endpoint</span>
-            <span class="field-hint">HTTP(S) URL · base or AgentCard URL</span>
+          <label class="field-label" for="dlgUrl" title="A2A: 接続したいエージェントの base URL。 Atelier が /.well-known/agent-card.json を取得し、 そこに書かれた url にメッセージを送信します。 MCP: POST /mcp を直接受ける URL。">
+            <span>discovery url</span>
+            <span class="field-hint">A2A: base URL → AgentCard 解釈 / MCP: /mcp endpoint</span>
           </label>
           <div class="input-wrap">
             <span class="input-prefix">url</span>
-            <input id="dlgUrl" type="text" placeholder="https://api.example.com" autocomplete="off" title="Base URL is fine — Atelier appends /.well-known/agent-card.json automatically (falls back to /.well-known/agent.json for the legacy spec)." />
+            <input id="dlgUrl" type="text" placeholder="https://api.example.com" autocomplete="off" title="A2A の場合: base URL を入れると Atelier が /.well-known/agent-card.json を取得し、 AgentCard 側の url に対してメッセージを送ります (Discovery URL とは別のホストになることがあります)。 MCP の場合: POST /mcp の URL を直接入れます。" />
           </div>
         </div>
 
@@ -392,12 +392,17 @@
         </details>
       </div>
 
+      <div class="dialog-test" id="dlgTestRow" hidden>
+        <div class="dialog-test-status" id="dlgTestStatus" aria-live="polite"></div>
+      </div>
+
       <footer class="dialog-foot">
         <span class="dialog-foot-meta">
           <kbd>Enter</kbd> to connect &nbsp;·&nbsp; <kbd>Esc</kbd> to dismiss
         </span>
         <div class="dialog-foot-actions">
           <button class="ghost-btn" id="dlgCancel">cancel</button>
+          <button class="ghost-btn" id="dlgTest" title="A2A: AgentCard を取得できるか確認 / MCP: initialize を投げて応答できるか確認 (実際には接続しない)">test</button>
           <button class="primary-btn" id="dlgSubmit">
             <span>connect</span>
             <span class="arrow">→</span>

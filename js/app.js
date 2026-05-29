@@ -3309,18 +3309,136 @@ function wireDialog() {
   $("#dlgCancel").addEventListener("click", closeDialog);
   // 背景クリックでClose挙動は廃止 (誤操作で入力が消えるのを防ぐ)
   $("#dlgSubmit").addEventListener("click", submitDialog);
+  $("#dlgTest").addEventListener("click", testDialog);
   $("#dlgUrl").addEventListener("keydown", (e) => {
     if (e.key === "Enter") submitDialog();
   });
+  $("#dlgUrl").addEventListener("input", clearDialogTest);
 }
 
 function openDialog() {
   $("#connectDialog").hidden = false;
   renderProtoGrid();
+  clearDialogTest();
   setTimeout(() => $("#dlgUrl").focus(), 50);
 }
 function closeDialog() {
   $("#connectDialog").hidden = true;
+  clearDialogTest();
+}
+
+function clearDialogTest() {
+  const row = $("#dlgTestRow");
+  const status = $("#dlgTestStatus");
+  if (row) row.hidden = true;
+  if (status) { status.textContent = ""; status.className = "dialog-test-status"; }
+}
+
+function setDialogTestStatus(kind, html) {
+  const row = $("#dlgTestRow");
+  const status = $("#dlgTestStatus");
+  if (!row || !status) return;
+  row.hidden = false;
+  status.className = `dialog-test-status is-${kind}`;
+  status.innerHTML = html;
+}
+
+// connect しない接続テスト。 A2A は AgentCard 取得を、 MCP は initialize 応答を確かめる。
+async function testDialog() {
+  const raw = $("#dlgUrl").value.trim();
+  if (!raw) { $("#dlgUrl").focus(); return; }
+  const url = /^https?:\/\//i.test(raw) ? raw : "https://" + raw;
+  const protoId = state.selectedProto;
+  const auth = $("#dlgAuth").value.trim();
+  const btn = $("#dlgTest");
+  btn.disabled = true;
+  setDialogTestStatus("info", "<span class='dts-dot'></span> Testing…");
+  const t0 = performance.now();
+  try {
+    if (protoId === "mcp") {
+      const result = await testMcp(url, auth);
+      const ms = Math.round(performance.now() - t0);
+      setDialogTestStatus("ok",
+        `<span class='dts-dot'></span> initialize OK · <code>${escapeHtml(result.serverName || "(no name)")}</code>` +
+        (result.protocolVersion ? ` · proto <code>${escapeHtml(result.protocolVersion)}</code>` : "") +
+        ` · ${ms}ms`);
+    } else if (protoId === "a2a") {
+      const result = await testA2a(url, auth);
+      const ms = Math.round(performance.now() - t0);
+      const cardUrl = result.card?.url;
+      const mismatch = cardUrl && !sameOrigin(cardUrl, url);
+      setDialogTestStatus(mismatch ? "warn" : "ok",
+        `<span class='dts-dot'></span> AgentCard OK · <code>${escapeHtml(result.card?.name || "(no name)")}</code>` +
+        ` · ${result.card?.skills?.length || 0} skill${(result.card?.skills?.length || 0) === 1 ? "" : "s"}` +
+        ` · ${ms}ms` +
+        (mismatch ? `<br/><span class='dts-warn'>⚠ AgentCard.url (<code>${escapeHtml(cardUrl)}</code>) is on a different origin than the discovery URL. Messages will be sent to that URL.</span>` : ""));
+    } else {
+      setDialogTestStatus("info", `Test for protocol <code>${escapeHtml(protoId)}</code> is not supported yet.`);
+    }
+  } catch (e) {
+    setDialogTestStatus("err", `<span class='dts-dot'></span> ${escapeHtml(e?.message || String(e))}`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function sameOrigin(a, b) {
+  try {
+    const A = new URL(a), B = new URL(b);
+    return A.origin === B.origin;
+  } catch { return false; }
+}
+
+function proxifyForTest(target) {
+  try {
+    const t = new URL(target);
+    if (t.origin === location.origin) return target;
+  } catch { /* fallthrough */ }
+  return `/proxy?url=${encodeURIComponent(target)}`;
+}
+
+async function testMcp(endpoint, auth) {
+  const headers = { "Content-Type": "application/json", "Accept": "application/json" };
+  if (auth) headers["Authorization"] = `Bearer ${auth}`;
+  const body = JSON.stringify({
+    jsonrpc: "2.0", id: 1, method: "initialize",
+    params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "atelier-test", version: "1.0" } }
+  });
+  const res = await fetch(proxifyForTest(endpoint), { method: "POST", headers, body });
+  if (!res.ok) throw new Error(`HTTP ${res.status} on initialize`);
+  const data = await res.json();
+  if (data.error) throw new Error(`RPC error ${data.error.code}: ${data.error.message}`);
+  const r = data.result || {};
+  return {
+    serverName:      r.serverInfo?.name,
+    protocolVersion: r.protocolVersion
+  };
+}
+
+async function testA2a(baseUrl, auth) {
+  const headers = { "Accept": "application/json" };
+  if (auth) headers["Authorization"] = `Bearer ${auth}`;
+  const candidates = [];
+  if (/\/\.well-known\/agent-card\.json\b/.test(baseUrl)) candidates.push(baseUrl);
+  else if (/\/\.well-known\/agent\.json\b/.test(baseUrl)) candidates.push(baseUrl);
+  else {
+    const base = baseUrl.replace(/\/+$/, "");
+    candidates.push(`${base}/.well-known/agent-card.json`);
+    candidates.push(`${base}/.well-known/agent.json`);
+  }
+  let lastErr = null;
+  for (const url of candidates) {
+    try {
+      const res = await fetch(proxifyForTest(url), { headers });
+      if (res.status === 404) { lastErr = new Error(`404 at ${url}`); continue; }
+      if (!res.ok) { lastErr = new Error(`HTTP ${res.status} at ${url}`); continue; }
+      const card = await res.json();
+      return { card, candidate: url };
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error(`AgentCard not found at ${candidates.join(", ")}`);
 }
 
 async function submitDialog() {
@@ -3400,7 +3518,8 @@ async function connect({ protoId, url, name, auth, persona, channel }, opts = {}
     onChange: () => { dirty(); renderBookmarks(); },  // display name 変更等を左サイドバーに即反映
     instanceSuffix,
     restore: opts.restore,
-    lockName: !!opts.lockName
+    // ユーザが connect dialog で display name を明示入力した場合、 AgentCard.name で上書きしない
+    lockName: !!opts.lockName || !!(name && name.trim())
   });
   win._wsId = ws.id;
   ws.windows.push(win);

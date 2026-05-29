@@ -203,6 +203,7 @@ export class AgentWindow {
     if (this.adapter.state === "open" && this.adapter.agentCard) {
       this._setStatus("live");
       this._renderCard(this.adapter.agentCard);
+      this._renderSettings();
       this._addSystemMessage(`Connected · agent card loaded`);
       const cardName = this.adapter.agentCard.name;
       if (cardName && !this._nameLocked) {
@@ -227,6 +228,8 @@ export class AgentWindow {
       this._setStatus("live");
       this._addSystemMessage(`Connected · agent card loaded`);
       this._renderCard(e.detail.card);
+      // agentCard で取れた effective endpoint を Settings にも反映
+      this._renderSettings();
       // ウインドウタイトルを AgentCard.name で上書き (ユーザーが settings で変更してない時のみ)
       const cardName = e.detail.card?.name;
       if (cardName && !this._nameLocked) {
@@ -849,15 +852,23 @@ export class AgentWindow {
     const caps = card.capabilities || {};
     const capsRow = (k, v) => `<div class="card-field"><span class="card-field-label">${k}</span><span class="card-field-value">${v === true ? "yes" : v === false ? "no" : (v || "—")}</span></div>`;
 
+    const cardUrl = card.url || this.adapter.config.url || "";
+    const discoveryUrl = this.adapter.config.url || "";
+    const showUrlMismatch = cardUrl && discoveryUrl && !cardUrl.startsWith(stripTrailingSlash(discoveryUrl)) && !discoveryUrl.startsWith(stripTrailingSlash(cardUrl));
     box.innerHTML = `
       <div class="card-hero">
         <div class="card-avatar">${escapeHtml(initial)}</div>
         <div>
           <h3 class="card-name">${escapeHtml(card.name || "Unnamed Agent")}</h3>
           <p class="card-desc">${escapeHtml(card.description || "")}</p>
-          <div class="card-url">${escapeHtml(card.url || this.adapter.config.url || "")}</div>
         </div>
       </div>
+
+      <div class="card-url-row" title="AgentCard が宣言する URL。 メッセージ送信はこの URL に対して行われます。">
+        <span class="card-url-label">endpoint url</span>
+        <code class="card-url-val${showUrlMismatch ? " is-warn" : ""}">${escapeHtml(cardUrl || "—")}</code>
+      </div>
+      ${showUrlMismatch ? `<div class="card-url-warn">⚠ Discovery URL (<code>${escapeHtml(discoveryUrl)}</code>) と異なります。 メッセージは上の endpoint url に送信されます。</div>` : ""}
 
       <div class="card-grid">
         ${capsRow("version", escapeHtml(card.version || "—"))}
@@ -933,6 +944,14 @@ export class AgentWindow {
   // ───────────────────────────────────────────
   _renderSettings() {
     const box = this.el.querySelector(".settings-scroll");
+    const configuredUrl = this.adapter.config.url || "";
+    const card          = this.adapter.agentCard || null;
+    const effectiveUrl  = card?.url || "";
+    const urlMismatch   = effectiveUrl && configuredUrl && !effectiveUrl.startsWith(stripTrailingSlash(configuredUrl)) && !configuredUrl.startsWith(stripTrailingSlash(effectiveUrl));
+    const cardTip = this.protoId === "mcp"
+      ? "MCP では agent card は提供されないため、 接続先はそのまま Discovery URL です。"
+      : "AgentCard の url フィールド。 メッセージはこの URL に POST されます (Discovery URL ではなく)。 Discovery URL と異なる場合があるので注意してください。";
+
     box.innerHTML = `
       <div class="set-section">
         <h4>Identity</h4>
@@ -947,17 +966,27 @@ export class AgentWindow {
 
       <div class="set-section">
         <h4>Connection</h4>
-        <div class="set-row">
+        <div class="set-row" title="Connect ダイアログで入力した Discovery URL。 ${this.protoId === "mcp" ? "MCP server (POST /mcp) を直接叩きます。" : "Atelier はこの URL の /.well-known/agent-card.json を取得して AgentCard を解釈します。 実際のチャット送信先は AgentCard 側の url フィールドです。"}">
           <div class="set-row-text">
-            <div class="set-row-title">Endpoint</div>
-            <div class="set-row-sub">エージェントのHTTPベースURL</div>
+            <div class="set-row-title">Discovery URL <span class="set-row-help" aria-hidden="true">?</span></div>
+            <div class="set-row-sub">${this.protoId === "mcp" ? "POST /mcp に直接送信します。" : "AgentCard を取得する起点 URL。 メッセージ送信先ではない。"}</div>
           </div>
-          <input class="set-input" value="${escapeHtml(this.adapter.config.url || "")}" readonly />
+          <input class="set-input" value="${escapeHtml(configuredUrl)}" readonly />
         </div>
-        <div class="set-row">
+        ${this.protoId !== "mcp" ? `
+        <div class="set-row" title="${cardTip}">
           <div class="set-row-text">
-            <div class="set-row-title">Authorization</div>
-            <div class="set-row-sub">Bearer token (任意)</div>
+            <div class="set-row-title">Effective endpoint <span class="set-row-help" aria-hidden="true">?</span></div>
+            <div class="set-row-sub">${effectiveUrl ? "AgentCard の url。 メッセージはここに POST されます。" : "AgentCard 未取得 — 接続中…"}</div>
+          </div>
+          <input class="set-input ${urlMismatch ? "is-warn" : ""}" value="${escapeHtml(effectiveUrl)}" placeholder="(loading…)" readonly title="${cardTip}" />
+        </div>
+        ${urlMismatch ? `<div class="set-warn">⚠ Discovery URL と Effective endpoint が異なります。 サーバ側で agent-card の url を正しい host に設定してください。</div>` : ""}
+        ` : ""}
+        <div class="set-row" title="HTTP Authorization ヘッダに付ける bearer token。 connect ダイアログで指定したものが保存されています。">
+          <div class="set-row-text">
+            <div class="set-row-title">Authorization <span class="set-row-help" aria-hidden="true">?</span></div>
+            <div class="set-row-sub">Authorization: Bearer &lt;token&gt; ヘッダ (任意)</div>
           </div>
           <input class="set-input" value="${this.adapter.config.auth ? "•".repeat(12) : ""}" placeholder="none" readonly />
         </div>
@@ -965,14 +994,14 @@ export class AgentWindow {
 
       <div class="set-section">
         <h4>About</h4>
-        <div class="set-row">
+        <div class="set-row" title="このウインドウのセッション ID。 ページ reload で変わります。">
           <div class="set-row-text">
             <div class="set-row-title">Window ID</div>
             <div class="set-row-sub">セッション固有</div>
           </div>
           <input class="set-input" value="${this.id}" readonly />
         </div>
-        <div class="set-row">
+        <div class="set-row" title="このウインドウが使用するプロトコル adapter (a2a / mcp / slack 等)。">
           <div class="set-row-text">
             <div class="set-row-title">Protocol</div>
             <div class="set-row-sub">通信プロトコル</div>
@@ -1270,6 +1299,10 @@ function escapeHtml(s) {
   return String(s ?? "")
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function stripTrailingSlash(s) {
+  return String(s || "").replace(/\/+$/, "");
 }
 
 // marked / mrkdwnToHtml の出力を innerHTML に流す前に通す sanitizer。
