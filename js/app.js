@@ -2161,6 +2161,20 @@ function escapeHtmlInline(s) {
   return String(s ?? "")
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
+// `${varname}` を <span class="tk-var"> でハイライトしつつ、 周囲は escape する
+function highlightVarRefs(s) {
+  const out = [];
+  const text = String(s ?? "");
+  const re = /\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g;
+  let last = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push(escapeHtmlInline(text.slice(last, m.index)));
+    out.push(`<span class="tk-var">${escapeHtmlInline(m[0])}</span>`);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(escapeHtmlInline(text.slice(last)));
+  return out.join("");
+}
 function highlightDslLine(raw) {
   const trimmed = raw.trimStart();
   const lead = raw.slice(0, raw.length - trimmed.length);
@@ -2169,20 +2183,35 @@ function highlightDslLine(raw) {
     return escapeHtmlInline(lead) + `<span class="tk-comment">${escapeHtmlInline(trimmed)}</span>`;
   }
   let m;
-  // < name: text   (send to agent)
+  // ^ operator: hint -> var   (operator-agent directive、 wait + capture を 1 directive で)
+  if ((m = trimmed.match(/^(\^)(\s+)(.+?)(\s*)(:)(\s*)(.+?)\s*(->|→)\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*$/))) {
+    return escapeHtmlInline(lead)
+      + `<span class="tk-cmd">${escapeHtmlInline(m[1])}</span>${escapeHtmlInline(m[2])}`
+      + `<span class="tk-name">${escapeHtmlInline(m[3])}</span>${escapeHtmlInline(m[4])}`
+      + `<span class="tk-punct">${escapeHtmlInline(m[5])}</span>${escapeHtmlInline(m[6])}`
+      + `<span class="tk-text">${highlightVarRefs(m[7])}</span>`
+      + ` <span class="tk-punct">${escapeHtmlInline(m[8])}</span> `
+      + `<span class="tk-var">${escapeHtmlInline(m[9])}</span>`;
+  }
+  // < name: text   (send to agent) — ${var} を強調
   if ((m = trimmed.match(/^(<)(\s+)(.+?)(\s*)(:)(\s*)(.*)$/))) {
     return escapeHtmlInline(lead)
       + `<span class="tk-cmd">${escapeHtmlInline(m[1])}</span>${escapeHtmlInline(m[2])}`
       + `<span class="tk-name">${escapeHtmlInline(m[3])}</span>${escapeHtmlInline(m[4])}`
       + `<span class="tk-punct">${escapeHtmlInline(m[5])}</span>${escapeHtmlInline(m[6])}`
-      + `<span class="tk-text">${escapeHtmlInline(m[7])}</span>`;
+      + `<span class="tk-text">${highlightVarRefs(m[7])}</span>`;
   }
-  // > name [timeout]  (wait for agent reply)
-  if ((m = trimmed.match(/^(>)(\s+)(.+?)(\s+(\d+(?:\.\d+)?)\s*s?)?$/))) {
+  // > name [timeout] [as var]  (wait for agent reply)
+  if ((m = trimmed.match(/^(>)(\s+)(.+?)(?:(\s+)(\d+(?:\.\d+)?)\s*s?)?(?:(\s+)(as)(\s+)([a-zA-Z_][a-zA-Z0-9_]*))?$/))) {
     let out = escapeHtmlInline(lead)
       + `<span class="tk-cmd">${escapeHtmlInline(m[1])}</span>${escapeHtmlInline(m[2])}`
       + `<span class="tk-name">${escapeHtmlInline(m[3])}</span>`;
-    if (m[4]) out += `<span class="tk-num">${escapeHtmlInline(m[4])}</span>`;
+    if (m[5]) out += escapeHtmlInline(m[4]) + `<span class="tk-num">${escapeHtmlInline(m[5])}s</span>`;
+    if (m[10]) {
+      out += escapeHtmlInline(m[6])
+        + `<span class="tk-cmd">${escapeHtmlInline(m[7])}</span>${escapeHtmlInline(m[8])}`
+        + `<span class="tk-var">${escapeHtmlInline(m[10])}</span>`;
+    }
     return out;
   }
   // sleep N s
@@ -2264,11 +2293,12 @@ function autoSaveScript() {
 
 // DSL コマンド一覧
 const DSL_COMMANDS = [
-  { glyph: "<",     label: "send",    insert: "< ",        cursor: "end",  title: "Send to window — < name: text" },
-  { glyph: ">",     label: "wait",    insert: "> ",        cursor: "end",  title: "Wait for reply — > name [30s]" },
-  { glyph: "sleep", label: "pause",   insert: "sleep 1s",  cursor: "end",  title: "Pause — sleep Ns" },
-  { glyph: "clear", label: "reset",   insert: "clear",     cursor: "end",  title: "Clear chat — clear [name]" },
-  { glyph: "#",     label: "comment", insert: "# ",        cursor: "end",  title: "Comment line — # ..." }
+  { glyph: "<",     label: "send",     insert: "< ",        cursor: "end",  title: "Send to window — < name: text  (use ${var} for capture)" },
+  { glyph: ">",     label: "wait",     insert: "> ",        cursor: "end",  title: "Wait for reply — > name [30s] [as var]" },
+  { glyph: "^",     label: "operator", insert: "^ operator: ", cursor: "end", title: "Operator-agent directive — ^ name: hint -> var" },
+  { glyph: "sleep", label: "pause",    insert: "sleep 1s",  cursor: "end",  title: "Pause — sleep Ns" },
+  { glyph: "clear", label: "reset",    insert: "clear",     cursor: "end",  title: "Clear chat — clear [name]" },
+  { glyph: "#",     label: "comment",  insert: "# ",        cursor: "end",  title: "Comment line — # ..." }
 ];
 
 function renderCommandChips() {
@@ -2960,23 +2990,18 @@ async function importFromRepositoryFlow() {
     await modalAlert({ title: "Repository is empty", message: "Bundled snapshot がありません。" });
     return;
   }
-  const result = await modalChoice({
+  // 1 段だけ聞く: snapshot を選ぶ。 scope (Everything / Scenarios only) は applyImport 側で 1 回聞く。
+  // (以前は extras チェックボックスを足して 2 段聞いていた — 重複質問になるので統一)
+  const pick = await modalChoice({
     title:   "Import from repository",
     message: "Pick a snapshot to import.",
     choices: items.map(it => ({
       id:          it.url,
       label:       it.name || it.id || it.url,
       description: it.description || it.url
-    })),
-    extras: [
-      { id: "scriptsOnly", label: "Scenarios only",
-        description: "Skip connections / catalogs — merge scenarios into the current set",
-        defaultChecked: false }
-    ]
+    }))
   });
-  if (!result) return;
-  const pick = result.id;
-  const scriptsOnly = !!result.extras?.scriptsOnly;
+  if (!pick) return;
   try {
     const res = await fetch(pick, { headers: { Accept: "application/json" } });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -2984,14 +3009,6 @@ async function importFromRepositoryFlow() {
     JSON.parse(text);   // sanity
     const picked = items.find(it => it.url === pick);
     const label = picked?.name || picked?.id || pick;
-    if (scriptsOnly) {
-      const n = importScriptsOnly(text);
-      await modalAlert({
-        title:   "Scenarios imported",
-        message: `${n} scenario${n === 1 ? "" : "s"} added from "${label}".`
-      });
-      return;
-    }
     await applyImport(text, `"${label}"`);
   } catch (err) {
     await modalAlert({ title: "Import failed", message: err?.message || String(err) });

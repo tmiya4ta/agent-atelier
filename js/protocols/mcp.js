@@ -100,17 +100,32 @@ export class MCPAdapter extends ProtocolAdapter {
     };
     if (this.config.auth) headers["Authorization"] = `Bearer ${this.config.auth}`;
 
+    // 停止ボタン用: tools/call 等を中断できるよう AbortController を立てる
+    const ac = new AbortController();
+    this._inflight = ac;
+
     let res;
     try {
       res = await fetch(proxify(this.endpoint), {
         method: "POST",
         headers,
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: ac.signal
       });
     } catch (e) {
+      if (this._inflight === ac) this._inflight = null;
+      if (e?.name === "AbortError") {
+        this._emit("rpc", { dir: "err", method: `aborted · ${method}`, raw: "stopped by user" });
+        this._emit("aborted", { method });
+        const err = new Error("aborted by user");
+        err.name = "AbortError";
+        throw err;
+      }
       this._emit("rpc", { dir: "err", method: `network: ${method}`, raw: String(e) });
       throw e;
     }
+
+    if (this._inflight === ac) this._inflight = null;
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "");

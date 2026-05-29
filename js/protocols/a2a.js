@@ -148,8 +148,12 @@ export class A2AAdapter extends ProtocolAdapter {
     const headers = { "Content-Type": "application/json", Accept: "application/json" };
     if (this.config.auth) headers["Authorization"] = `Bearer ${this.config.auth}`;
 
+    // 停止ボタン用: この送信を中断できるよう AbortController を立てる
+    const ac = new AbortController();
+    this._inflight = ac;
+
     try {
-      const res = await fetch(proxify(this.rpcUrl), { method: "POST", headers, body: JSON.stringify(body) });
+      const res = await fetch(proxify(this.rpcUrl), { method: "POST", headers, body: JSON.stringify(body), signal: ac.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
 
@@ -173,16 +177,32 @@ export class A2AAdapter extends ProtocolAdapter {
       const messages = collectMessages(result);
       // LLM-like "thinking" delay: simulate think time before surfacing the reply
       // (scriptRunner の `< Agent` wait もこの emit を待つので、順序が保たれる)
+      // 停止ボタンで中断できるよう、 signal abort で reject する race にする。
       const delayMs = 1500 + Math.random() * 2000;
-      await new Promise(r => setTimeout(r, delayMs));
+      await new Promise((resolve, reject) => {
+        const t = setTimeout(resolve, delayMs);
+        ac.signal.addEventListener("abort", () => {
+          clearTimeout(t);
+          reject(new DOMException("aborted", "AbortError"));
+        }, { once: true });
+      });
       for (const m of messages) {
         const txt = collectText(m);
         if (txt) this._emit("message", { role: m.role || "agent", text: txt, final: true });
       }
     } catch (e) {
+      if (e?.name === "AbortError") {
+        this._emit("rpc", { dir: "err", method: `aborted · ${method}`, raw: "stopped by user" });
+        this._emit("aborted", { method });
+        const err = new Error("aborted by user");
+        err.name = "AbortError";
+        throw err;
+      }
       this._emit("rpc", { dir: "err", method: `error: ${method}`, raw: String(e) });
       this._emit("error", e);
       throw e;
+    } finally {
+      if (this._inflight === ac) this._inflight = null;
     }
   }
 }

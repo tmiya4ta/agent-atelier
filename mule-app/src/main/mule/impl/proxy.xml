@@ -77,11 +77,12 @@ var h = attributes.headers default {}
 
                 <try>
                     <!-- leg 1: target にそのまま forward (redirect は手動 follow) -->
+                    <!-- agent (LLM tool-use ループ) は最大 240s かかりうるので長めに取る -->
                     <http:request method="#[attributes.method]"
                                   url="#[vars.targetUrl]"
                                   config-ref="proxy-request-config"
                                   followRedirects="false"
-                                  responseTimeout="120000">
+                                  responseTimeout="300000">
                         <http:headers>#[vars.fwdHeaders]</http:headers>
                         <http:response-validator>
                             <http:success-status-code-validator values="0..599"/>

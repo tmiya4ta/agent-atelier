@@ -92,7 +92,7 @@
         <logger level="INFO"
                 message="#['atelier-incident-agent A2A task received. method=' ++ (attributes.jsonRpcMethod default '?') ++ ' taskId=' ++ (attributes.taskId default '?')]"/>
 
-        <ee:transform doc:name="extract user text + task ids + contextId">
+        <ee:transform doc:name="extract user text + task ids + contextId + dataPart">
             <ee:variables>
                 <ee:set-variable variableName="taskId"><![CDATA[%dw 2.0
 output application/java
@@ -108,32 +108,55 @@ if (fromAttr != "") fromAttr else fromMsg]]></ee:set-variable>
                 <ee:set-variable variableName="userText"><![CDATA[%dw 2.0
 output application/java
 var p = if (payload is String) read(payload, "application/json") else payload
+var parts = (p.message.parts default [])
+var textPart = (parts filter ((x) -> (x.kind default x."type" default "") == "text"))
 ---
-(((p.message.parts default [])[0].text default "") as String)]]></ee:set-variable>
+if (sizeOf(textPart) > 0) ((textPart[0].text default "") as String)
+else (((parts[0].text default "") as String))]]></ee:set-variable>
+                <!-- broker からの構造化指示: parts[] の data part (kind="data") を拾う。
+                     形 { tool, args } を期待。 あれば LLM を介さず直接 MCP を叩く fast-path。 -->
+                <ee:set-variable variableName="directPart"><![CDATA[%dw 2.0
+output application/java
+var p = if (payload is String) read(payload, "application/json") else payload
+var parts = (p.message.parts default [])
+var dataParts = (parts filter ((x) -> (x.kind default x."type" default "") == "data"))
+---
+if (sizeOf(dataParts) > 0) (dataParts[0].data default null) else null]]></ee:set-variable>
             </ee:variables>
         </ee:transform>
 
-        <flow-ref name="loadMemoryFlow"/>
+        <logger level="INFO"
+                message="#['incident-agent: directPart=' ++ (if (vars.directPart != null) 'yes' else 'no') ++ ' userText=' ++ ((vars.userText default '') as String)]"/>
 
-        <try>
-            <flow-ref name="initAgentStateFlow"/>
-            <flow-ref name="agentLoopFlow"/>
-            <error-handler>
-                <on-error-continue type="ANY">
-                    <logger level="WARN"
-                            message="#['Agent loop failed: ' ++ (error.description default error.message default 'unknown')]"/>
-                    <ee:transform>
-                        <ee:variables>
-                            <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+        <choice doc:name="broker direct (data part) か 人間 自然文か">
+            <!-- ============ fast-path: broker からの { tool, args } を LLM 無しで実行 ============ -->
+            <when expression="#[vars.directPart != null]">
+                <flow-ref name="directToolFlow"/>
+            </when>
+            <!-- ============ 通常: 人間の自然文 → LLM tool-use ループ ============ -->
+            <otherwise>
+                <flow-ref name="loadMemoryFlow"/>
+                <try>
+                    <flow-ref name="initAgentStateFlow"/>
+                    <flow-ref name="agentLoopFlow"/>
+                    <error-handler>
+                        <on-error-continue type="ANY">
+                            <logger level="WARN"
+                                    message="#['Agent loop failed: ' ++ (error.description default error.message default 'unknown')]"/>
+                            <ee:transform>
+                                <ee:variables>
+                                    <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
 output application/java
 ---
 "⚠️ atelier-incident-agent: Agent ループ中にエラーが発生しました。\n" ++
 "  " ++ ((error.description default (error.message default "unknown")) as String)]]></ee:set-variable>
-                        </ee:variables>
-                    </ee:transform>
-                </on-error-continue>
-            </error-handler>
-        </try>
+                                </ee:variables>
+                            </ee:transform>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+            </otherwise>
+        </choice>
 
         <ee:transform>
             <ee:variables>
@@ -499,6 +522,60 @@ output application/java
                         </ee:variables>
                     </ee:transform>
                 </foreach>
+            </otherwise>
+        </choice>
+    </sub-flow>
+
+    <!-- ============================================================
+         directToolFlow — broker からの DataPart { tool, args } を
+         LLM を介さず直接 MCP /mcp/execute に流す fast-path。
+         vars.directPart = { tool: "register_incident", args: {...} }
+         ============================================================ -->
+    <sub-flow name="directToolFlow">
+        <ee:transform doc:name="map directPart → toolName/toolArgs/mcpKind">
+            <ee:variables>
+                <ee:set-variable variableName="toolName"><![CDATA[%dw 2.0
+output application/java
+---
+((vars.directPart.tool default vars.directPart.toolName default "") as String)]]></ee:set-variable>
+                <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+---
+(vars.directPart.args default vars.directPart."input" default {})]]></ee:set-variable>
+                <ee:set-variable variableName="mcpKind"><![CDATA[%dw 2.0
+output application/java
+var n = (vars.directPart.tool default vars.directPart.toolName default "") as String
+---
+if (n == "lookup_incident" or n == "register_incident" or n == "update_incident_status") "incident"
+else "unknown"]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="INFO"
+                message="#['incident-agent direct fast-path: tool=' ++ (vars.toolName default '') ++ ' args=' ++ write(vars.toolArgs default {}, 'application/json')]"/>
+
+        <choice doc:name="未知 tool は即エラー">
+            <when expression="#[(vars.mcpKind default '') == 'unknown' or (vars.toolName default '') == '']">
+                <ee:transform>
+                    <ee:variables>
+                        <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+write({ status: "error", agent: "atelier-incident-agent", mode: "direct", result: { code: "UNKNOWN_TOOL", message: "unsupported tool for direct mode: " ++ (vars.toolName default ""), supported: ["lookup_incident","register_incident","update_incident_status"] } }, "application/json") as String]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </when>
+            <otherwise>
+                <flow-ref name="callMcpExecuteFlow"/>
+                <!-- callMcpExecuteFlow が vars.toolResult を埋める。 broker 向けに構造化 JSON 文字列で返す。 -->
+                <ee:transform doc:name="wrap direct result as JSON reply">
+                    <ee:variables>
+                        <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+write({ status: "ok", agent: "atelier-incident-agent", mode: "direct", tool: (vars.toolName default "") as String, result: (vars.toolResult default {}) }, "application/json") as String]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
             </otherwise>
         </choice>
     </sub-flow>

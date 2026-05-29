@@ -3,8 +3,8 @@
   "items": [
     {
       "id": "scrs-a",
-      "name": "SCRS — シナリオ A1 (九州製作所 / ターボ分子ポンプ)",
-      "description": "九州製作所の半導体製造装置部品 (P-2024-KYU-001 ターボ分子ポンプ TMP-A310) の品質トラブル。 5 agent に直接投げて [NEED_INFO] が返り、 人間が atelier-mcp-mdm を別途叩いて goldenId を解決する — broker の不在コストを可視化する A1 シナリオ。 全アプリは StepA / BetterTogetherDemo (shard d7gr5m) にデプロイ済み。",
+      "name": "SCRS — シナリオ A (九州製作所 / ターボ分子ポンプ)",
+      "description": "九州製作所の半導体製造装置部品 (P-2024-KYU-001 ターボ分子ポンプ TMP-A310) の品質トラブル。 (A1) 5 agent + MDM MCP の人間ハブ版、 (A1-AUTO) operator-agent を進行役にして 5 agent 連携を完全自動化する版、 の 2 ワークスペース。 全アプリは StepA / BetterTogetherDemo (shard d7gr5m) にデプロイ済み。",
       "url": "/scenarios/scrs-a.json"
     }
   ]

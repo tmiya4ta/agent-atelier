@@ -109,32 +109,50 @@ if (fromAttr != "") fromAttr else fromMsg]]></ee:set-variable>
                 <ee:set-variable variableName="userText"><![CDATA[%dw 2.0
 output application/java
 var p = if (payload is String) read(payload, "application/json") else payload
+var parts = (p.message.parts default [])
+var textPart = (parts filter ((x) -> (x.kind default x."type" default "") == "text"))
 ---
-(((p.message.parts default [])[0].text default "") as String)]]></ee:set-variable>
+if (sizeOf(textPart) > 0) ((textPart[0].text default "") as String)
+else (((parts[0].text default "") as String))]]></ee:set-variable>
+                <ee:set-variable variableName="directPart"><![CDATA[%dw 2.0
+output application/java
+var p = if (payload is String) read(payload, "application/json") else payload
+var dataParts = ((p.message.parts default []) filter ((x) -> (x.kind default x."type" default "") == "data"))
+---
+if (sizeOf(dataParts) > 0) (dataParts[0].data default null) else null]]></ee:set-variable>
             </ee:variables>
         </ee:transform>
 
-        <flow-ref name="loadMemoryFlow"/>
+        <logger level="INFO"
+                message="#['procurement-agent: directPart=' ++ (if (vars.directPart != null) 'yes' else 'no') ++ ' userText=' ++ ((vars.userText default '') as String)]"/>
 
-        <try>
-            <flow-ref name="initAgentStateFlow"/>
-            <flow-ref name="agentLoopFlow"/>
-            <error-handler>
-                <on-error-continue type="ANY">
-                    <logger level="WARN"
-                            message="#['Agent loop failed: ' ++ (error.description default error.message default 'unknown')]"/>
-                    <ee:transform>
-                        <ee:variables>
-                            <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+        <choice doc:name="broker direct (data part) か 人間 自然文か">
+            <when expression="#[vars.directPart != null]">
+                <flow-ref name="directToolFlow"/>
+            </when>
+            <otherwise>
+                <flow-ref name="loadMemoryFlow"/>
+                <try>
+                    <flow-ref name="initAgentStateFlow"/>
+                    <flow-ref name="agentLoopFlow"/>
+                    <error-handler>
+                        <on-error-continue type="ANY">
+                            <logger level="WARN"
+                                    message="#['Agent loop failed: ' ++ (error.description default error.message default 'unknown')]"/>
+                            <ee:transform>
+                                <ee:variables>
+                                    <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
 output application/java
 ---
 "⚠️ atelier-procurement-agent: Agent ループ中にエラーが発生しました。\n" ++
 "  " ++ ((error.description default (error.message default "unknown")) as String)]]></ee:set-variable>
-                        </ee:variables>
-                    </ee:transform>
-                </on-error-continue>
-            </error-handler>
-        </try>
+                                </ee:variables>
+                            </ee:transform>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+            </otherwise>
+        </choice>
 
         <ee:transform doc:name="prepare reply text">
             <ee:variables>
@@ -479,6 +497,53 @@ output application/java
                         </ee:variables>
                     </ee:transform>
                 </foreach>
+            </otherwise>
+        </choice>
+    </sub-flow>
+
+    <!-- directToolFlow — broker DataPart { tool, args } を LLM 無しで直接 MCP に流す -->
+    <sub-flow name="directToolFlow">
+        <ee:transform doc:name="map directPart → toolName/toolArgs/mcpKind">
+            <ee:variables>
+                <ee:set-variable variableName="toolName"><![CDATA[%dw 2.0
+output application/java
+---
+((vars.directPart.tool default vars.directPart.toolName default "") as String)]]></ee:set-variable>
+                <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+---
+(vars.directPart.args default vars.directPart."input" default {})]]></ee:set-variable>
+                <ee:set-variable variableName="mcpKind"><![CDATA[%dw 2.0
+output application/java
+var n = (vars.directPart.tool default vars.directPart.toolName default "") as String
+---
+if (n == "get_alternative_parts" or n == "create_purchase_order_draft" or n == "notify_supplier") "procurement"
+else "unknown"]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <logger level="INFO"
+                message="#['procurement-agent direct fast-path: tool=' ++ (vars.toolName default '') ++ ' args=' ++ write(vars.toolArgs default {}, 'application/json')]"/>
+        <choice>
+            <when expression="#[(vars.mcpKind default '') == 'unknown' or (vars.toolName default '') == '']">
+                <ee:transform>
+                    <ee:variables>
+                        <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+write({ status: "error", agent: "atelier-procurement-agent", mode: "direct", result: { code: "UNKNOWN_TOOL", message: "unsupported tool for direct mode: " ++ (vars.toolName default ""), supported: ["get_alternative_parts","create_purchase_order_draft","notify_supplier"] } }, "application/json") as String]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </when>
+            <otherwise>
+                <flow-ref name="callMcpExecuteFlow"/>
+                <ee:transform doc:name="wrap direct result as JSON reply">
+                    <ee:variables>
+                        <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+write({ status: "ok", agent: "atelier-procurement-agent", mode: "direct", tool: (vars.toolName default "") as String, result: (vars.toolResult default {}) }, "application/json") as String]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
             </otherwise>
         </choice>
     </sub-flow>

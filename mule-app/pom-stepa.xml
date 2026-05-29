@@ -10,7 +10,7 @@
 
     <groupId>4283bf7b-276e-44bc-8c6b-bd9b622d42b4</groupId>
     <artifactId>atelier-static</artifactId>
-    <version>1.0.36</version>
+    <version>1.0.42</version>
     <packaging>mule-application</packaging>
 
     <name>atelier-static</name>

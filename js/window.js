@@ -153,7 +153,13 @@ export class AgentWindow {
       ta.style.height = "auto";
       ta.style.height = Math.min(ta.scrollHeight, 140) + "px";
     });
-    sendBtn.addEventListener("click", () => this._sendFromCompose());
+    this._sendBtn = sendBtn;
+    this._busy = false;
+    // busy 中 (応答待ち) は停止ボタンとして動作。 それ以外は通常送信。
+    sendBtn.addEventListener("click", () => {
+      if (this._busy) this._stopInflight();
+      else this._sendFromCompose();
+    });
 
     // Capabilities overlay (compose toolbar の capabilities ボタン)
     const capsBtn = node.querySelector(".compose-caps");
@@ -509,6 +515,8 @@ export class AgentWindow {
     this._showTyping(true);
     this.lastSendAt = Date.now();
     return this.adapter.send(text, { stream: true }).catch(err => {
+      // 停止ボタンによる中断は _stopInflight 側で表示済みなので、 ここでは何も出さない
+      if (err?.name === "AbortError") { this._showTyping(false); throw err; }
       this._showTyping(false);
       this._addSystemMessage(`send failed: ${err.message}`);
       throw err;
@@ -748,7 +756,33 @@ export class AgentWindow {
     return wrap;
   }
 
+  // 送信ボタンを「送信」⇄「停止」に切り替える。
+  // busy=true: ◼ 停止アイコン + is-stop クラス。 busy=false: 通常の送信矢印に戻す。
+  _setBusy(on) {
+    this._busy = !!on;
+    const btn = this._sendBtn;
+    if (!btn) return;
+    if (on) {
+      btn.classList.add("is-stop");
+      btn.title = "停止";
+      btn.innerHTML = `<svg viewBox="0 0 16 16" width="12" height="12"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5" fill="currentColor"/></svg>`;
+    } else {
+      btn.classList.remove("is-stop");
+      btn.title = "send";
+      btn.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14"><path d="M2 8 L14 8 M9 3 L14 8 L9 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    }
+  }
+
+  // 停止ボタン押下: 進行中の adapter 送信を中断し、 typing 表示を消す。
+  _stopInflight() {
+    if (typeof this.adapter.abort === "function") this.adapter.abort();
+    this._showTyping(false);
+    this._setBusy(false);
+    this._addSystemMessage("⏹ 停止しました");
+  }
+
   _showTyping(on) {
+    if (on) this._setBusy(true); else this._setBusy(false);
     const stream = this.el.querySelector(".chat-stream");
     let t = stream.querySelector(".msg-typing");
     if (on && !t) {

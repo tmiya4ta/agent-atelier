@@ -9,11 +9,11 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>4283bf7b-276e-44bc-8c6b-bd9b622d42b4</groupId>
-    <artifactId>atelier-org-agent</artifactId>
-    <version>1.7.0</version>
+    <artifactId>atelier-operator-agent</artifactId>
+    <version>1.0.5</version>
     <packaging>mule-application</packaging>
 
-    <name>atelier-org-agent</name>
+    <name>atelier-operator-agent</name>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -54,8 +54,6 @@
                         <properties>
                             <agent.public.url>${agent.public.url}</agent.public.url>
                             <llm.token>${llm.token}</llm.token>
-                            <mcp.hr.host>${mcp.hr.host}</mcp.hr.host>
-                            <mcp.mdm.host>${mcp.mdm.host}</mcp.mdm.host>
                         </properties>
                     </cloudhub2Deployment>
                 </configuration>
@@ -80,12 +78,6 @@
             <groupId>com.demo-group</groupId>
             <artifactId>mule-jmx-module</artifactId>
             <version>0.1.0</version>
-            <classifier>mule-plugin</classifier>
-        </dependency>
-        <dependency>
-            <groupId>org.mule.connectors</groupId>
-            <artifactId>mule-objectstore-connector</artifactId>
-            <version>1.2.4</version>
             <classifier>mule-plugin</classifier>
         </dependency>
     </dependencies>

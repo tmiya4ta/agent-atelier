@@ -1,0 +1,244 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:a2a="http://www.mulesoft.org/schema/mule/a2a"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:jmx="http://www.mulesoft.org/schema/mule/jmx"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+          http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+          http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+          http://www.mulesoft.org/schema/mule/a2a http://www.mulesoft.org/schema/mule/a2a/current/mule-a2a.xsd
+          http://www.mulesoft.org/schema/mule/jmx http://www.mulesoft.org/schema/mule/jmx/current/mule-jmx.xsd
+          http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <configuration-properties file="config.properties"/>
+
+    <http:listener-config name="HTTP_Listener_config">
+        <http:listener-connection host="0.0.0.0" port="${http.listener.port}"/>
+    </http:listener-config>
+
+    <a2a:server-config name="A2A_Server_config">
+        <a2a:connection listenerConfig="HTTP_Listener_config" agentPath="${a2a.path}"/>
+        <a2a:agent-card>
+            <a2a:json><![CDATA[{
+  "protocolVersion": "0.3.0",
+  "name": "atelier-operator-agent",
+  "description": "デモ進行役 (フィールドオペレーター)。 Atelier script DSL の '^ <hint> -> <var>' directive から呼ばれる。 直前の agent 応答を hint に従って読み解き、 次に別の agent に投げるべき自然文メッセージを 1 文だけ生成する。 自分では tool を呼ばない / 意思決定もしない。 broker と違って 1 round で完結する。",
+  "url": "${agent.public.url}",
+  "version": "1.0.0",
+  "preferredTransport": "JSONRPC",
+  "capabilities": { "streaming": false, "pushNotifications": false, "stateTransitionHistory": false },
+  "defaultInputModes": ["text/plain", "application/json"],
+  "defaultOutputModes": ["text/plain", "application/json"],
+  "skills": [
+    {
+      "id": "compose_next_message",
+      "name": "次メッセージ作成 (デモ進行役)",
+      "description": "input は { hint, captured } を含む JSON ライクな自然文。 captured は直前までの agent 応答 (key=変数名 / value=本文)。 hint に従って captured から要素 (incidentId / supplierId / partNumber / 条項番号 等) を抽出し、 次の agent に送る自然文 1 文を返す。 引用符 / 前置き / 説明は付けない。",
+      "examples": [
+        "captured.legal_resp の §X.Y 条項を引用して、 procurement に代替部品の PO を依頼する文を 1 文",
+        "captured.proc_resp の draftId と part number を使って logistics に在庫照会する文を 1 文"
+      ],
+      "inputModes": ["text/plain"],
+      "outputModes": ["text/plain"],
+      "tags": ["demo", "operator", "compose"]
+    }
+  ]
+}]]></a2a:json>
+        </a2a:agent-card>
+    </a2a:server-config>
+
+    <http:request-config name="LLM_Request_config" basePath="/" responseTimeout="${llm.timeout}">
+        <http:request-connection host="openai-proxy.demos.mulesoft.com"
+                                 port="443"
+                                 protocol="HTTPS"/>
+        <http:default-headers>
+            <http:default-header key="Authorization" value="Basic ${llm.token}"/>
+            <http:default-header key="Content-Type" value="application/json; charset=utf-8"/>
+        </http:default-headers>
+    </http:request-config>
+
+    <jmx:config name="JMX_Config" logBufferSize="5000"/>
+
+    <!-- ============================================================
+         A2A task listener — 1 round LLM, no tools
+         ============================================================ -->
+    <flow name="operatorAgentTaskFlow">
+        <a2a:task-listener config-ref="A2A_Server_config">
+            <a2a:response>
+                <a2a:response>#[vars.taskJson]</a2a:response>
+            </a2a:response>
+        </a2a:task-listener>
+
+        <logger level="INFO"
+                message="#['atelier-operator-agent A2A task received. method=' ++ (attributes.jsonRpcMethod default '?') ++ ' taskId=' ++ (attributes.taskId default '?')]"/>
+
+        <ee:transform doc:name="extract user text + ids">
+            <ee:variables>
+                <ee:set-variable variableName="taskId"><![CDATA[%dw 2.0
+output application/java
+---
+((attributes.taskId default (now() as String)) as String)]]></ee:set-variable>
+                <ee:set-variable variableName="contextId"><![CDATA[%dw 2.0
+output application/java
+var p = if (payload is String) read(payload, "application/json") else payload
+var fromAttr = (attributes.contextId default "") as String
+var fromMsg  = (p.message.contextId default "") as String
+---
+if (fromAttr != "") fromAttr else fromMsg]]></ee:set-variable>
+                <ee:set-variable variableName="userText"><![CDATA[%dw 2.0
+output application/java
+var p = if (payload is String) read(payload, "application/json") else payload
+---
+(((p.message.parts default [])[0].text default "") as String)]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="INFO"
+                message="#['userText=' ++ ((vars.userText default '') as String) ++ ' contextId=' ++ ((vars.contextId default '') as String)]"/>
+
+        <try doc:name="LLM single round">
+            <flow-ref name="operatorInferenceFlow"/>
+            <error-handler>
+                <on-error-continue type="ANY">
+                    <logger level="WARN"
+                            message="#['operator inference failed: ' ++ (error.description default error.message default 'unknown')]"/>
+                    <ee:transform>
+                        <ee:variables>
+                            <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"INSUFFICIENT_CONTEXT: operator-agent inference failed (" ++ ((error.description default error.message default "unknown") as String) ++ ")"]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                </on-error-continue>
+            </error-handler>
+        </try>
+
+        <ee:transform doc:name="build A2A Task response">
+            <ee:variables>
+                <ee:set-variable variableName="taskJson"><![CDATA[%dw 2.0
+output application/json
+---
+{
+  id: vars.taskId,
+  contextId: vars.contextId,
+  kind: "task",
+  status: {
+    state: "completed",
+    message: {
+      role: "agent",
+      kind: "message",
+      messageId: (now() as String) ++ "-" ++ vars.taskId,
+      parts: [
+        { kind: "text", text: (vars.finalText default "") as String }
+      ]
+    },
+    timestamp: now() as String { format: "yyyy-MM-dd'T'HH:mm:ss'Z'" }
+  }
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+    </flow>
+
+    <!-- Health -->
+    <flow name="healthFlow">
+        <http:listener config-ref="HTTP_Listener_config" path="/health"/>
+        <ee:transform>
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ status: "UP", app: "atelier-operator-agent" }]]></ee:set-payload></ee:message>
+        </ee:transform>
+    </flow>
+
+    <flow name="debugLogsFlow">
+        <http:listener config-ref="HTTP_Listener_config" path="/debug/logs"/>
+        <jmx:get-recent-logs config-ref="JMX_Config"
+                             lines="#[(attributes.queryParams.lines default 200) as Number]"
+                             level="#[attributes.queryParams.level default null]"
+                             pattern="#[attributes.queryParams.pattern default null]"/>
+    </flow>
+
+    <!-- ============================================================
+         operatorInferenceFlow — POST /chat/completions, 1 round only
+         ============================================================ -->
+    <sub-flow name="operatorInferenceFlow">
+        <ee:transform doc:name="seed sysPrompt">
+            <ee:variables>
+                <ee:set-variable variableName="sysPrompt"><![CDATA[%dw 2.0
+output application/java
+---
+"あなたはデモ進行役 (atelier-operator-agent)。 Atelier の自動 demo script で、 直前の agent 応答 (captured) を読んで、 次に別の agent に送るべき自然文メッセージを 1 文 だけ作る役割。\n" ++
+"\n" ++
+"=== 入力フォーマット ===\n" ++
+"ユーザ入力は 1 つの自然文ブロック。 内部に以下が含まれる場合がある:\n" ++
+"  hint: <次に何をしたいか>\n" ++
+"  captured.<varName>: <直前の agent 応答本文>\n" ++
+"  next: <次に投げる先 agent 名>\n" ++
+"\n" ++
+"=== 出力ルール (絶対) ===\n" ++
+"  1) 出力は 1 つの自然文メッセージのみ。 説明 / 前置き / 後置き / 引用符 / Markdown 装飾を一切付けない。\n" ++
+"  2) 出力の冒頭に 'XXX:' のような agent 名 prefix を付けない。 atelier 側で自動的に投げ先を決めるため、 本文だけ返す。\n" ++
+"  3) hint で指定された具体的な値 (incidentId / GoldenId / partNumber / draftId / 条項番号など) を captured から抽出し、 次メッセージに必ず埋め込む。 推測で値を作らない。\n" ++
+"  4) hint に書かれている supplierGoldenId / partNumber / region / category 等の固定値は、 captured に無くてもそのまま hint から拾って次メッセージに埋め込んでよい (推測ではなく hint からの転記)。\n" ++
+"  5) captured に [NEED_INFO] ブロックが含まれる場合: そこで指定された不足項目を hint や他の captured から抽出 / 補完して、 元と同じ agent に再送する完全な依頼文を 1 文だけ作る。 INSUFFICIENT_CONTEXT は出さない。 例: '[NEED_INFO] severity を HIGH/MEDIUM/LOW で指定' → severity HIGH を含めた依頼文を出力。\n" ++
+"  6) captured に [NEED_INFO] が無く、 hint で指定された必要値が hint にも captured にも一切ない場合のみ、 1 行で 'INSUFFICIENT_CONTEXT: <足りない情報>' とだけ返す。 ただし hint や captured を全部読み返してから判断する (incidentId が agent 応答の自然文中に INC-... 形式で書かれていることが多い)。\n" ++
+"  7) 出力は 240 文字以内。 長くしない。 「お願いします」「対応してください」 のような自然な依頼口調で。\n" ++
+"  8) 入力言語と同じ言語で出力 (日本語が来たら日本語、 英語が来たら英語)。\n" ++
+"\n" ++
+"=== 例 ===\n" ++
+"入力: 'hint: legal_resp の条項番号を引用して procurement に代替部品 PO 依頼。 partNumber=P-2024-KYU-001。  captured.legal_resp: 当社は §7.3 に従い返品請求可能。 ペナルティ上限 ¥2,500,000。  next: 調達'\n" ++
+"出力: 法務確認の §7.3 に基づいて、 P-2024-KYU-001 の代替部品で 120 台分の PO ドラフトを作成してください。\n" ++
+"\n" ++
+"入力: 'hint: severity HIGH を含めて再送。 supplierGoldenId=G-KYUSHU-MFG-001。  captured.inc_resp: [NEED_INFO] severity を HIGH/MEDIUM/LOW のいずれかで指定してください。'\n" ++
+"出力: 九州製作所 (G-KYUSHU-MFG-001) の P-2024-KYU-001 で不良 15%、 影響 120 台、 severity HIGH で新規インシデントとして登録してください。"]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <ee:transform doc:name="build chat/completions body">
+            <ee:variables>
+                <ee:set-variable variableName="llmBody"><![CDATA[%dw 2.0
+output application/json
+---
+{
+  model:                 (p('llm.model') default "gpt-5-mini") as String,
+  max_completion_tokens: (p('llm.max_tokens') default 2048) as Number,
+  messages: [
+    { role: "system", content: (vars.sysPrompt default "") as String },
+    { role: "user",   content: (vars.userText default "") as String }
+  ]
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <http:request method="POST" path="/openai/v1/chat/completions" config-ref="LLM_Request_config" doc:name="POST LLM /chat/completions">
+            <http:body>#[vars.llmBody]</http:body>
+            <http:response-validator>
+                <http:success-status-code-validator values="0..599"/>
+            </http:response-validator>
+        </http:request>
+
+        <ee:transform doc:name="capture finalText + raw">
+            <ee:variables>
+                <ee:set-variable variableName="rawLlm"><![CDATA[%dw 2.0
+output application/java
+---
+write((payload default {}), "application/json") as String]]></ee:set-variable>
+                <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+var raw = (((payload default {}).choices default [])[0].message.content default "") as String
+---
+trim(raw)]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="INFO"
+                message="#['operator rawLlm=' ++ ((vars.rawLlm default '') as String)]"/>
+        <logger level="INFO"
+                message="#['operator finalText=' ++ ((vars.finalText default '') as String)]"/>
+    </sub-flow>
+
+</mule>

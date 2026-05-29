@@ -1,7 +1,7 @@
 {
   "app": "atelier",
   "exportedAt": "2026-05-29T00:00:00.000Z",
-  "_doc": "シナリオ A1 — broker なし: 人間がハブになる痛みを見せる。 同じ自然文インシデント (会社名: 九州製作所 / 部品: P-2024-KYU-001 ターボ分子ポンプ TMP-A310 / 不良率 15% / 影響 120 台) を 5 agent に直接投げると、 全員 [NEED_INFO] を返す。 人間が atelier-mcp-mdm を別途叩いて goldenId / region / category を解決し、 各 agent に再投入する必要がある — それが broker の不在コスト。 全アプリは Salesforce BG / StepA / BetterTogetherDemo (shard d7gr5m) にデプロイ済み。",
+  "_doc": "シナリオ A — 単一ワークスペース (5 agent + MDM MCP + operator)。 スクリプトは 2 種: (A1) broker なしで人間がハブになる痛みを見せる手動台本、 (A1-AUTO) operator-agent (atelier-operator-agent) を進行役に直前応答から次メッセージを生成 → 次の agent に投げる自動台本。 同じ window セットに対してどちらの台本も流せる。 題材は 九州製作所 / 部品 P-2024-KYU-001 ターボ分子ポンプ TMP-A310 / 不良率 15% / 影響 120 台。 全アプリは Salesforce BG / StepA / BetterTogetherDemo (shard d7gr5m)。",
   "state": {
     "v": 1,
     "zoom": 1.0,
@@ -12,6 +12,13 @@
         "id": "A1",
         "name": "A1 — Broker なし: 人間がハブになる痛みを見せる",
         "body": "# ────────────────────────────────────────────────────────────\n# A1. Broker なし — 人間がハブ\n#\n# 半導体製造装置のターボ分子ポンプ (九州製作所 / TMP-A310) で品質トラブル。\n# 同じ自然文インシデントを 5 agent に直接送る。\n# 各 agent は domain 外の正規化 ID (supplierGoldenId / region / category) を\n# 持たないので [NEED_INFO] block を返す。\n# 人間が atelier-mcp-mdm window を別途叩いて goldenId を解決し、\n# 5 agent に再投入する必要がある — それが broker の不在コスト。\n# ────────────────────────────────────────────────────────────\n\nclear\nsleep 1s\n\n# 1) インシデント — 起票しようとするが supplierGoldenId / severity が未解決\n< インシデント: 九州製作所の P-2024-KYU-001 (ターボ分子ポンプ TMP-A310) で軸受け振動の公差超過が 15% 発生。 影響 120 台。 新規インシデントとして登録してください。\n> インシデント 60s\nsleep 2s\n\n# 2) 法務 — 契約参照したいが supplierGoldenId が未解決\n< 法務: 九州製作所との品質保証協定書を確認して、 P-2024-KYU-001 の不良 15% で返品請求できますか?\n> 法務 60s\nsleep 2s\n\n# 3) 調達 — 代替部品 / PO ドラフトしたいが supplierGoldenId が未解決\n< 調達・在庫: 九州製作所の P-2024-KYU-001 の代替部品で 120 台の PO ドラフトを作ってください。\n> 調達・在庫 60s\nsleep 2s\n\n# 4) 物流 — 仮確保したいが partNumber 以外は分かっても、 incident コンテキスト未解決\n< 物流: P-2024-KYU-001 の代替部品を 120 台 仮確保しておいてください。\n> 物流 60s\nsleep 2s\n\n# 5) 組織・人事 — 承認依頼したいが region / category が未解決\n< 組織・人事: 九州製作所の P-2024-KYU-001 の不良対応で、 担当バイヤーに承認依頼を出したい。\n> 組織・人事 60s\n\n# ここで人間がハブになる必要が見える:\n#   - 全員から [NEED_INFO] が返ってくる\n#   - MCP window (atelier-mcp-mdm) の resolve_supplier で\n#     \"九州製作所\" → G-KYUSHU-MFG-001 を取り出して再投入\n#   - region は 九州、 category は 半導体製造装置、 と人間が補足\n#   - これを 1 タスクごとに繰り返す = 人間がブローカ役\n",
+        "createdAt": "2026-05-29T00:00:00.000Z",
+        "updatedAt": "2026-05-29T00:00:00.000Z"
+      },
+      {
+        "id": "A1-AUTO",
+        "name": "A1-AUTO — operator-agent でデモを完全自動化",
+        "body": "# ────────────────────────────────────────────────────────────\n# A1-AUTO. broker の代わりに operator-agent (デモ進行役) が\n# agent 間の引き継ぎを自動で繋ぐ。\n#\n# 流れ:\n#   1) incident に起票 (severity を含めて NEED_INFO 回避) → incidentId を capture\n#   2) operator が \"次に法務に何を聞くか\" の文を生成 → 法務へ\n#   3) operator が \"§条項を踏まえて調達に何を頼むか\" → 調達へ\n#   4) operator が \"代替部品で物流に何を仮確保するか\" → 物流へ\n#   5) operator が \"承認依頼の文\" → 組織・人事へ\n#\n# operator は意思決定をしない。 直前応答から必要な値を抜き出して\n# 自然文 1 文を作るだけ。 [NEED_INFO] ブロックが captured に入って\n# いるときは、 不足項目を補った再送文を作る (ループ防止)。\n# ────────────────────────────────────────────────────────────\n\nclear\nsleep 1s\n\n# ── 1) インシデント起票 (severity HIGH を明示して NEED_INFO 回避) ──\n< インシデント: 九州製作所 (G-KYUSHU-MFG-001) の P-2024-KYU-001 (ターボ分子ポンプ TMP-A310) で軸受け振動の公差超過が 15% 発生、 影響 120 台。 severity HIGH。 region 九州。 新規インシデントとして登録してください。\n> インシデント 120s as inc_resp\nsleep 2s\n\n# ── 2) operator が法務へのメッセージを作成 ──\n^ operator: inc_resp に出てきた incidentId (INC-... 形式) を引用しつつ、 supplierGoldenId=G-KYUSHU-MFG-001 / partNumber=P-2024-KYU-001 / 不良率 15% を含めて、 法務に品質保証協定書から返品請求可能か問う依頼文を 1 文で → q_legal\n< 法務: ${q_legal}\n> 法務 120s as legal_resp\nsleep 2s\n\n# ── 3) operator が調達へのメッセージを作成 ──\n^ operator: legal_resp の §条項番号と inc_resp の incidentId、 supplierGoldenId=G-KYUSHU-MFG-001、 partNumber=P-2024-KYU-001、 数量 120 を全部含めて、 調達に代替部品の PO ドラフト作成を依頼する 1 文で → q_proc\n< 調達・在庫: ${q_proc}\n> 調達・在庫 150s as proc_resp\nsleep 2s\n\n# ── 4) operator が物流へのメッセージを作成 ──\n^ operator: proc_resp の代替 partNumber と数量、 inc_resp の incidentId を引用して、 物流に在庫仮確保を依頼する 1 文で → q_log\n< 物流: ${q_log}\n> 物流 120s as log_resp\nsleep 2s\n\n# ── 5) operator が組織・人事への承認依頼文を作成 ──\n^ operator: proc_resp の draftId、 inc_resp の incidentId、 supplierGoldenId=G-KYUSHU-MFG-001、 region=九州、 category=機械部品 を含めて、 担当バイヤーへの承認依頼を出す 1 文で → q_org\n< 組織・人事: ${q_org}\n> 組織・人事 120s as org_resp\n\n# 全 agent への自然文の組み立てを operator が引き受けたので、 人間は 1 行も書いていない。\n# これが broker 不在でも \"人間ハブ役\" を agent 化したらどうなるか、 のデモ。\n",
         "createdAt": "2026-05-29T00:00:00.000Z",
         "updatedAt": "2026-05-29T00:00:00.000Z"
       }
@@ -73,12 +80,21 @@
         "auth": "",
         "persona": "",
         "channel": ""
+      },
+      {
+        "key": "a2a::https://atelier-operator-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/",
+        "protoId": "a2a",
+        "url": "https://atelier-operator-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/",
+        "name": "operator",
+        "auth": "",
+        "persona": "",
+        "channel": ""
       }
     ],
     "activeWsIdx": 0,
     "workspaces": [
       {
-        "name": "A1 — Broker なし (5 agents + MDM MCP)",
+        "name": "SCRS — 九州製作所",
         "windows": [
           {
             "protoId": "a2a",
@@ -187,6 +203,24 @@
               "zIndex": "185"
             },
             "activeTab": "tools"
+          },
+          {
+            "protoId": "a2a",
+            "config": {
+              "url": "https://atelier-operator-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/",
+              "name": "operator",
+              "auth": "",
+              "persona": "",
+              "channel": ""
+            },
+            "pos": {
+              "left": "1092px",
+              "top": "804px",
+              "width": "522px",
+              "height": "378px",
+              "zIndex": "184"
+            },
+            "activeTab": "chat"
           }
         ]
       }
