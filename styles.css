@@ -24,8 +24,10 @@
   --ink-navy:    #00164A;
   --ink-navy-2:  #1F2A4A;       /* hover */
   --you-soft:    #E5EAF3;       /* 薄い navy ボーダー */
-  --warn:        #BA0517;       /* Anypoint error red */
+  --warn:        #BA0517;       /* Anypoint error red (hard error 用) */
   --warn-soft:   #FCE8EA;
+  --caution:     #B26B00;       /* amber — 非ブロッキングな warning 用 (error とは区別) */
+  --caution-soft:#FBEFD9;
   --ok:          #0D8245;       /* Anypoint success green */
   --ok-soft:     #E0F2E8;
 
@@ -2216,10 +2218,16 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   letter-spacing: 0;
   line-height: 1;
 }
-.aw-latency {
+/* 応答時間バッジ — agent 吹き出しの右下に控えめに表示 */
+.msg-latency {
+  display: block;
+  text-align: right;
+  margin-top: 3px;
   font-family: var(--f-mono);
-  font-size: calc(10px * var(--fs-mul, 1.1) * var(--fs, 1));
+  font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.04em;
   color: var(--ink-4);
+  user-select: none;
 }
 
 
@@ -2869,14 +2877,14 @@ body.is-dark .compose-caps[aria-expanded="true"] {
   word-break: break-all;
   background: transparent;
 }
-.card-url-val.is-warn { color: var(--warn, #d9831a); }
+.card-url-val.is-warn { color: var(--caution); }
 .card-url-warn {
   margin: -4px 0 12px;
   padding: 6px 10px;
   font-size: calc(11px * var(--fs-mul, 1.1) * var(--fs, 1));
-  color: var(--warn, #d9831a);
-  background: color-mix(in srgb, var(--warn, #d9831a) 8%, transparent);
-  border-left: 2px solid var(--warn, #d9831a);
+  color: var(--caution);
+  background: var(--caution-soft);
+  border-left: 2px solid var(--caution);
   border-radius: 2px;
 }
 .card-url-warn code { font-family: var(--f-mono); }
@@ -3144,7 +3152,7 @@ body.is-dark .dbg-body {
   text-overflow: ellipsis;
 }
 .set-input:focus { border-color: var(--ink-3); outline: 0; }
-.set-input.is-warn { border-color: var(--warn, #d9831a); background: color-mix(in srgb, var(--warn, #d9831a) 6%, var(--panel)); }
+.set-input.is-warn { border-color: var(--caution); background: color-mix(in srgb, var(--caution) 8%, var(--panel)); }
 /* スイッチ等の単体コントロールは右寄せ */
 .set-row > .switch { justify-self: end; }
 
@@ -3172,9 +3180,9 @@ body.is-dark .dbg-body {
   margin: 6px 0 12px;
   padding: 8px 12px;
   font-size: calc(11.5px * var(--fs-mul, 1.1) * var(--fs, 1));
-  color: var(--warn, #d9831a);
-  background: color-mix(in srgb, var(--warn, #d9831a) 8%, transparent);
-  border-left: 2px solid var(--warn, #d9831a);
+  color: var(--caution);
+  background: var(--caution-soft);
+  border-left: 2px solid var(--caution);
   border-radius: 2px;
 }
 

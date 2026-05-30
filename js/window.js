@@ -264,7 +264,7 @@ export class AgentWindow {
       this._handleAgentMessage(text, final);
       if (this.lastSendAt && final) {
         this.lastLatency = Date.now() - this.lastSendAt;
-        this._updateLatency();
+        this._stampLatency(this.lastLatency);
         this.lastSendAt = null;
       }
     });
@@ -322,10 +322,24 @@ export class AgentWindow {
     if (s === "error") dot.classList.add("is-error");
   }
 
-  _updateLatency() {
-    const el = this.el.querySelector(".aw-latency");
-    if (this.lastLatency != null) el.textContent = `${this.lastLatency} ms`;
-    else el.textContent = "— ms";
+  // 応答が確定したら、 直近の agent メッセージ吹き出しの右下に所要時間を刻む。
+  _stampLatency(ms) {
+    if (ms == null) return;
+    const stream = this.el.querySelector(".chat-stream");
+    if (!stream) return;
+    // 最後の agent メッセージ (今 final になった吹き出し) を探す
+    const agents = stream.querySelectorAll(".msg-agent .msg-bubble");
+    const bubble = agents[agents.length - 1];
+    if (!bubble) return;
+    let badge = bubble.querySelector(".msg-latency");
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.className = "msg-latency";
+      bubble.appendChild(badge);
+    }
+    const txt = ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${ms} ms`;
+    badge.textContent = txt;
+    badge.title = `応答時間 ${ms} ms`;
   }
 
   // ───────────────────────────────────────────
@@ -1042,7 +1056,7 @@ export class AgentWindow {
           </div>
           <input class="set-input ${urlMismatch ? "is-warn" : ""}" value="${escapeHtml(effectiveUrl)}" placeholder="(loading…)" readonly title="${cardTip}" />
         </div>
-        ${urlMismatch ? `<div class="set-warn">⚠ Discovery URL と Effective endpoint が異なります。 サーバ側で agent-card の url を正しい host に設定してください。</div>` : ""}
+        ${urlMismatch ? `<div class="set-warn">⚠ 参考: Discovery URL と Effective endpoint が異なります。 AgentCard の url フィールドに従い、 メッセージは Effective endpoint に送信されます (gateway/proxy 経由などで意図的に異なる場合もあります)。 意図しない場合はサーバ側で agent-card の url を見直してください。</div>` : ""}
         ` : ""}
         <div class="set-row" title="HTTP Authorization ヘッダに付ける bearer token。 connect ダイアログで指定したものが保存されています。">
           <div class="set-row-text">

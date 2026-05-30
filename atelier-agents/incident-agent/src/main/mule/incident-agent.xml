@@ -133,22 +133,24 @@ if (sizeOf(dataParts) > 0) (dataParts[0].data default null) else null]]></ee:set
             <when expression="#[vars.directPart != null]">
                 <flow-ref name="directToolFlow"/>
             </when>
-            <!-- ============ 通常: 人間の自然文 → LLM tool-use ループ ============ -->
+            <!-- ============ 通常: 人間の自然文 → intent 抽出 (LLM) → 決定論ルータ ============
+                 旧 tool-use ループ (initAgentStateFlow / agentLoopFlow …) は廃止し、
+                 「LLM は NL→構造化 JSON 変換のみ、 分岐/検証/整形は Mule で決定論的に」 の
+                 二段構成に置換。 弱い LLM に条件分岐を語らせない。 -->
             <otherwise>
-                <flow-ref name="loadMemoryFlow"/>
                 <try>
-                    <flow-ref name="initAgentStateFlow"/>
-                    <flow-ref name="agentLoopFlow"/>
+                    <flow-ref name="intentExtractFlow"/>
+                    <flow-ref name="intentRouterFlow"/>
                     <error-handler>
                         <on-error-continue type="ANY">
                             <logger level="WARN"
-                                    message="#['Agent loop failed: ' ++ (error.description default error.message default 'unknown')]"/>
+                                    message="#['intent pipeline failed: ' ++ (error.description default error.message default 'unknown')]"/>
                             <ee:transform>
                                 <ee:variables>
                                     <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
 output application/java
 ---
-"⚠️ atelier-incident-agent: Agent ループ中にエラーが発生しました。\n" ++
+"⚠️ atelier-incident-agent: 処理中にエラーが発生しました。\n" ++
 "  " ++ ((error.description default (error.message default "unknown")) as String)]]></ee:set-variable>
                                 </ee:variables>
                             </ee:transform>
@@ -252,19 +254,34 @@ var sysPrompt =
 "\n" ++
 "ユーザが「何ができる?」「物流のことも頼める?」「君の役割は?」のようなツール実行を伴わない質問をしてきたら、 NEED_INFO ゲートを発動せず、 1〜3 行の自然文で簡潔に答える。\n" ++
 "  - できる: 既存インシデントの照会 / 新規インシデントの登録 / ステータス更新。\n" ++
-"  - できない (担当外): 在庫照会・仮確保 (logistics-agent) / 法務 (legal-agent) / 発注 (procurement-agent) / 承認依頼 (org-agent) / supplier・part の正規化 ID 解決 (broker または MDM)。\n" ++
+"  - できない (担当外): 在庫照会・仮確保 (logistics-agent) / 法務 (legal-agent) / 発注 (procurement-agent) / 承認依頼 (org-agent)。\n" ++
 "  → 担当外の依頼は、 担当する agent に直接話すか broker に投げてもらうよう案内する。\n" ++
+"  ※ 取引先の社名 (例: 九州製作所) は incident のために agent 自身が GoldenId に解決できる。 社名で言われても out_of_scope にしない。\n" ++
 "\n" ++
-"具体的にインシデント関連のツール実行 (照会・登録・更新) を頼まれたときだけ、 STEP 1 のゲートに進む。\n" ++
+"具体的にインシデント関連のツール実行を頼まれたときだけ、 STEP 1 のゲートに進む。\n" ++
 "\n" ++
-"=== STEP 1: 最優先 — NEED_INFO ゲート (ツール実行依頼に対してのみ発動。 違反する出力は重大エラー) ===\n" ++
+"=== STEP 0.5: READ-ONLY な照会・一覧は NEED_INFO ゲート無しで即実行 ===\n" ++
 "\n" ++
-"以下の **3 つすべて** が user メッセージに揃っていなければ、 何があっても tool を呼ばず、 ADVISORY/EXECUTE テンプレ (テーブル含む) も一切書かず、 [NEED_INFO] block **だけ** を返す:\n" ++
+"以下は副作用が無い READ 操作。 STEP 1 のゲートを **絶対に発動させず**、 直ちに対応 tool を呼ぶ:\n" ++
+"  - 「インシデントの一覧」「〜のインシデントを教えて」「最近のインシデント」「OPEN のインシデント」等の一覧・検索依頼\n" ++
+"    → **list_incidents** を呼ぶ。 絞り込み条件 (supplierGoldenId / partNumber / status / severity / since) は\n" ++
+"      ユーザ発話にあるものだけ引数に入れ、 無ければ省略する (全パラメータ任意。 何も無ければ最新一覧)。\n" ++
+"      ★ list_incidents には severity も supplierGoldenId も **必須ではない**。 これらを聞き返してはいけない。\n" ++
+"      ユーザが「九州製作所」のような社名しか言っていなくても、 そのまま list_incidents を呼んでよい\n" ++
+"      (supplierGoldenId が分かればそれを、 分からなければ supplierName 相当は使えないので無条件一覧でよい)。\n" ++
+"  - 特定 incidentId (INC-XXXX) の状態確認 → **lookup_incident** を呼ぶ (incidentId だけで十分)。\n" ++
+"\n" ++
+"=== STEP 1: NEED_INFO ゲート (新規登録 register_incident の依頼に対してのみ発動。 違反する出力は重大エラー) ===\n" ++
+"\n" ++
+"ユーザが **新規インシデントの登録・起票** (「登録して」「起票して」「新規インシデントとして〜」) を求めた場合に限り、\n" ++
+"以下の **3 つすべて** が user メッセージに揃っていなければ、 register_incident を呼ばず、 ADVISORY/EXECUTE テンプレ\n" ++
+"(テーブル含む) も一切書かず、 [NEED_INFO] block **だけ** を返す:\n" ++
 "  1. supplierGoldenId (正規化済の G-XXX 形式)。 ユーザが「関西部品」のような名前で言っただけでは **不足**。\n" ++
 "  2. partNumber (正規化済の P-YYYY-... 形式)。 ユーザが「P-2024-KAN-001」と言っていれば OK。\n" ++
 "  3. severity (HIGH / MEDIUM / LOW / CRITICAL のいずれかの正規化値)。 「不良 15%」「不良率」「欠品」「遅延」のような自然文は severity **ではない**。\n" ++
 "\n" ++
-"  注意: incidentId (INC-XXXX) が含まれていても、 上記 3 つが揃っていなければ NEED_INFO 必須。 「既存 incident をクローズしますか?」のような ADVISORY を勝手に組み立てない。\n" ++
+"  ★ このゲートは **登録 (register_incident) のときだけ**。 一覧 (list_incidents) や照会 (lookup_incident) では\n" ++
+"    決して発動しない。 「一覧を見たい」のに severity を聞き返すのは重大エラー。\n" ++
 "\n" ++
 "  **絶対禁止例 (これらは重大エラー)**:\n" ++
 "    - サプライヤー名「関西部品」を見て supplierGoldenId=\"G-KANSAI-PARTS-001\" を勝手に作る → ❌\n" ++
@@ -281,7 +298,7 @@ var sysPrompt =
 "\n" ++
 "=== STEP 2: 全項目揃った場合のみ — 通常の処理 ===\n" ++
 "\n" ++
-"利用可能 tool: lookup_incident / register_incident / update_incident_status のみ。\n" ++
+"利用可能 tool: list_incidents (一覧・検索, READ) / lookup_incident (1件照会, READ) / register_incident (新規登録, WRITE) / update_incident_status (状態更新, WRITE)。\n" ++
 "supplier / part / region / 在庫 / 契約 等を解決する tool は持っていない。\n" ++
 "\n" ++
 "原則:\n" ++
@@ -369,6 +386,22 @@ output application/java
           status:     { "type": "string", "enum": ["OPEN", "IN_PROGRESS", "RESOLVED"] }
         },
         required: ["incidentId", "status"]
+      }
+  }},
+  { "type": "function", "function": {
+      name: "list_incidents",
+      description: "インシデント一覧を取得する READ-ONLY ツール。CreatedDate DESC、既定 limit=10 (上限 50)。全パラメータ任意 — 何も指定しなければ最新一覧を返す。supplierGoldenId / partNumber / status (OPEN/IN_PROGRESS/RESOLVED/ALL) / severity / since (ISO日付) / limit で絞り込める。一覧・照会の依頼にはこのツールを使う (register は不要)。",
+      parameters: {
+        "type": "object",
+        properties: {
+          supplierGoldenId: { "type": "string" },
+          partNumber:       { "type": "string" },
+          status:           { "type": "string" },
+          severity:         { "type": "string" },
+          since:            { "type": "string" },
+          limit:            { "type": "integer" }
+        },
+        required: []
       }
   }}
 ]]]></ee:set-variable>
@@ -498,6 +531,7 @@ output application/java
 var n = (vars.toolName default "") as String
 ---
 if (n == "lookup_incident" or n == "register_incident" or n == "update_incident_status") "incident"
+else if (n == "list_incidents") "mdm"
 else "unknown"]]></ee:set-variable>
                         </ee:variables>
                     </ee:transform>
@@ -522,6 +556,434 @@ output application/java
                         </ee:variables>
                     </ee:transform>
                 </foreach>
+            </otherwise>
+        </choice>
+    </sub-flow>
+
+    <!-- ============================================================
+         intentExtractFlow — LLM は「自然文 → 構造化 intent JSON」変換だけに専念。
+         分岐や検証はしない。 response_format で JSON object を強制。
+         出力 vars.intent = { intent, entities{...}, rawMessage, language }
+         ============================================================ -->
+    <sub-flow name="intentExtractFlow">
+        <ee:transform doc:name="build extractor messages">
+            <ee:variables>
+                <ee:set-variable variableName="extractMessages"><![CDATA[%dw 2.0
+output application/java
+var sys =
+"あなたはサプライチェーンのインシデント管理 agent の『意図抽出器』です。\n" ++
+"ユーザの 1 メッセージを読み、 下記 JSON スキーマだけを出力します。 説明文・前置き・コードフェンスは一切書かない。\n" ++
+"\n" ++
+"intent は次のいずれか 1 つ:\n" ++
+"  - \"list_incidents\"    : インシデントの一覧・検索 (「一覧」「〜のインシデント教えて」「最近の」「OPEN の」等)\n" ++
+"  - \"lookup_incident\"   : 特定 incidentId 1 件の状態照会\n" ++
+"  - \"register_incident\" : 新規インシデントの登録・起票 (「登録して」「起票して」「新規インシデントとして」)\n" ++
+"  - \"update_status\"     : 既存インシデントのステータス更新 (OPEN/IN_PROGRESS/RESOLVED)\n" ++
+"  - \"capability\"        : agent 自身の能力・役割を問うメタ質問のみ (「何ができる?」「君の役割は?」「使い方は?」)。\n" ++
+"  - \"out_of_scope\"      : 在庫・法務・発注・承認など incident 以外の依頼\n" ++
+"  - \"unknown\"           : 上記に当てはまらない / 判断不能\n" ++
+"\n" ++
+"★最重要の判定ルール:\n" ++
+"  - 発話に具体的な業務データ (社名・部品番号・incidentId・status 等) が含まれる、 または特定インシデントの\n" ++
+"    情報を求めている場合は、 capability では絶対にない。 一覧・照会系なら list_incidents (または lookup_incident)。\n" ++
+"  - 「〜を知りたい」「〜を教えて」「〜を見たい」は **データ照会** の意図。 capability ではない。\n" ++
+"    『九州製作所のインシデントを知りたい/教えて』→ list_incidents。\n" ++
+"  - capability は『(この agent は) 何ができる?』のように、 agent の機能そのものを尋ねるときだけ。\n" ++
+"\n" ++
+"entities は読み取れた値だけ入れ、 読み取れないものは null。 ★推測・正規化・捏造は禁止。\n" ++
+"  - supplierGoldenId : 正規化済 G-XXX 形式のみ。 社名しか無ければ null。\n" ++
+"  - supplierName     : 社名そのまま (例: 九州製作所)。\n" ++
+"  - partNumber       : P-YYYY-... 形式。\n" ++
+"  - incidentId       : INC-... 形式。\n" ++
+"  - severity         : ユーザが明示的に LOW/MEDIUM/HIGH/CRITICAL と言ったときだけ。 「不良15%」等は null。\n" ++
+"  - status           : OPEN/IN_PROGRESS/RESOLVED/ALL のいずれか明示時のみ。\n" ++
+"  - quantity         : 数量 (整数) 明示時のみ。\n" ++
+"  - since            : ISO 日付 明示時のみ。\n" ++
+"\n" ++
+"出力スキーマ (このキーだけ):\n" ++
+"{\n" ++
+"  \"intent\": \"...\",\n" ++
+"  \"entities\": { \"supplierGoldenId\": null, \"supplierName\": null, \"partNumber\": null, \"incidentId\": null, \"severity\": null, \"status\": null, \"quantity\": null, \"since\": null },\n" ++
+"  \"rawMessage\": \"ユーザ発話の原文そのまま\",\n" ++
+"  \"language\": \"ja\" または \"en\"\n" ++
+"}"
+// few-shot: 弱い LLM の intent 境界を実例で固定する。 特に「〜を知りたい/教えて」が
+// capability に誤分類される問題への対策。 各 assistant は理想の JSON 1 行。
+fun ex(intent, ents) = write({ intent: intent, entities: ents, rawMessage: "", language: "ja" }, "application/json")
+var nullEnts = { supplierGoldenId: null, supplierName: null, partNumber: null, incidentId: null, severity: null, status: null, quantity: null, since: null }
+---
+[
+  { role: "system", content: sys },
+  { role: "user",      content: "九州製作所のインシデントの一覧をしりたい" },
+  { role: "assistant", content: ex("list_incidents", nullEnts ++ { supplierName: "九州製作所" }) },
+  { role: "user",      content: "最近のインシデントを教えて" },
+  { role: "assistant", content: ex("list_incidents", nullEnts) },
+  { role: "user",      content: "INC-2026-0579 はどんな状態?" },
+  { role: "assistant", content: ex("lookup_incident", nullEnts ++ { incidentId: "INC-2026-0579" }) },
+  { role: "user",      content: "君は何ができるの?" },
+  { role: "assistant", content: ex("capability", nullEnts) },
+  { role: "user",      content: "G-KYUSHU-MFG-001 の P-2024-KYU-001 を severity HIGH で登録して" },
+  { role: "assistant", content: ex("register_incident", nullEnts ++ { supplierGoldenId: "G-KYUSHU-MFG-001", partNumber: "P-2024-KYU-001", severity: "HIGH" }) },
+  { role: "user",      content: "横浜倉庫の在庫を仮確保して" },
+  { role: "assistant", content: ex("out_of_scope", nullEnts) },
+  { role: "user",   content: (vars.userText default "") as String }
+]]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <!-- extractBody は extractMessages を参照するので別 transform に分ける
+             (同一 ee:variables 内では vars.extractMessages がまだ見えず null になる) -->
+        <ee:transform doc:name="build extractor body">
+            <ee:variables>
+                <ee:set-variable variableName="extractBody"><![CDATA[%dw 2.0
+output application/json
+---
+{
+  model:      (p('llm.model') default "gpt-5-mini") as String,
+  max_completion_tokens: (p('llm.max_tokens') default 2048) as Number,
+  messages:   (vars.extractMessages default [])
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <http:request method="POST" path="/openai/v1/chat/completions" config-ref="LLM_Request_config">
+            <http:body>#[vars.extractBody]</http:body>
+            <http:response-validator>
+                <http:success-status-code-validator values="0..599"/>
+            </http:response-validator>
+        </http:request>
+
+        <logger level="INFO"
+                message="#['incident-agent extractor content=' ++ (write(payload, 'application/json') default '?')]"/>
+
+        <ee:transform doc:name="parse intent JSON">
+            <ee:variables>
+                <ee:set-variable variableName="intent"><![CDATA[%dw 2.0
+output application/java
+// LLM 出力からコードフェンスや前後の散文を除去し、 最初の { 〜 最後の } を JSON として読む
+fun extractJson(s) = do {
+  var t = trim(s default "")
+  var noFence = (t replace /```(json)?/ with "") replace "```" with ""
+  var i = noFence indexOf "{"
+  var j = noFence lastIndexOf "}"
+  ---
+  if (i >= 0 and j > i) (noFence[i to j]) else "{}"
+}
+fun safeReadJson(s) =
+  if (s == null or (trim(s as String)) == "") {}
+  else read(extractJson(s as String), "application/json")
+// HTTP レスポンス payload は Binary のことがあるので明示的に JSON 化してから choices を読む
+var resp =
+  if (payload == null) {}
+  else if (payload is Binary) read(payload as String {encoding: "UTF-8"}, "application/json")
+  else if (payload is String) read(payload as String, "application/json")
+  else payload
+var raw = ((resp.choices default [])[0].message.content default "{}") as String
+var obj = safeReadJson(raw)
+---
+{
+  intent:     (obj.intent default "unknown") as String,
+  entities:   (obj.entities default {}),
+  rawMessage: (obj.rawMessage default ((vars.userText default "") as String)) as String,
+  language:   (obj.language default "ja") as String
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <logger level="INFO"
+                message="#['incident-agent intent=' ++ (vars.intent.intent default '?') ++ ' entities=' ++ write(vars.intent.entities default {}, 'application/json')]"/>
+    </sub-flow>
+
+    <!-- ============================================================
+         resolveSupplierFlow — ドメイン内の正規化を agent 自身が行う。
+         entities.supplierGoldenId が無く supplierName (社名) があるとき、
+         MDM の resolve_supplier を呼んで GoldenId に解決し entities に書き戻す。
+         「ID を取るのは agent の仕事」という自然な振る舞いを実現する。
+         broker の価値はドメイン *横断* の調整に純化し、 ドメイン *内* の ID 解決は各 agent 持ち。
+         ============================================================ -->
+    <sub-flow name="resolveSupplierFlow">
+        <choice>
+            <when expression='#[(vars.intent.entities.supplierGoldenId default null) == null and (vars.intent.entities.supplierName default null) != null]'>
+                <ee:transform doc:name="build resolve_supplier args">
+                    <ee:variables>
+                        <ee:set-variable variableName="toolName">#['resolve_supplier']</ee:set-variable>
+                        <ee:set-variable variableName="mcpKind">#['mdm']</ee:set-variable>
+                        <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+---
+{ supplierName: (vars.intent.entities.supplierName default "") as String }]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <flow-ref name="callMcpExecuteFlow"/>
+                <ee:transform doc:name="merge resolved goldenId back into entities">
+                    <ee:variables>
+                        <ee:set-variable variableName="intent"><![CDATA[%dw 2.0
+output application/java
+var r  = (vars.toolResult.result default vars.toolResult default {})
+var gid = if ((r.matched default false) == true) (r.supplier.goldenId default null) else null
+---
+vars.intent ++ {
+  entities: (vars.intent.entities default {}) ++
+    (if (gid != null) { supplierGoldenId: gid } else {})
+}]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <logger level="INFO"
+                        message="#['incident-agent resolved supplierName=' ++ (vars.intent.entities.supplierName default '?') ++ ' -> goldenId=' ++ (vars.intent.entities.supplierGoldenId default 'UNRESOLVED')]"/>
+            </when>
+            <otherwise>
+                <logger level="INFO" message="resolveSupplierFlow skipped (goldenId 既知 または 社名なし)"/>
+            </otherwise>
+        </choice>
+    </sub-flow>
+
+    <!-- ============================================================
+         intentRouterFlow — 抽出済 intent を決定論的に捌く。
+         LLM は使わない。 必須 slot 検証 → MCP 呼出 → 整形を Mule の choice + DataWeave で。
+         ============================================================ -->
+    <sub-flow name="intentRouterFlow">
+        <choice doc:name="dispatch by intent">
+            <!-- 一覧・検索: 副作用なし。 entities の非 null だけ渡して即実行 (ゲート無し) -->
+            <when expression='#[(vars.intent.intent default "") == "list_incidents"]'>
+                <ee:transform doc:name="build list args">
+                    <ee:variables>
+                        <ee:set-variable variableName="toolName">#['list_incidents']</ee:set-variable>
+                        <ee:set-variable variableName="mcpKind">#['mdm']</ee:set-variable>
+                        <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+var e = vars.intent.entities default {}
+---
+{} ++
+  (if (e.supplierGoldenId != null) { supplierGoldenId: e.supplierGoldenId } else {}) ++
+  (if (e.partNumber != null)       { partNumber: e.partNumber } else {}) ++
+  (if (e.status != null)           { status: e.status } else {}) ++
+  (if (e.severity != null)         { severity: e.severity } else {}) ++
+  (if (e.since != null)            { since: e.since } else {})]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <flow-ref name="callMcpExecuteFlow"/>
+                <ee:transform doc:name="format list result">
+                    <ee:variables>
+                        <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+var r = (vars.toolResult.result default vars.toolResult default {})
+var items = (r.items default [])
+fun cell(v) = if (v == null or (v as String) == "") "—" else (v as String)
+---
+if (sizeOf(items) == 0)
+  "該当するインシデントは見つかりませんでした。"
+else
+  ("- インシデント一覧 (表示 **" ++ (sizeOf(items) as String) ++ "件**" ++
+   (if ((r.total default null) != null) " / 全 **" ++ (r.total as String) ++ "件**" else "") ++ ")\n\n" ++
+   "| incidentId | 取引先 | 部品 | severity | status |\n" ++
+   "|---|---|---|---|---|\n" ++
+   (items map ((it) ->
+     "| **" ++ cell(it.incidentId default it.name) ++ "** | " ++ cell(it.supplierName default it.supplierGoldenId) ++
+     " | " ++ cell(it.partNumber) ++ " | " ++ cell(it.severity) ++ " | " ++ cell(it.status) ++ " |"
+   ) joinBy "\n"))]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </when>
+
+            <!-- 1 件照会: incidentId 必須。 無ければ NEED_INFO (表で確定生成) -->
+            <when expression='#[(vars.intent.intent default "") == "lookup_incident"]'>
+                <choice>
+                    <when expression='#[(vars.intent.entities.incidentId default null) == null]'>
+                        <ee:transform>
+                            <ee:variables>
+                                <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"[NEED_INFO]\n- 照会する incidentId (INC-XXXX 形式) を教えてください。\n[/NEED_INFO]"]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                    </when>
+                    <otherwise>
+                        <ee:transform>
+                            <ee:variables>
+                                <ee:set-variable variableName="toolName">#['lookup_incident']</ee:set-variable>
+                                <ee:set-variable variableName="mcpKind">#['incident']</ee:set-variable>
+                                <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+---
+{ incidentId: (vars.intent.entities.incidentId default "") as String }]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                        <flow-ref name="callMcpExecuteFlow"/>
+                        <ee:transform>
+                            <ee:variables>
+                                <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+var r = (vars.toolResult.result default vars.toolResult default {})
+fun cell(v) = if (v == null or (v as String) == "") "—" else (v as String)
+---
+if ((r.exists default true) == false)
+  ("incidentId **" ++ (cell(vars.intent.entities.incidentId)) ++ "** は見つかりませんでした。")
+else
+  ("- インシデント詳細\n\n" ++
+   "| 項目 | 値 |\n|---|---|\n" ++
+   "| incidentId | **" ++ cell(r.incidentId default vars.intent.entities.incidentId) ++ "** |\n" ++
+   "| 取引先 | " ++ cell(r.supplierName default r.supplierGoldenId) ++ " |\n" ++
+   "| 部品 | " ++ cell(r.partNumber) ++ " |\n" ++
+   "| severity | " ++ cell(r.severity) ++ " |\n" ++
+   "| status | " ++ cell(r.status) ++ " |")]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                    </otherwise>
+                </choice>
+            </when>
+
+            <!-- 新規登録: まず社名→GoldenId を agent 自身が MDM 解決し、 そのうえで必須 slot を検証。
+                 欠けたものだけ NEED_INFO。 ユーザは社名で話せばよく、 GoldenId は要求されない。 -->
+            <when expression='#[(vars.intent.intent default "") == "register_incident"]'>
+                <flow-ref name="resolveSupplierFlow"/>
+                <ee:transform doc:name="compute missing slots">
+                    <ee:variables>
+                        <ee:set-variable variableName="missing"><![CDATA[%dw 2.0
+output application/java
+var e = vars.intent.entities default {}
+---
+[] ++
+  (if (e.supplierGoldenId == null)
+     [ (if (e.supplierName != null) ("取引先「" ++ (e.supplierName as String) ++ "」を解決できませんでした。 正式な取引先名または GoldenId (G-XXX)") else "取引先 (社名 または GoldenId G-XXX)") ]
+   else []) ++
+  (if (e.partNumber == null)       ["partNumber (P-YYYY-... 形式)"] else []) ++
+  (if (e.severity == null)         ["severity (LOW/MEDIUM/HIGH/CRITICAL)"] else [])]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <choice>
+                    <when expression="#[sizeOf(vars.missing default []) > 0]">
+                        <ee:transform>
+                            <ee:variables>
+                                <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"[NEED_INFO]\n" ++ ((vars.missing default []) map ((m) -> "- " ++ (m as String) ++ " を指定してください。") joinBy "\n") ++ "\n[/NEED_INFO]"]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                    </when>
+                    <otherwise>
+                        <ee:transform>
+                            <ee:variables>
+                                <ee:set-variable variableName="toolName">#['register_incident']</ee:set-variable>
+                                <ee:set-variable variableName="mcpKind">#['incident']</ee:set-variable>
+                                <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+var e = vars.intent.entities default {}
+---
+{
+  supplierGoldenId: e.supplierGoldenId,
+  partNumber:       e.partNumber,
+  severity:         e.severity,
+  rawMessage:       (vars.intent.rawMessage default (vars.userText default "")) as String
+} ++ (if (e.quantity != null) { quantity: e.quantity } else {})
+  ++ (if (e.incidentId != null) { incidentId: e.incidentId } else {})]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                        <flow-ref name="callMcpExecuteFlow"/>
+                        <ee:transform>
+                            <ee:variables>
+                                <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+var r = (vars.toolResult.result default vars.toolResult default {})
+fun cell(v) = if (v == null or (v as String) == "") "—" else (v as String)
+---
+"✅ インシデントを登録しました。\n\n" ++
+"| 項目 | 値 |\n|---|---|\n" ++
+"| incidentId | **" ++ cell(r.incidentId) ++ "** |\n" ++
+"| 取引先 | " ++ cell(r.supplierName default r.supplierGoldenId default vars.intent.entities.supplierGoldenId) ++ " |\n" ++
+"| 部品 | " ++ cell(r.partNumber default vars.intent.entities.partNumber) ++ " |\n" ++
+"| severity | " ++ cell(r.severity default vars.intent.entities.severity) ++ " |\n" ++
+"| status | " ++ cell(r.status default "OPEN") ++ " |"]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                    </otherwise>
+                </choice>
+            </when>
+
+            <!-- ステータス更新: incidentId + status 必須 -->
+            <when expression='#[(vars.intent.intent default "") == "update_status"]'>
+                <ee:transform doc:name="compute missing for update">
+                    <ee:variables>
+                        <ee:set-variable variableName="missing"><![CDATA[%dw 2.0
+output application/java
+var e = vars.intent.entities default {}
+---
+[] ++
+  (if (e.incidentId == null) ["incidentId (INC-XXXX)"] else []) ++
+  (if (e.status == null)     ["status (OPEN/IN_PROGRESS/RESOLVED)"] else [])]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <choice>
+                    <when expression="#[sizeOf(vars.missing default []) > 0]">
+                        <ee:transform>
+                            <ee:variables>
+                                <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"[NEED_INFO]\n" ++ ((vars.missing default []) map ((m) -> "- " ++ (m as String) ++ " を指定してください。") joinBy "\n") ++ "\n[/NEED_INFO]"]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                    </when>
+                    <otherwise>
+                        <ee:transform>
+                            <ee:variables>
+                                <ee:set-variable variableName="toolName">#['update_incident_status']</ee:set-variable>
+                                <ee:set-variable variableName="mcpKind">#['incident']</ee:set-variable>
+                                <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+var e = vars.intent.entities default {}
+---
+{ incidentId: e.incidentId, status: e.status }]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                        <flow-ref name="callMcpExecuteFlow"/>
+                        <ee:transform>
+                            <ee:variables>
+                                <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+var e = vars.intent.entities default {}
+---
+"✅ ステータスを更新しました。 **" ++ (e.incidentId as String) ++ "** → **" ++ (e.status as String) ++ "**"]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                    </otherwise>
+                </choice>
+            </when>
+
+            <!-- capability メタ質問: 静的テキスト -->
+            <when expression='#[(vars.intent.intent default "") == "capability"]'>
+                <ee:transform>
+                    <ee:variables>
+                        <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"ℹ️ インシデント管理 (atelier-incident-agent) です。\n\n**できること**\n- インシデントの一覧・検索 (取引先 / 部品 / status / severity で絞込み)\n- 既存 incidentId の状態照会\n- 新規インシデントの登録\n- ステータス更新 (OPEN / IN_PROGRESS / RESOLVED)\n\n**担当外** (他 agent / broker へ): 在庫・物流 / 法務 / 発注 / 承認 / supplier・part の ID 解決。"]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </when>
+
+            <!-- out_of_scope: 担当外案内 -->
+            <when expression='#[(vars.intent.intent default "") == "out_of_scope"]'>
+                <ee:transform>
+                    <ee:variables>
+                        <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"その依頼は incident-agent の担当外です。\n在庫・物流は logistics、 法務は legal、 発注は procurement、 承認は org の各 agent、 もしくは broker にお願いします。"]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </when>
+
+            <!-- unknown / フォールバック -->
+            <otherwise>
+                <ee:transform>
+                    <ee:variables>
+                        <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"ご依頼を解釈できませんでした。\n例: 「九州製作所のインシデント一覧」「INC-2026-0579 の状態」「G-KYUSHU-MFG-001 / P-2024-KYU-001 / severity HIGH で登録」"]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
             </otherwise>
         </choice>
     </sub-flow>
@@ -561,7 +1023,7 @@ else "unknown"]]></ee:set-variable>
                         <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
 output application/java
 ---
-write({ status: "error", agent: "atelier-incident-agent", mode: "direct", result: { code: "UNKNOWN_TOOL", message: "unsupported tool for direct mode: " ++ (vars.toolName default ""), supported: ["lookup_incident","register_incident","update_incident_status"] } }, "application/json") as String]]></ee:set-variable>
+write({ status: "error", agent: "atelier-incident-agent", mode: "direct", result: { code: "UNKNOWN_TOOL", message: "unsupported tool for direct mode: " ++ (vars.toolName default ""), supported: ["lookup_incident","register_incident","update_incident_status","list_incidents"] } }, "application/json") as String]]></ee:set-variable>
                     </ee:variables>
                 </ee:transform>
             </when>

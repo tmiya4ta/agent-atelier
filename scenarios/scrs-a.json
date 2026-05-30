@@ -1,11 +1,12 @@
 {
   "app": "atelier",
-  "exportedAt": "2026-05-29T00:00:00.000Z",
-  "_doc": "シナリオ A — 2 ワークスペース。 WS1 'SCRS — 個別 agent' = 5 agent + MDM MCP + operator の window セット。 WS2 'SCRS — Broker (Agent Network)' = StepB の MAF broker 1 window。 スクリプトは 3 種: (A1) broker なし・人間ハブの痛みを見せる手動台本、 (A1-AUTO) operator-agent を進行役に 5 agent 連携を自動化、 (B1) StepB の atelier-broker に 1 メッセージ投げるだけで ID 解決→incident 登録→4 agent 並列→統合レポートが自律実行される broker あり版。 A1/A1-AUTO は WS1、 B1 は WS2 で流す。 題材は 九州製作所 / 部品 P-2024-KYU-001 ターボ分子ポンプ TMP-A310 / 不良率 15% / 影響 120 台。 5 agent + MDM MCP は StepA (shard d7gr5m)、 Agent Network broker は StepB (ingress shard n6coif)、 ともに Salesforce BG / BetterTogetherDemo。",
+  "exportedAt": "2026-05-30T03:51:21.698Z",
+  "_doc": "シナリオ A — 2 ワークスペース。 WS1 'SCRS — 個別 agent' = インシデント + MDM (Agent) の window セット。 WS2 'SCRS — Broker (Agent Network)' = StepB の MAF broker 1 window。 スクリプトは 3 種: (A1) broker なし・人間ハブの痛みを見せる手動台本、 (A1-AUTO) operator-agent を進行役に 5 agent 連携を自動化、 (B1) StepB の atelier-broker に 1 メッセージ投げるだけで ID 解決→incident 登録→4 agent 並列→統合レポートが自律実行される broker あり版。 A1/A1-AUTO は WS1、 B1 は WS2 で流す。 必要な agent はサイドバーの connection (bookmark) から都度 window を開く。 題材は 九州製作所 / 部品 P-2024-KYU-001 ターボ分子ポンプ TMP-A310 / 不良率 15% / 影響 120 台。 5 agent + MDM (MCP/Agent) は StepA (shard d7gr5m)、 Agent Network broker は StepB (ingress shard n6coif)、 ともに Salesforce BG / BetterTogetherDemo。",
   "state": {
     "v": 1,
-    "zoom": 1.0,
+    "zoom": 1,
     "sidebarCollapsed": false,
+    "theme": "light",
     "catalogs": [],
     "scripts": [
       {
@@ -31,8 +32,6 @@
       }
     ],
     "selectedScriptId": "A1",
-    "openScriptIds": [],
-    "scriptPanelOpen": false,
     "bookmarks": [
       {
         "key": "a2a::https://atelier-incident-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/",
@@ -80,6 +79,15 @@
         "channel": ""
       },
       {
+        "key": "a2a::https://atelier-mdm-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/",
+        "protoId": "a2a",
+        "url": "https://atelier-mdm-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/",
+        "name": "MDM (Agent)",
+        "auth": "",
+        "persona": "",
+        "channel": ""
+      },
+      {
         "key": "mcp::https://atelier-mcp-mdm-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/mcp",
         "protoId": "mcp",
         "url": "https://atelier-mcp-mdm-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/mcp",
@@ -89,19 +97,19 @@
         "channel": ""
       },
       {
-        "key": "a2a::https://atelier-operator-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/",
+        "key": "a2a::https://agent-network-ingress-gw-n6coif.xdfpbh.jpn-e1.cloudhub.io/atelier-broker/",
         "protoId": "a2a",
-        "url": "https://atelier-operator-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/",
-        "name": "operator",
+        "url": "https://agent-network-ingress-gw-n6coif.xdfpbh.jpn-e1.cloudhub.io/atelier-broker/",
+        "name": "Broker (Agent Network)",
         "auth": "",
         "persona": "",
         "channel": ""
       },
       {
-        "key": "a2a::https://agent-network-ingress-gw-n6coif.xdfpbh.jpn-e1.cloudhub.io/atelier-broker/",
+        "key": "a2a::https://atelier-operator-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/",
         "protoId": "a2a",
-        "url": "https://agent-network-ingress-gw-n6coif.xdfpbh.jpn-e1.cloudhub.io/atelier-broker/",
-        "name": "Broker (Agent Network)",
+        "url": "https://atelier-operator-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/",
+        "name": "operator",
         "auth": "",
         "persona": "",
         "channel": ""
@@ -124,119 +132,31 @@
             "pos": {
               "left": "16px",
               "top": "16px",
-              "width": "522px",
-              "height": "378px",
-              "zIndex": "190"
+              "width": "893px",
+              "height": "888px",
+              "zIndex": "210"
             },
-            "activeTab": "chat"
+            "activeTab": "chat",
+            "pinned": false
           },
           {
             "protoId": "a2a",
             "config": {
-              "url": "https://atelier-legal-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/",
-              "name": "法務",
+              "url": "https://atelier-mdm-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/",
+              "name": "MDM (Agent)",
               "auth": "",
               "persona": "",
               "channel": ""
             },
             "pos": {
-              "left": "554px",
+              "left": "925px",
               "top": "16px",
-              "width": "522px",
-              "height": "378px",
-              "zIndex": "189"
+              "width": "893px",
+              "height": "888px",
+              "zIndex": "209"
             },
-            "activeTab": "chat"
-          },
-          {
-            "protoId": "a2a",
-            "config": {
-              "url": "https://atelier-procurement-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/",
-              "name": "調達・在庫",
-              "auth": "",
-              "persona": "",
-              "channel": ""
-            },
-            "pos": {
-              "left": "1092px",
-              "top": "16px",
-              "width": "522px",
-              "height": "378px",
-              "zIndex": "188"
-            },
-            "activeTab": "chat"
-          },
-          {
-            "protoId": "a2a",
-            "config": {
-              "url": "https://atelier-logistics-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/",
-              "name": "物流",
-              "auth": "",
-              "persona": "",
-              "channel": ""
-            },
-            "pos": {
-              "left": "16px",
-              "top": "410px",
-              "width": "522px",
-              "height": "378px",
-              "zIndex": "187"
-            },
-            "activeTab": "chat"
-          },
-          {
-            "protoId": "a2a",
-            "config": {
-              "url": "https://atelier-org-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/",
-              "name": "組織・人事",
-              "auth": "",
-              "persona": "",
-              "channel": ""
-            },
-            "pos": {
-              "left": "554px",
-              "top": "410px",
-              "width": "522px",
-              "height": "378px",
-              "zIndex": "186"
-            },
-            "activeTab": "chat"
-          },
-          {
-            "protoId": "mcp",
-            "config": {
-              "url": "https://atelier-mcp-mdm-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/mcp",
-              "name": "MDM (MCP)",
-              "auth": "",
-              "persona": "",
-              "channel": ""
-            },
-            "pos": {
-              "left": "1092px",
-              "top": "410px",
-              "width": "522px",
-              "height": "378px",
-              "zIndex": "185"
-            },
-            "activeTab": "tools"
-          },
-          {
-            "protoId": "a2a",
-            "config": {
-              "url": "https://atelier-operator-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/",
-              "name": "operator",
-              "auth": "",
-              "persona": "",
-              "channel": ""
-            },
-            "pos": {
-              "left": "1092px",
-              "top": "804px",
-              "width": "522px",
-              "height": "378px",
-              "zIndex": "184"
-            },
-            "activeTab": "chat"
+            "activeTab": "chat",
+            "pinned": false
           }
         ]
       },
@@ -257,9 +177,10 @@
               "top": "32px",
               "width": "760px",
               "height": "680px",
-              "zIndex": "200"
+              "zIndex": "201"
             },
-            "activeTab": "chat"
+            "activeTab": "chat",
+            "pinned": false
           }
         ]
       }
