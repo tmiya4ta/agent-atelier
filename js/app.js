@@ -2969,22 +2969,45 @@ async function importFromUrlFlow() {
   }
 }
 
-// ─── Repository (mule-app に同梱された scenarios/index.json) から import ───
+// scenarios リポジトリの取得元。
+//   1) 同一オリジン (/scenarios/...) — atelier-static / dev-server が静的配信する場合
+//   2) GitHub raw — どこで開いていても、 push 済みの最新ファイルを直接読む (再デプロイ不要)
+// raw.githubusercontent.com は CORS 許可 (ACAO:*) なのでブラウザから直接 fetch 可能。
+const SCENARIO_REPO_RAW = "https://raw.githubusercontent.com/tmiya4ta/agent-atelier/feat/mdm-list-suppliers";
+
+// index の item.url は同一オリジン相対パス (/scenarios/xxx.json) なので、
+// GitHub raw から読むときは base を付け替える。
+function resolveScenarioUrl(url, base) {
+  if (!base) return url;                       // 同一オリジン: そのまま
+  if (/^https?:\/\//.test(url)) return url;     // 絶対 URL はそのまま
+  return base + (url.startsWith("/") ? url : "/" + url);
+}
+
+// ─── Repository (scenarios/index.json) から import ───
 async function importFromRepositoryFlow() {
-  // index は **同一オリジンの相対パス** を前提 (atelier-static が静的配信する)。
-  // dev-server / atelier-static どちらでも /scenarios/index.json で取れる。
-  let items;
+  // **GitHub raw を優先**: push 済みの最新シナリオを、 アプリを再デプロイせずに読む。
+  // raw が取れないとき (オフライン等) だけ同一オリジン (atelier-static / dev-server 同梱) に
+  // フォールバックする。
+  let items, repoBase = SCENARIO_REPO_RAW;
   try {
-    const res = await fetch("/scenarios/index.json", { headers: { Accept: "application/json" } });
+    const res = await fetch(`${SCENARIO_REPO_RAW}/scenarios/index.json`, { headers: { Accept: "application/json" }, cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const idx = await res.json();
     items = Array.isArray(idx?.items) ? idx.items : [];
-  } catch (err) {
-    await modalAlert({
-      title:   "Repository not available",
-      message: `/scenarios/index.json を取得できませんでした (${err?.message || err})。dev-server / atelier-static 越しに開いていますか?`
-    });
-    return;
+  } catch (errRaw) {
+    try {
+      const res = await fetch("/scenarios/index.json", { headers: { Accept: "application/json" } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const idx = await res.json();
+      items = Array.isArray(idx?.items) ? idx.items : [];
+      repoBase = "";   // 同一オリジン: item.url をそのまま使う
+    } catch (errLocal) {
+      await modalAlert({
+        title:   "Repository not available",
+        message: `scenarios/index.json を取得できませんでした。\n- GitHub raw: ${errRaw?.message || errRaw}\n- 同一オリジン: ${errLocal?.message || errLocal}`
+      });
+      return;
+    }
   }
   if (!items.length) {
     await modalAlert({ title: "Repository is empty", message: "Bundled snapshot がありません。" });
@@ -3003,13 +3026,14 @@ async function importFromRepositoryFlow() {
   });
   if (!pick) return;
   try {
-    const res = await fetch(pick, { headers: { Accept: "application/json" } });
+    const fetchUrl = resolveScenarioUrl(pick, repoBase);
+    const res = await fetch(fetchUrl, { headers: { Accept: "application/json" }, cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const text = await res.text();
     JSON.parse(text);   // sanity
     const picked = items.find(it => it.url === pick);
     const label = picked?.name || picked?.id || pick;
-    await applyImport(text, `"${label}"`);
+    await applyImport(text, `"${label}"${repoBase ? " (GitHub)" : ""}`);
   } catch (err) {
     await modalAlert({ title: "Import failed", message: err?.message || String(err) });
   }

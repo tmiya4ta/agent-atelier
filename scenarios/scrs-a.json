@@ -1,7 +1,7 @@
 {
   "app": "atelier",
-  "exportedAt": "2026-05-30T03:51:21.698Z",
-  "_doc": "シナリオ A — 2 ワークスペース。 WS1 'SCRS — 個別 agent' = インシデント + MDM (Agent) の window セット。 WS2 'SCRS — Broker (Agent Network)' = StepB の MAF broker 1 window。 スクリプトは 3 種: (A1) broker なし・人間ハブの痛みを見せる手動台本、 (A1-AUTO) operator-agent を進行役に 5 agent 連携を自動化、 (B1) StepB の atelier-broker に 1 メッセージ投げるだけで ID 解決→incident 登録→4 agent 並列→統合レポートが自律実行される broker あり版。 A1/A1-AUTO は WS1、 B1 は WS2 で流す。 必要な agent はサイドバーの connection (bookmark) から都度 window を開く。 題材は 九州製作所 / 部品 P-2024-KYU-001 ターボ分子ポンプ TMP-A310 / 不良率 15% / 影響 120 台。 5 agent + MDM (MCP/Agent) は StepA (shard d7gr5m)、 Agent Network broker は StepB (ingress shard n6coif)、 ともに Salesforce BG / BetterTogetherDemo。",
+  "exportedAt": "2026-05-30T06:30:00.000Z",
+  "_doc": "シナリオ A — SCRS (九州製作所 / ターボ分子ポンプ TMP-A310 / 部品 P-2024-KYU-001 / 不良率15% / 影響120台)。 3 台本: (A1) broker なし=人間がドメイン横断のハブになる痛み。 各 agent はドメイン内では賢く (社名→GoldenId は agent 自身が MDM で解決)、 だが担当外を頼むと「それは○○agentへ」と断る。 だから人間が incidentId と文脈を手で持ち回り、 法務→調達→物流→組織と順に投げ直すハメになる。 (A1-AUTO) その持ち回りを operator-agent が肩代わりして自動化。 (B1) broker に 1 文投げるだけで ID 解決→起票→4 agent 並列→統合レポートまで自律実行。 WS1=個別 agent 6 window (A1/A1-AUTO 用)、 WS2=broker 1 window (B1 用)。 5 agent+MDM は StepA (shard d7gr5m)、 broker は StepB (ingress n6coif)。 ともに Salesforce BG / BetterTogetherDemo。",
   "state": {
     "v": 1,
     "zoom": 1,
@@ -11,22 +11,22 @@
     "scripts": [
       {
         "id": "A1",
-        "name": "A1 — Broker なし: 人間がハブになる痛みを見せる",
-        "body": "# ────────────────────────────────────────────────────────────\n# A1. Broker なし — 人間がハブ\n#\n# 半導体製造装置のターボ分子ポンプ (九州製作所 / TMP-A310) で品質トラブル。\n# 同じ自然文インシデントを 5 agent に直接送る。\n# 各 agent は domain 外の正規化 ID (supplierGoldenId / region / category) を\n# 持たないので [NEED_INFO] block を返す。\n# 人間が atelier-mcp-mdm window を別途叩いて goldenId を解決し、\n# 5 agent に再投入する必要がある — それが broker の不在コスト。\n# ────────────────────────────────────────────────────────────\n\nclear\nsleep 1s\n\n# 1) インシデント — 起票しようとするが supplierGoldenId / severity が未解決\n< インシデント: 九州製作所の P-2024-KYU-001 (ターボ分子ポンプ TMP-A310) で軸受け振動の公差超過が 15% 発生。 影響 120 台。 新規インシデントとして登録してください。\n> インシデント 60s\nsleep 2s\n\n# 2) 法務 — 契約参照したいが supplierGoldenId が未解決\n< 法務: 九州製作所との品質保証協定書を確認して、 P-2024-KYU-001 の不良 15% で返品請求できますか?\n> 法務 60s\nsleep 2s\n\n# 3) 調達 — 代替部品 / PO ドラフトしたいが supplierGoldenId が未解決\n< 調達・在庫: 九州製作所の P-2024-KYU-001 の代替部品で 120 台の PO ドラフトを作ってください。\n> 調達・在庫 60s\nsleep 2s\n\n# 4) 物流 — 仮確保したいが partNumber 以外は分かっても、 incident コンテキスト未解決\n< 物流: P-2024-KYU-001 の代替部品を 120 台 仮確保しておいてください。\n> 物流 60s\nsleep 2s\n\n# 5) 組織・人事 — 承認依頼したいが region / category が未解決\n< 組織・人事: 九州製作所の P-2024-KYU-001 の不良対応で、 担当バイヤーに承認依頼を出したい。\n> 組織・人事 60s\n\n# ここで人間がハブになる必要が見える:\n#   - 全員から [NEED_INFO] が返ってくる\n#   - MCP window (atelier-mcp-mdm) の resolve_supplier で\n#     \"九州製作所\" → G-KYUSHU-MFG-001 を取り出して再投入\n#   - region は 九州、 category は 半導体製造装置、 と人間が補足\n#   - これを 1 タスクごとに繰り返す = 人間がブローカ役\n",
-        "createdAt": "2026-05-29T00:00:00.000Z",
-        "updatedAt": "2026-05-29T00:00:00.000Z"
+        "name": "A1 — Broker なし: 人間がドメイン横断のハブになる",
+        "body": "# ────────────────────────────────────────────────────────────\n# A1. Broker なし — 人間がドメイン横断のハブ\n#\n# 半導体製造装置のターボ分子ポンプ (九州製作所 / TMP-A310) で品質トラブル。\n#\n# 各 agent は「自ドメイン内では賢い」:\n#   - incident-agent は社名「九州製作所」を自分で GoldenId に解決して起票できる\n#     (ID をユーザに聞き返さない)\n# しかし「担当外を頼むと断る」:\n#   - incident に法務の話をしても「それは法務 agent へ」と境界を守る\n#\n# その結果、 人間が incidentId と文脈を手で持ち回り、\n# 法務→調達→物流→組織 と 1 つずつ投げ直す = 人間がブローカ役。\n# これが broker 不在のコスト (ID 解決ではなく、 ドメイン横断の調整)。\n# ────────────────────────────────────────────────────────────\n\nclear\nsleep 1s\n\n# 1) インシデント起票 — 社名だけで OK。 agent が GoldenId を自分で解決する\n< インシデント: 九州製作所の P-2024-KYU-001 (ターボ分子ポンプ TMP-A310) で軸受け振動の公差超過が 15% 発生。 影響 120 台。 severity HIGH。 新規インシデントとして登録してください。\n> インシデント 90s\nsleep 2s\n\n# 2) ためしに incident に「法務」を頼んでみる → 境界で断られる\n< インシデント: ついでに九州製作所との品質保証協定で返品請求できるか法務的に見て。\n> インシデント 60s\nsleep 2s\n\n# ↑ 「それは法務 agent の担当」と返ってくる。 人間が手で法務 window に移る必要がある。\n\n# 3) 人間が 法務 window に incidentId と文脈を持ち込む\n< 法務: 九州製作所 (P-2024-KYU-001) の不良 15% で発生したインシデントについて、 品質保証協定書から返品請求できますか?\n> 法務 90s\nsleep 2s\n\n# 4) 人間が 調達 window に移って代替部品を頼む\n< 調達・在庫: 九州製作所 P-2024-KYU-001 の代替部品で 120 台分の発注ドラフトを作ってください。\n> 調達・在庫 120s\nsleep 2s\n\n# 5) 人間が 物流 window に移って仮確保を頼む\n< 物流: P-2024-KYU-001 の代替部品を 120 台 仮確保しておいてください。\n> 物流 90s\nsleep 2s\n\n# 6) 人間が 組織・人事 window に移って承認依頼\n< 組織・人事: 九州製作所 P-2024-KYU-001 の不良対応で、 担当バイヤーに承認依頼を出してください。\n> 組織・人事 90s\n\n# まとめ: ID 解決は各 agent がやってくれた。 だが「次は法務、 次は調達…」と\n# ドメインをまたいで文脈を運ぶのは全部 人間。 window を 5 つ行き来した。\n# この横断の調整こそ broker が肩代わりする部分 (→ A1-AUTO / B1)。\n",
+        "createdAt": "2026-05-30T00:00:00.000Z",
+        "updatedAt": "2026-05-30T00:00:00.000Z"
       },
       {
         "id": "A1-AUTO",
-        "name": "A1-AUTO — operator-agent でデモを完全自動化",
-        "body": "# ────────────────────────────────────────────────────────────\n# A1-AUTO. broker の代わりに operator-agent (デモ進行役) が\n# agent 間の引き継ぎを自動で繋ぐ。\n#\n# 流れ:\n#   1) incident に起票 (severity を含めて NEED_INFO 回避) → incidentId を capture\n#   2) operator が \"次に法務に何を聞くか\" の文を生成 → 法務へ\n#   3) operator が \"§条項を踏まえて調達に何を頼むか\" → 調達へ\n#   4) operator が \"代替部品で物流に何を仮確保するか\" → 物流へ\n#   5) operator が \"承認依頼の文\" → 組織・人事へ\n#\n# operator は意思決定をしない。 直前応答から必要な値を抜き出して\n# 自然文 1 文を作るだけ。 [NEED_INFO] ブロックが captured に入って\n# いるときは、 不足項目を補った再送文を作る (ループ防止)。\n# ────────────────────────────────────────────────────────────\n\nclear\nsleep 1s\n\n# ── 1) インシデント起票 (severity HIGH を明示して NEED_INFO 回避) ──\n< インシデント: 九州製作所 (G-KYUSHU-MFG-001) の P-2024-KYU-001 (ターボ分子ポンプ TMP-A310) で軸受け振動の公差超過が 15% 発生、 影響 120 台。 severity HIGH。 region 九州。 新規インシデントとして登録してください。\n> インシデント 120s as inc_resp\nsleep 2s\n\n# ── 2) operator が法務へのメッセージを作成 ──\n^ operator: inc_resp に出てきた incidentId (INC-... 形式) を引用しつつ、 supplierGoldenId=G-KYUSHU-MFG-001 / partNumber=P-2024-KYU-001 / 不良率 15% を含めて、 法務に品質保証協定書から返品請求可能か問う依頼文を 1 文で → q_legal\n< 法務: ${q_legal}\n> 法務 120s as legal_resp\nsleep 2s\n\n# ── 3) operator が調達へのメッセージを作成 ──\n^ operator: legal_resp の §条項番号と inc_resp の incidentId、 supplierGoldenId=G-KYUSHU-MFG-001、 partNumber=P-2024-KYU-001、 数量 120 を全部含めて、 調達に代替部品の PO ドラフト作成を依頼する 1 文で → q_proc\n< 調達・在庫: ${q_proc}\n> 調達・在庫 150s as proc_resp\nsleep 2s\n\n# ── 4) operator が物流へのメッセージを作成 ──\n^ operator: proc_resp の代替 partNumber と数量、 inc_resp の incidentId を引用して、 物流に在庫仮確保を依頼する 1 文で → q_log\n< 物流: ${q_log}\n> 物流 120s as log_resp\nsleep 2s\n\n# ── 5) operator が組織・人事への承認依頼文を作成 ──\n^ operator: proc_resp の draftId、 inc_resp の incidentId、 supplierGoldenId=G-KYUSHU-MFG-001、 region=九州、 category=機械部品 を含めて、 担当バイヤーへの承認依頼を出す 1 文で → q_org\n< 組織・人事: ${q_org}\n> 組織・人事 120s as org_resp\n\n# 全 agent への自然文の組み立てを operator が引き受けたので、 人間は 1 行も書いていない。\n# これが broker 不在でも \"人間ハブ役\" を agent 化したらどうなるか、 のデモ。\n",
-        "createdAt": "2026-05-29T00:00:00.000Z",
-        "updatedAt": "2026-05-29T00:00:00.000Z"
+        "name": "A1-AUTO — operator-agent が横断の持ち回りを自動化",
+        "body": "# ────────────────────────────────────────────────────────────\n# A1-AUTO. broker の代わりに operator-agent (デモ進行役) が\n# A1 で人間がやっていた「ドメイン横断の持ち回り」を肩代わりする。\n#\n# 各 agent は自ドメインでは賢い (社名→GoldenId 解決等) ので、\n# operator は意思決定をせず、 直前応答から次の agent に渡す文を 1 文作るだけ。\n#\n# 流れ: incident 起票 → operator が法務文を生成 → 法務 → operator が調達文 →\n#       調達 → operator が物流文 → 物流 → operator が承認文 → 組織。\n# 人間は 1 行も書かない。\n# ────────────────────────────────────────────────────────────\n\nclear\nsleep 1s\n\n# ── 1) インシデント起票 (社名でOK / severity 明示) → 応答を capture ──\n< インシデント: 九州製作所の P-2024-KYU-001 (ターボ分子ポンプ TMP-A310) で軸受け振動の公差超過が 15% 発生、 影響 120 台。 severity HIGH。 新規インシデントとして登録してください。\n> インシデント 120s as inc_resp\nsleep 2s\n\n# ── 2) operator が法務へのメッセージを作成 ──\n^ operator: inc_resp の incidentId (INC-... 形式) と 取引先 GoldenId・partNumber=P-2024-KYU-001・不良率15% を引用して、 法務に品質保証協定書から返品請求可能か問う依頼文を 1 文で → q_legal\n< 法務: ${q_legal}\n> 法務 120s as legal_resp\nsleep 2s\n\n# ── 3) operator が調達へのメッセージを作成 ──\n^ operator: legal_resp の §条項番号と inc_resp の incidentId、 partNumber=P-2024-KYU-001、 数量 120 を含めて、 調達に代替部品の発注ドラフト作成を依頼する 1 文で → q_proc\n< 調達・在庫: ${q_proc}\n> 調達・在庫 150s as proc_resp\nsleep 2s\n\n# ── 4) operator が物流へのメッセージを作成 ──\n^ operator: proc_resp の代替 partNumber と数量、 inc_resp の incidentId を引用して、 物流に在庫仮確保を依頼する 1 文で → q_log\n< 物流: ${q_log}\n> 物流 120s as log_resp\nsleep 2s\n\n# ── 5) operator が組織・人事への承認依頼文を作成 ──\n^ operator: proc_resp の draftId、 inc_resp の incidentId、 region=九州 を含めて、 担当バイヤーへの承認依頼を出す 1 文で → q_org\n< 組織・人事: ${q_org}\n> 組織・人事 120s as org_resp\n\n# 横断の持ち回りを operator が引き受けた。 人間は 1 行も書いていない。\n# ただし operator も「LLM で文を作る進行役」を別途立てている点に注意 (→ B1 が本命)。\n",
+        "createdAt": "2026-05-30T00:00:00.000Z",
+        "updatedAt": "2026-05-30T00:00:00.000Z"
       },
       {
         "id": "B1",
-        "name": "B1 — Broker あり: Agent Network が自律ディスパッチ",
-        "body": "# ────────────────────────────────────────────────────────────\n# B1. Broker あり — MuleSoft Agent Fabric (StepB)\n#\n# A1 / A1-AUTO で人間 (または operator-agent) がやっていた\n# 「ID 解決 → incident 登録 → 4 agent への振り分け → 統合」を\n# 1 つの LLM broker (atelier-broker) が自律的に行う。\n#\n# この 1 メッセージを broker に投げるだけで:\n#   1) broker が「九州製作所」を MDM MCP で G-KYUSHU-MFG-001 に解決\n#   2) atelier-incident に登録 (INC-... を採番)\n#   3) 法務 / 調達 / 物流 / 組織 の 4 worker へ並列ディスパッチ\n#   4) 各 worker のサマリを 1 つの統合レポートに整形して返す\n#\n# A1 では人間が 5 window を行き来していたのが、broker window 1 つで完結する。\n# (LLM ループのため応答に 2〜4 分かかる。タイムアウトは 300s に設定)\n# ────────────────────────────────────────────────────────────\n\nclear\nsleep 1s\n\n< Broker (Agent Network): 九州製作所の P-2024-KYU-001 (ターボ分子ポンプ TMP-A310) で軸受け振動の公差超過が 15% 発生。 影響 120 台。 severity HIGH。 region 九州。 新規インシデントとして対応してください。\n> Broker (Agent Network) 300s\n\n# broker が返す統合レポートの中に:\n#   - インシデント ID (INC-...)\n#   - 取引先: 九州製作所 (G-KYUSHU-MFG-001)\n#   - 調達 / 物流 (在庫不足・仮確保 RSV-...) / 組織 / 法務 (返品・ペナルティ案)\n# が 1 度の応答で揃う。これが Agent Network の価値。\n",
+        "name": "B1 — Broker あり: Agent Network が横断を自律オーケストレーション",
+        "body": "# ────────────────────────────────────────────────────────────\n# B1. Broker あり — MuleSoft Agent Fabric (StepB)\n#\n# A1 で人間が、 A1-AUTO で operator が手作業で繋いでいた\n# 「ドメイン横断の調整」を、 1 つの LLM broker (atelier-broker) が自律的に行う。\n#\n# ★見せどころ: ドメイン内の賢さ (ID 解決等) は各 agent 持ち。\n#   broker は「起票 → 法務 → 調達 → 物流 → 組織 を横断で束ねる」調整だけに専念する。\n#   この 1 文を broker に投げるだけで:\n#     1) 取引先を解決し incident に起票 (INC-... 採番)\n#     2) 法務 / 調達 / 物流 / 組織 の 4 worker へ並列ディスパッチ\n#     3) 各 worker のサマリを 1 つの統合レポートに整形して返す\n#\n# A1 では人間が 5 window を行き来していたのが、broker window 1 つで完結する。\n# (LLM ループのため応答に 2〜4 分。 タイムアウトは 300s に設定)\n# ────────────────────────────────────────────────────────────\n\nclear\nsleep 1s\n\n< Broker (Agent Network): 九州製作所の P-2024-KYU-001 (ターボ分子ポンプ TMP-A310) で軸受け振動の公差超過が 15% 発生。 影響 120 台。 severity HIGH。 region 九州。 新規インシデントとして対応してください。\n> Broker (Agent Network) 300s\n\n# broker が返す統合レポートに、 起票した incidentId・取引先・\n# 調達 / 物流 (在庫不足・仮確保 RSV-...) / 組織 / 法務 (返品・ペナルティ案) が\n# 1 度の応答で揃う。 これが Agent Network の価値 = ドメイン横断の自律オーケストレーション。\n",
         "createdAt": "2026-05-30T00:00:00.000Z",
         "updatedAt": "2026-05-30T00:00:00.000Z"
       }
@@ -122,39 +122,43 @@
         "windows": [
           {
             "protoId": "a2a",
-            "config": {
-              "url": "https://atelier-incident-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/",
-              "name": "インシデント",
-              "auth": "",
-              "persona": "",
-              "channel": ""
-            },
-            "pos": {
-              "left": "16px",
-              "top": "16px",
-              "width": "893px",
-              "height": "888px",
-              "zIndex": "210"
-            },
+            "config": { "url": "https://atelier-incident-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/", "name": "インシデント", "auth": "", "persona": "", "channel": "" },
+            "pos": { "left": "16px", "top": "16px", "width": "520px", "height": "380px", "zIndex": "210" },
             "activeTab": "chat",
             "pinned": false
           },
           {
             "protoId": "a2a",
-            "config": {
-              "url": "https://atelier-mdm-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/",
-              "name": "MDM (Agent)",
-              "auth": "",
-              "persona": "",
-              "channel": ""
-            },
-            "pos": {
-              "left": "925px",
-              "top": "16px",
-              "width": "893px",
-              "height": "888px",
-              "zIndex": "209"
-            },
+            "config": { "url": "https://atelier-legal-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/", "name": "法務", "auth": "", "persona": "", "channel": "" },
+            "pos": { "left": "552px", "top": "16px", "width": "520px", "height": "380px", "zIndex": "209" },
+            "activeTab": "chat",
+            "pinned": false
+          },
+          {
+            "protoId": "a2a",
+            "config": { "url": "https://atelier-procurement-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/", "name": "調達・在庫", "auth": "", "persona": "", "channel": "" },
+            "pos": { "left": "1088px", "top": "16px", "width": "520px", "height": "380px", "zIndex": "208" },
+            "activeTab": "chat",
+            "pinned": false
+          },
+          {
+            "protoId": "a2a",
+            "config": { "url": "https://atelier-logistics-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/", "name": "物流", "auth": "", "persona": "", "channel": "" },
+            "pos": { "left": "16px", "top": "412px", "width": "520px", "height": "380px", "zIndex": "207" },
+            "activeTab": "chat",
+            "pinned": false
+          },
+          {
+            "protoId": "a2a",
+            "config": { "url": "https://atelier-org-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/", "name": "組織・人事", "auth": "", "persona": "", "channel": "" },
+            "pos": { "left": "552px", "top": "412px", "width": "520px", "height": "380px", "zIndex": "206" },
+            "activeTab": "chat",
+            "pinned": false
+          },
+          {
+            "protoId": "a2a",
+            "config": { "url": "https://atelier-operator-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/", "name": "operator", "auth": "", "persona": "", "channel": "" },
+            "pos": { "left": "1088px", "top": "412px", "width": "520px", "height": "380px", "zIndex": "205" },
             "activeTab": "chat",
             "pinned": false
           }
@@ -165,20 +169,8 @@
         "windows": [
           {
             "protoId": "a2a",
-            "config": {
-              "url": "https://agent-network-ingress-gw-n6coif.xdfpbh.jpn-e1.cloudhub.io/atelier-broker/",
-              "name": "Broker (Agent Network)",
-              "auth": "",
-              "persona": "",
-              "channel": ""
-            },
-            "pos": {
-              "left": "40px",
-              "top": "32px",
-              "width": "760px",
-              "height": "680px",
-              "zIndex": "201"
-            },
+            "config": { "url": "https://agent-network-ingress-gw-n6coif.xdfpbh.jpn-e1.cloudhub.io/atelier-broker/", "name": "Broker (Agent Network)", "auth": "", "persona": "", "channel": "" },
+            "pos": { "left": "40px", "top": "32px", "width": "760px", "height": "680px", "zIndex": "201" },
             "activeTab": "chat",
             "pinned": false
           }
