@@ -584,6 +584,9 @@ var sys =
 "  - \"unknown\"           : 上記に当てはまらない / 判断不能\n" ++
 "\n" ++
 "★最重要の判定ルール:\n" ++
+"  - ★まず out_of_scope を最優先で判定: 依頼の動詞が incident 以外のドメインの行為なら、 社名・部品番号・incidentId が含まれていても out_of_scope。\n" ++
+"    → 法務・契約・返品請求・ペナルティ (legal) / 代替部品・発注・発注ドラフト (procurement) / 在庫・仮確保 (logistics) / 担当者検索・承認依頼 (org)。\n" ++
+"    例: 『九州製作所との品質保証協定で返品請求できるか法務的に見て』→ out_of_scope (社名があっても法務の依頼)。\n" ++
 "  - 発話に具体的な業務データ (社名・部品番号・incidentId・status 等) が含まれる、 または特定インシデントの\n" ++
 "    情報を求めている場合は、 capability では絶対にない。 一覧・照会系なら list_incidents (または lookup_incident)。\n" ++
 "  - 「〜を知りたい」「〜を教えて」「〜を見たい」は **データ照会** の意図。 capability ではない。\n" ++
@@ -625,6 +628,12 @@ var nullEnts = { supplierGoldenId: null, supplierName: null, partNumber: null, i
   { role: "user",      content: "G-KYUSHU-MFG-001 の P-2024-KYU-001 を severity HIGH で登録して" },
   { role: "assistant", content: ex("register_incident", nullEnts ++ { supplierGoldenId: "G-KYUSHU-MFG-001", partNumber: "P-2024-KYU-001", severity: "HIGH" }) },
   { role: "user",      content: "横浜倉庫の在庫を仮確保して" },
+  { role: "assistant", content: ex("out_of_scope", nullEnts) },
+  { role: "user",      content: "九州製作所との品質保証協定で返品請求できるか法務的に見て" },
+  { role: "assistant", content: ex("out_of_scope", nullEnts) },
+  { role: "user",      content: "代替部品の発注ドラフトを作って" },
+  { role: "assistant", content: ex("out_of_scope", nullEnts) },
+  { role: "user",      content: "担当バイヤーに承認依頼を出して" },
   { role: "assistant", content: ex("out_of_scope", nullEnts) },
   { role: "user",   content: (vars.userText default "") as String }
 ]]]></ee:set-variable>

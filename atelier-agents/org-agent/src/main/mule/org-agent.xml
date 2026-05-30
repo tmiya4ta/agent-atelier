@@ -490,6 +490,50 @@ output application/java
          mode advise=担当バイヤーを探すだけ / execute=承認依頼送信まで
          ============================================================ -->
     <sub-flow name="orgExtractFlow">
+        <!-- broker は parts[0].text に JSON を埋めて送ることがある。 その場合 LLM 抽出を飛ばし
+             JSON を直接 entities に展開 (mode=execute)。 自然文なら通常の LLM 抽出。 -->
+        <ee:transform doc:name="detect embedded broker JSON">
+            <ee:variables>
+                <ee:set-variable variableName="brokerJson"><![CDATA[%dw 2.0
+output application/java
+fun tryRead(s) = (read(s, "application/json")) default null
+var ut = trim((vars.userText default "") as String)
+var i = ut indexOf "{"
+var j = ut lastIndexOf "}"
+var outer = if (i >= 0 and j > i) (tryRead(ut[i to j])) else null
+var innerStr = if (outer == null) null else ((outer."input" default outer.text default null))
+var inner =
+  if (outer == null) null
+  else if (innerStr != null and (innerStr is String)) (tryRead(innerStr as String))
+  else outer
+---
+if (inner != null and ((inner.incidentId default null) != null or (inner.region default null) != null or (inner.partNumber default null) != null or (inner.supplierGoldenId default null) != null)) inner else null]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <choice doc:name="埋め込みJSON か 自然文か">
+            <when expression="#[vars.brokerJson != null]">
+                <ee:transform doc:name="broker JSON → intent">
+                    <ee:variables>
+                        <ee:set-variable variableName="intent"><![CDATA[%dw 2.0
+output application/java
+var b = vars.brokerJson default {}
+fun nz(v) = if (v == null or (v as String) == "") null else v
+---
+{
+  scope: "org", mode: "execute",
+  entities: {
+    region:     nz(b.region default null),
+    category:   nz(b.category default null),
+    incidentId: nz(b.incidentId default null),
+    partNumber: nz(b.partNumber default null)
+  },
+  rawMessage: (b.reason default (vars.userText default "")) as String
+}]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <logger level="INFO" message="#['org-agent broker-JSON path entities=' ++ write(vars.intent.entities default {}, 'application/json')]"/>
+            </when>
+            <otherwise>
         <ee:transform doc:name="build extractor messages">
             <ee:variables>
                 <ee:set-variable variableName="extractMessages"><![CDATA[%dw 2.0
@@ -497,7 +541,10 @@ output application/java
 var sys =
 "あなたは組織・人事 agent の『意図抽出器』です。 ユーザの 1 メッセージを読み、 下記 JSON だけを出力。 説明やコードフェンスは書かない。\n" ++
 "\n" ++
-"scope: \"org\" (担当者検索・承認依頼) | \"capability\" | \"out_of_scope\"\n" ++
+"scope: \"org\" (担当者検索・承認依頼のみ) | \"capability\" | \"out_of_scope\"\n" ++
+"  - \"org\"          : 担当バイヤー/担当者を探す、 承認依頼を出す。 これだけ。\n" ++
+"  - \"out_of_scope\" : 上記以外は全部これ。 特に → 法務・契約・返品請求・ペナルティ (legal) / 代替部品・発注・発注ドラフト (procurement) / 在庫・仮確保 (logistics) / インシデント起票 (incident)。\n" ++
+"    ※ 文中に取引先名・部品番号・インシデントID が出てきても、 依頼の動詞が「担当者を探す/承認依頼を出す」でなければ out_of_scope。 entities に釣られて org にしない。\n" ++
 "mode : \"advise\" (適任の担当バイヤーを探すだけ) | \"execute\" (承認依頼を送信まで明示依頼: 「承認依頼を出して」「依頼して」「送って」)\n" ++
 "\n" ++
 "entities は読めた値だけ。 null 可。 推測禁止。\n" ++
@@ -514,6 +561,10 @@ var sys =
   { role: "user",      content: "何ができる?" },
   { role: "assistant", content: write({ scope: "capability", mode: "advise", entities: { region: null, category: null, incidentId: null, partNumber: null }, rawMessage: "" }, "application/json") },
   { role: "user",      content: "在庫を仮確保して" },
+  { role: "assistant", content: write({ scope: "out_of_scope", mode: "advise", entities: { region: null, category: null, incidentId: null, partNumber: null }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: "品質保証協定で返品請求できるか法務的に見て" },
+  { role: "assistant", content: write({ scope: "out_of_scope", mode: "advise", entities: { region: null, category: null, incidentId: null, partNumber: null }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: "代替部品の発注ドラフトを作って" },
   { role: "assistant", content: write({ scope: "out_of_scope", mode: "advise", entities: { region: null, category: null, incidentId: null, partNumber: null }, rawMessage: "" }, "application/json") },
   { role: "user",      content: (vars.userText default "") as String }
 ]]]></ee:set-variable>
@@ -551,6 +602,8 @@ var obj = safeReadJson(raw)
             </ee:variables>
         </ee:transform>
         <logger level="INFO" message="#['org-agent scope=' ++ (vars.intent.scope default '?') ++ ' mode=' ++ (vars.intent.mode default '?') ++ ' entities=' ++ write(vars.intent.entities default {}, 'application/json')]"/>
+            </otherwise>
+        </choice>
     </sub-flow>
 
     <!-- ============================================================

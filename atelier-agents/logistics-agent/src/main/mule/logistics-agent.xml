@@ -498,6 +498,56 @@ output application/java
          mode advise=在庫照会だけ / execute=仮確保まで (reserve_inventory)
          ============================================================ -->
     <sub-flow name="logExtractFlow">
+        <!-- broker は parts[0].text に JSON (incidentId/partNumber/quantity 等) を埋めて
+             送ってくることがある。 その場合は LLM 抽出を飛ばし、 JSON を直接 entities に
+             展開する (mode=execute)。 自然文なら通常の LLM 抽出へ。 -->
+        <ee:transform doc:name="detect embedded broker JSON">
+            <ee:variables>
+                <ee:set-variable variableName="brokerJson"><![CDATA[%dw 2.0
+output application/java
+fun tryRead(s) = (read(s, "application/json")) default null
+var ut = trim((vars.userText default "") as String)
+// userText 内の最初の { 〜 最後の } を JSON として読む。 入れ子の "input":"{...}" にも対応。
+var i = ut indexOf "{"
+var j = ut lastIndexOf "}"
+var outer = if (i >= 0 and j > i) (tryRead(ut[i to j])) else null
+// outer が { input: "<json string>" } / { text: "..." } 形式なら中身をさらに parse
+var innerStr = if (outer == null) null else ((outer."input" default outer.text default null))
+var inner =
+  if (outer == null) null
+  else if (innerStr != null and (innerStr is String)) (tryRead(innerStr as String))
+  else outer
+---
+if (inner != null and ((inner.partNumber default null) != null or (inner.incidentId default null) != null or (inner.supplierGoldenId default null) != null)) inner else null]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <choice doc:name="埋め込みJSON か 自然文か">
+            <when expression="#[vars.brokerJson != null]">
+                <ee:transform doc:name="broker JSON → intent (LLM 不要)">
+                    <ee:variables>
+                        <ee:set-variable variableName="intent"><![CDATA[%dw 2.0
+output application/java
+var b = vars.brokerJson default {}
+// broker からの dispatch は実行依頼。 partNumber は代替があればそれを優先。
+var pn = (b.alternativePartNumber default "") as String
+var part = if (pn != "") pn else (b.partNumber default null)
+---
+{
+  scope: "logistics",
+  mode:  "execute",
+  entities: {
+    partNumber: part,
+    quantity:   (b.quantity default null),
+    incidentId: (b.incidentId default null)
+  },
+  rawMessage: (b.reason default (vars.userText default "")) as String
+}]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <logger level="INFO" message="#['log-agent broker-JSON path entities=' ++ write(vars.intent.entities default {}, 'application/json')]"/>
+            </when>
+            <otherwise>
         <ee:transform doc:name="build extractor messages">
             <ee:variables>
                 <ee:set-variable variableName="extractMessages"><![CDATA[%dw 2.0
@@ -559,6 +609,8 @@ var obj = safeReadJson(raw)
             </ee:variables>
         </ee:transform>
         <logger level="INFO" message="#['log-agent scope=' ++ (vars.intent.scope default '?') ++ ' mode=' ++ (vars.intent.mode default '?') ++ ' entities=' ++ write(vars.intent.entities default {}, 'application/json')]"/>
+            </otherwise>
+        </choice>
     </sub-flow>
 
     <!-- ============================================================

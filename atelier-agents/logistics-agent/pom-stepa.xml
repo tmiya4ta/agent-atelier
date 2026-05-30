@@ -10,7 +10,7 @@
 
     <groupId>4283bf7b-276e-44bc-8c6b-bd9b622d42b4</groupId>
     <artifactId>atelier-logistics-agent</artifactId>
-    <version>1.8.0</version>
+    <version>1.8.3</version>
     <packaging>mule-application</packaging>
 
     <name>atelier-logistics-agent</name>
