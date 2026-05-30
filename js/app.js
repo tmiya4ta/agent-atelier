@@ -1810,11 +1810,12 @@ function renderScripts() {
     const isRunningThis = !!(state._script && state._script.loopScriptId === s.id);
     li.innerHTML = `
       <span class="script-name">${escapeHtml(s.name)}</span>
-      <button class="script-run ${isRunningThis ? "is-running" : ""}"
-              title="${isRunningThis ? "running…" : "Run this script (no panel open)"}"
-              aria-label="run script"
-              ${isRunningThis ? "disabled" : ""}>
-        <svg viewBox="0 0 12 12" width="9" height="9"><path d="M3 2 L10 6 L3 10 Z" fill="currentColor"/></svg>
+      <button class="script-run ${isRunningThis ? "is-stop" : ""}"
+              title="${isRunningThis ? "Stop this script" : "Run this script (no panel open)"}"
+              aria-label="${isRunningThis ? "stop script" : "run script"}">
+        ${isRunningThis
+          ? `<svg viewBox="0 0 12 12" width="8" height="8"><rect x="2.5" y="2.5" width="7" height="7" rx="1" fill="currentColor"/></svg>`
+          : `<svg viewBox="0 0 12 12" width="9" height="9"><path d="M3 2 L10 6 L3 10 Z" fill="currentColor"/></svg>`}
       </button>
       <button class="script-loop ${s.autoLoop ? "is-on" : ""} ${(state._script && state.selectedScriptId === s.id && s.autoLoop) ? "is-running" : ""}"
               title="${s.autoLoop ? "auto loop ON (click to stop)" : "auto loop mode (repeat run)"}"
@@ -1836,7 +1837,13 @@ function renderScripts() {
       }
       if (e.target.closest(".script-run")) {
         e.stopPropagation();
-        if (state._script) return;   // 既に何か走ってる
+        // この script が走っているなら STOP ボタンとして機能 (panel を開かずに止める)。
+        if (state._script && state._script.loopScriptId === s.id) {
+          state._script.loopShouldStop = true;   // loop モードなら次 iter で抜ける
+          state._script.runner?.stop();           // 実行中の runner を中断
+          return;
+        }
+        if (state._script) return;   // 別の script が走っている
         runScript({ text: s.body || "", scriptId: s.id });
         return;
       }
@@ -2461,6 +2468,10 @@ async function runScript(opts = {}) {
   const script = findScript(opts.scriptId || state.selectedScriptId);
   const loopMode = !!script?.autoLoop;
 
+  // run したらエディタ (script panel) を閉じて、 ウインドウ側の実行が見えるようにする。
+  // script の実行は panel と独立なので、 閉じても走り続ける。
+  if (state.scriptPanelOpen) closeScriptPanel();
+
   $("#scriptRun").disabled  = true;
   $("#scriptStop").disabled = false;
   state._script = { runner: null, loopScriptId: script?.id || null, loopShouldStop: false };
@@ -2738,17 +2749,32 @@ async function openImportPicker() {
     title: "Import configuration",
     message: "Load a saved snapshot. This replaces the current connections, catalogs and scripts.",
     choices: [
-      { id: "file", label: "From file…", description: "Pick a .json file from this device" },
-      { id: "url",  label: "From URL…",  description: "Fetch a JSON snapshot over HTTP(S)" },
-      { id: "repo", label: "From repos…", description: "Pick from snapshots bundled with this app" }
+      { id: "file",   label: "From file…",        description: "Pick a .json file from this device" },
+      { id: "remote", label: "From remote site…", description: "Fetch from the scenario repository or a direct URL" }
     ]
   });
   if (choice === "file") {
     $("#importFile").click();
-  } else if (choice === "url") {
-    await importFromUrlFlow();
-  } else if (choice === "repo") {
+  } else if (choice === "remote") {
+    await importFromRemoteSiteFlow();
+  }
+}
+
+// Import from remote site — repository (bundled snapshots) か direct URL かを選ばせてから
+// それぞれの既存フローに分岐する。
+async function importFromRemoteSiteFlow() {
+  const where = await modalChoice({
+    title: "Import from remote site",
+    message: "Where should the snapshot come from?",
+    choices: [
+      { id: "repo", label: "Repository", description: "Pick from the bundled scenario list" },
+      { id: "url",  label: "Direct URL", description: "Fetch a JSON snapshot from an HTTP(S) URL" }
+    ]
+  });
+  if (where === "repo") {
     await importFromRepositoryFlow();
+  } else if (where === "url") {
+    await importFromUrlFlow();
   }
 }
 
@@ -2846,8 +2872,10 @@ async function chooseImportScope() {
 }
 
 // Returns true if import happened (so caller can persist URL history etc.).
-async function applyImport(text, sourceLabel) {
-  const scope = await chooseImportScope();
+async function applyImport(text, sourceLabel, presetScope) {
+  // presetScope が渡されたら scope ダイアログを省略 (repository フローが
+  // "Scenarios only" チェックボックスで既に決めているケース)。
+  const scope = presetScope || await chooseImportScope();
   if (!scope) return false;
   if (scope === "all") {
     const ok = await modalConfirm({
@@ -3013,18 +3041,24 @@ async function importFromRepositoryFlow() {
     await modalAlert({ title: "Repository is empty", message: "Bundled snapshot がありません。" });
     return;
   }
-  // 1 段だけ聞く: snapshot を選ぶ。 scope (Everything / Scenarios only) は applyImport 側で 1 回聞く。
-  // (以前は extras チェックボックスを足して 2 段聞いていた — 重複質問になるので統一)
-  const pick = await modalChoice({
+  // snapshot 選択 + "Scenarios only" チェックボックスを 1 ダイアログにまとめる。
+  // チェック ON → scenarios のみ merge / OFF → everything 置換。
+  // これで scope を聞く 2 つ目のダイアログ (chooseImportScope) を省略でき、 クリック数が減る。
+  const result = await modalChoice({
     title:   "Import from repository",
     message: "Pick a snapshot to import.",
     choices: items.map(it => ({
       id:          it.url,
       label:       it.name || it.id || it.url,
       description: it.description || it.url
-    }))
+    })),
+    extras: [
+      { id: "scriptsOnly", label: "Scenarios only", description: "Merge scenarios only — keep current connections, no reload", defaultChecked: true }
+    ]
   });
+  const pick = result?.id;
   if (!pick) return;
+  const scope = result?.extras?.scriptsOnly ? "scripts" : "all";
   try {
     const fetchUrl = resolveScenarioUrl(pick, repoBase);
     const res = await fetch(fetchUrl, { headers: { Accept: "application/json" }, cache: "no-store" });
@@ -3033,7 +3067,7 @@ async function importFromRepositoryFlow() {
     JSON.parse(text);   // sanity
     const picked = items.find(it => it.url === pick);
     const label = picked?.name || picked?.id || pick;
-    await applyImport(text, `"${label}"${repoBase ? " (GitHub)" : ""}`);
+    await applyImport(text, `"${label}"${repoBase ? " (GitHub)" : ""}`, scope);
   } catch (err) {
     await modalAlert({ title: "Import failed", message: err?.message || String(err) });
   }

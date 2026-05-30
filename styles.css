@@ -1527,6 +1527,25 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   animation: pulse-soft 1.2s ease-in-out infinite;
   cursor: default;
 }
+/* 実行中はクリックで止められる赤い STOP ボタンに切り替える (panel を開かずに停止)。
+   点滅で「今走っている / 押せば止まる」を示す。 */
+.script-run.is-stop {
+  color: #fff;
+  background: var(--warn, #c0392b);
+  border-color: var(--warn, #c0392b);
+  animation: pulse-stop 1.1s ease-in-out infinite;
+  cursor: pointer;
+}
+.script-run.is-stop:hover {
+  color: #fff;
+  background: #c0392b;
+  border-color: #c0392b;
+  filter: brightness(1.08);
+}
+@keyframes pulse-stop {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(192,57,58, 0.45); }
+  50%      { box-shadow: 0 0 0 4px rgba(192,57,58, 0); }
+}
 .script-run[disabled] { opacity: 0.55; pointer-events: none; }
 
 /* ─── Bookmarks empty state ─── */
@@ -3734,12 +3753,34 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
   padding: 12px 14px;
   width: 100%;
 }
-.modal-choice-main { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
+/* シナリオ選択肢は "new connection" (.side-cta) と同じ navy グラデーションに揃える。
+   (同じ色・同じインセット影・白文字。 トーンを統一する) */
+.modal-choice.primary-btn {
+  color: var(--paper);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ink-navy-2) 70%, transparent) 0%, color-mix(in srgb, var(--ink-navy) 70%, transparent) 100%);
+  box-shadow: 0 1px 0 rgba(255,255,255, 0.12) inset,
+              0 2px 8px -3px rgba(31,42,74, 0.22),
+              0 1px 2px rgba(14,14,12, 0.04);
+}
+.modal-choice.primary-btn:hover {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ink-navy-2) 88%, transparent) 0%, color-mix(in srgb, var(--ink-navy) 88%, transparent) 100%);
+  box-shadow: 0 1px 0 rgba(255,255,255, 0.16) inset,
+              0 4px 12px -3px rgba(31,42,74, 0.26);
+}
+.modal-choice.primary-btn:active { transform: translateY(1px); }
+.modal-choice-main { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; min-width: 0; flex: 1; }
 .modal-choice-label { font-weight: 500; }
 .modal-choice-desc {
   font-size: calc(11px * var(--fs-mul, 1.1) * var(--fs, 1));
   color: rgba(255,255,255,0.7);
   font-weight: 400;
+  /* 長い説明は最大 2 行で省略 (…)。 シナリオ一覧が読みやすくなる。 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.4;
 }
 .modal-foot-stack .modal-foot-actions { justify-content: flex-end; }
 
@@ -4174,6 +4215,22 @@ body.is-dark .rail {
 }
 body.is-dark .rail::after { display: none; }
 body.is-dark .ws-tabs { background: var(--panel-soft); }
+
+/* script editor: 元の .script-panel 背景は light 固定 (rgba(245,247,250,.42))。
+   dark だとこの薄い白オーバーレイの上に dark テーマの token 色が乗って視認性が悪化する。
+   dark では暗い半透明サーフェスに差し替え、 gutter / token 色を背景に合わせる。 */
+body.is-dark .script-panel {
+  background: rgba(16, 22, 36, 0.86);
+  box-shadow: 0 -10px 30px -12px rgba(0,0,0, 0.45);
+}
+body.is-dark .script-gutter {
+  background: rgba(10, 14, 24, 0.55);
+}
+/* dark の token 色: コメント (--ink-4=#5C6987) は暗い背景で沈むので明るめに。
+   メッセージ本体 (--ink) はそのままで十分なコントラスト。 ${var} は紫が暗いので明色に。 */
+body.is-dark .tk-comment { color: #8A97B5; }
+body.is-dark .tk-var     { color: #D08BFF; }
+body.is-dark #scriptEditor::selection { background: rgba(56,182,232, 0.28); }
 
 /* sidebar の new connection ボタン: 元実装は color: var(--paper) (light=白)。
    dark では --paper が黒に変わって背景の navy と同化するので、
