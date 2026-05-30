@@ -895,13 +895,50 @@ var cap = (vars.agreement.penaltyCap default 0)
                                     </ee:variables>
                                 </ee:transform>
                                 <flow-ref name="callMcpExecuteFlow"/>
+                                <!-- ペナルティ結果を退避 (このあと risk-score 更新で vars.toolResult が上書きされる) -->
+                                <ee:transform doc:name="stash penalty result">
+                                    <ee:variables>
+                                        <ee:set-variable variableName="penaltyResult"><![CDATA[%dw 2.0
+output application/java
+---
+(vars.toolResult.result default vars.toolResult default {})]]></ee:set-variable>
+                                    </ee:variables>
+                                </ee:transform>
+                                <!-- STEP 4: サプライヤーのリスクスコアを引上げ (mdm)。
+                                     品質インシデントで返品・ペナルティまで至った取引先はリスク増。
+                                     既存 update_supplier_risk_score tool を配線。 score は 0.85 固定 (デモ値)。 -->
+                                <ee:transform doc:name="build update_supplier_risk_score args">
+                                    <ee:variables>
+                                        <ee:set-variable variableName="toolName">#['update_supplier_risk_score']</ee:set-variable>
+                                        <ee:set-variable variableName="mcpKind">#['mdm']</ee:set-variable>
+                                        <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+var e = vars.intent.entities default {}
+---
+{
+  supplierGoldenId: e.supplierGoldenId,
+  riskScore:        0.85,
+  reason:           ("品質インシデント " ++ (e.incidentId default "") as String ++ " で返品要求・ペナルティ通知を発行")
+} ++ (if ((e.incidentId default null) != null) { incidentId: e.incidentId } else {})]]></ee:set-variable>
+                                    </ee:variables>
+                                </ee:transform>
+                                <flow-ref name="callMcpExecuteFlow"/>
+                                <ee:transform doc:name="stash risk result">
+                                    <ee:variables>
+                                        <ee:set-variable variableName="riskResult"><![CDATA[%dw 2.0
+output application/java
+---
+{ ok: ((vars.toolResult.status default "ok") as String) != "error", result: (vars.toolResult.result default {}) }]]></ee:set-variable>
+                                    </ee:variables>
+                                </ee:transform>
                                 <ee:transform doc:name="format execute result">
                                     <ee:variables>
                                         <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
 output application/java
 var ag = vars.agreement default {}
 var rr = vars.returnReq default {}
-var pn = (vars.toolResult.result default vars.toolResult default {})
+var pn = (vars.penaltyResult default {})
+var rk = vars.riskResult default null
 var e  = vars.intent.entities default {}
 fun cell(v) = if (v == null or (v as String) == "") "—" else (v as String)
 ---
@@ -910,7 +947,10 @@ fun cell(v) = if (v == null or (v as String) == "") "—" else (v as String)
 "| 取引先 | " ++ cell(e.supplierGoldenId) ++ " |\n" ++
 "| 該当条項 | " ++ cell(ag.clause) ++ " |\n" ++
 "| 返品要求書 | **" ++ cell(rr.requestId) ++ "** |\n" ++
-"| ペナルティ通知 | **" ++ cell(pn.noticeId) ++ "** (¥" ++ cell(pn.amount default ag.penaltyCap) ++ ") |"]]></ee:set-variable>
+"| ペナルティ通知 | **" ++ cell(pn.noticeId) ++ "** (¥" ++ cell(pn.amount default ag.penaltyCap) ++ ") |" ++
+(if (rk != null and rk.ok == true)
+   ("\n| リスクスコア | **" ++ cell((rk.result.previousRiskScore default "—")) ++ " → 0.85** に引上げ |")
+ else "")]]></ee:set-variable>
                                     </ee:variables>
                                 </ee:transform>
                             </when>

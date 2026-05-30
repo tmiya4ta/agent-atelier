@@ -693,12 +693,63 @@ var alt = vars.bestAlt
                             </ee:variables>
                         </ee:transform>
                         <flow-ref name="callMcpExecuteFlow"/>
+                        <!-- PO ドラフトの結果を退避 (このあと notify_supplier で vars.toolResult が上書きされるため) -->
+                        <ee:transform doc:name="stash PO draft result">
+                            <ee:variables>
+                                <ee:set-variable variableName="poDraft"><![CDATA[%dw 2.0
+output application/java
+---
+(vars.toolResult.result default vars.toolResult default {})]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                        <!-- 発注ドラフト作成に成功し、 供給元が分かるならサプライヤーへ ORDER 通知を送る。
+                             (実務では「発注したら仕入先に連絡」は自然な後続。 既存 notify_supplier tool を配線) -->
+                        <choice doc:name="notify supplier if draft ok">
+                            <when expression="#[(vars.poDraft.draftId default null) != null and (vars.bestAlt.supplierGoldenId default null) != null]">
+                                <ee:transform doc:name="build notify_supplier args">
+                                    <ee:variables>
+                                        <ee:set-variable variableName="toolName">#['notify_supplier']</ee:set-variable>
+                                        <ee:set-variable variableName="mcpKind">#['procurement']</ee:set-variable>
+                                        <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+var alt = vars.bestAlt default {}
+var d = vars.poDraft default {}
+---
+{
+  supplierGoldenId: (alt.supplierGoldenId default "") as String,
+  "type": "ORDER",
+  message: ("発注ドラフト " ++ (d.draftId default "") as String ++ " を作成しました。部品 " ++ (alt.partNumber default "") as String ++ " ×" ++ (vars.intent.entities.quantity default 0) as String ++ "。ご確認ください。")
+} ++ (if ((vars.intent.entities.incidentId default null) != null) { incidentId: vars.intent.entities.incidentId } else {})]]></ee:set-variable>
+                                    </ee:variables>
+                                </ee:transform>
+                                <flow-ref name="callMcpExecuteFlow"/>
+                                <ee:transform doc:name="stash notify result">
+                                    <ee:variables>
+                                        <ee:set-variable variableName="notifyResult"><![CDATA[%dw 2.0
+output application/java
+---
+{ ok: ((vars.toolResult.status default "ok") as String) != "error", result: (vars.toolResult.result default {}) }]]></ee:set-variable>
+                                    </ee:variables>
+                                </ee:transform>
+                            </when>
+                            <otherwise>
+                                <ee:transform>
+                                    <ee:variables>
+                                        <ee:set-variable variableName="notifyResult"><![CDATA[%dw 2.0
+output application/java
+---
+null]]></ee:set-variable>
+                                    </ee:variables>
+                                </ee:transform>
+                            </otherwise>
+                        </choice>
                         <ee:transform doc:name="format execute result">
                             <ee:variables>
                                 <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
 output application/java
-var d = (vars.toolResult.result default vars.toolResult default {})
+var d = (vars.poDraft default {})
 var alt = vars.bestAlt default {}
+var nt = vars.notifyResult default null
 fun cell(v) = if (v == null or (v as String) == "") "—" else (v as String)
 ---
 "📦 調達エージェント (実行完了)\n\n" ++
@@ -707,7 +758,8 @@ fun cell(v) = if (v == null or (v as String) == "") "—" else (v as String)
 "| 供給元 | " ++ cell(alt.supplierName default alt.supplierGoldenId) ++ " |\n" ++
 "| 数量 | " ++ cell(vars.intent.entities.quantity) ++ " |\n" ++
 "| 発注ドラフト | **" ++ cell(d.draftId) ++ "** |\n" ++
-"| 概算額 | ¥" ++ cell(d.totalAmount) ++ " |"]]></ee:set-variable>
+"| 概算額 | ¥" ++ cell(d.totalAmount) ++ " |" ++
+(if (nt != null and nt.ok == true) ("\n| 仕入先通知 | **送信済** (ORDER) |") else "")]]></ee:set-variable>
                             </ee:variables>
                         </ee:transform>
                     </when>
