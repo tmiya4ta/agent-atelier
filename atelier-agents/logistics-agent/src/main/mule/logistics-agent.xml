@@ -505,17 +505,21 @@ output application/java
             <ee:variables>
                 <ee:set-variable variableName="brokerJson"><![CDATA[%dw 2.0
 output application/java
-fun tryRead(s) = (read(s, "application/json")) default null
+// 不正/途中切れ JSON でも落ちないよう try で包む (read は default では捕まらず throw する)。
+fun tryRead(s) = if (s == null or (trim(s as String)) == "") null
+  else (dw::Runtime::try(() -> read(s as String, "application/json")).result default null)
 var ut = trim((vars.userText default "") as String)
 // userText 内の最初の { 〜 最後の } を JSON として読む。 入れ子の "input":"{...}" にも対応。
 var i = ut indexOf "{"
 var j = ut lastIndexOf "}"
 var outer = if (i >= 0 and j > i) (tryRead(ut[i to j])) else null
-// outer が { input: "<json string>" } / { text: "..." } 形式なら中身をさらに parse
-var innerStr = if (outer == null) null else ((outer."input" default outer.text default null))
+// outer が { input/text/parts[0].text/message: "<json string>" } 形式なら中身をさらに parse。
+// broker は parts[0].text にネストした JSON 文字列を入れてくることがある。
+var innerStr = if (outer == null) null
+  else ((outer."input" default outer.text default outer."parts[0].text" default outer.message default null))
 var inner =
   if (outer == null) null
-  else if (innerStr != null and (innerStr is String)) (tryRead(innerStr as String))
+  else if (innerStr != null and (innerStr is String)) (tryRead(innerStr as String) default outer)
   else outer
 ---
 if (inner != null and ((inner.partNumber default null) != null or (inner.incidentId default null) != null or (inner.supplierGoldenId default null) != null)) inner else null]]></ee:set-variable>
@@ -600,8 +604,12 @@ fun extractJson(s) = do {
   var j = noFence lastIndexOf "}"
   --- if (i >= 0 and j > i) (noFence[i to j]) else "{}"
 }
-fun safeReadJson(s) = if (s == null or (trim(s as String)) == "") {} else read(extractJson(s as String), "application/json")
-var resp = if (payload == null) {} else if (payload is Binary) read(payload as String {encoding: "UTF-8"}, "application/json") else if (payload is String) read(payload as String, "application/json") else payload
+// LLM 出力が (broker からの多重ネスト JSON を rawMessage に echo して token 上限で切れる等で)
+// 不正/途中切れ JSON になっても落ちないよう try で包む。 失敗時は {} にフォールバック。
+fun safeReadJson(s) =
+  if (s == null or (trim(s as String)) == "") {}
+  else (dw::Runtime::try(() -> read(extractJson(s as String), "application/json")).result default {})
+var resp = if (payload == null) {} else if (payload is Binary) (dw::Runtime::try(() -> read(payload as String {encoding: "UTF-8"}, "application/json")).result default {}) else if (payload is String) (dw::Runtime::try(() -> read(payload as String, "application/json")).result default {}) else payload
 var raw = ((resp.choices default [])[0].message.content default "{}") as String
 var obj = safeReadJson(raw)
 ---

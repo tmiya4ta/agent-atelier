@@ -607,12 +607,13 @@ output application/java
             <ee:variables>
                 <ee:set-variable variableName="brokerJson"><![CDATA[%dw 2.0
 output application/java
-fun tryRead(s) = (read(s, "application/json")) default null
+fun tryRead(s) = if (s == null or (trim(s as String)) == "") null
+  else (dw::Runtime::try(() -> read(s as String, "application/json")).result default null)
 var ut = trim((vars.userText default "") as String)
 var i = ut indexOf "{"
 var j = ut lastIndexOf "}"
 var outer = if (i >= 0 and j > i) (tryRead(ut[i to j])) else null
-var innerStr = if (outer == null) null else ((outer."input" default outer.text default null))
+var innerStr = if (outer == null) null else ((outer."input" default outer.text default outer."parts[0].text" default outer.message default null))
 var inner =
   if (outer == null) null
   else if (innerStr != null and (innerStr is String)) (tryRead(innerStr as String))
@@ -719,11 +720,14 @@ fun extractJson(s) = do {
   ---
   if (i >= 0 and j > i) (noFence[i to j]) else "{}"
 }
-fun safeReadJson(s) = if (s == null or (trim(s as String)) == "") {} else read(extractJson(s as String), "application/json")
+// LLM 出力が不正/途中切れ JSON でも落ちないよう try で包む。 失敗時は {} にフォールバック。
+fun safeReadJson(s) =
+  if (s == null or (trim(s as String)) == "") {}
+  else (dw::Runtime::try(() -> read(extractJson(s as String), "application/json")).result default {})
 var resp =
   if (payload == null) {}
-  else if (payload is Binary) read(payload as String {encoding: "UTF-8"}, "application/json")
-  else if (payload is String) read(payload as String, "application/json")
+  else if (payload is Binary) (dw::Runtime::try(() -> read(payload as String {encoding: "UTF-8"}, "application/json")).result default {})
+  else if (payload is String) (dw::Runtime::try(() -> read(payload as String, "application/json")).result default {})
   else payload
 var raw = ((resp.choices default [])[0].message.content default "{}") as String
 var obj = safeReadJson(raw)

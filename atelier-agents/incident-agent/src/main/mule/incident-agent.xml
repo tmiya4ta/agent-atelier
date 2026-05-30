@@ -584,7 +584,10 @@ var sys =
 "  - \"list_incidents\"    : インシデントの一覧・検索 (「一覧」「〜のインシデント教えて」「最近の」「OPEN の」等)\n" ++
 "  - \"lookup_incident\"   : 特定 incidentId 1 件の状態照会\n" ++
 "  - \"register_incident\" : 新規インシデントの登録・起票 (「登録して」「起票して」「新規インシデントとして」)\n" ++
-"  - \"update_status\"     : 既存インシデントのステータス更新 (OPEN/IN_PROGRESS/RESOLVED)\n" ++
+"  - \"update_status\"     : 既存インシデント 1 件のステータス更新 (OPEN/IN_PROGRESS/RESOLVED)。 incidentId が 1 つ特定できるとき。\n" ++
+"  - \"bulk_close\"        : 条件に合う 複数 インシデントの一括クローズ。 個別 incidentId を伴わず\n" ++
+"                          『〜の(OPEN を)全部クローズ』『まとめてクローズ』『全件 RESOLVED に』のような依頼。\n" ++
+"                          フィルタは entities の supplierName/supplierGoldenId/partNumber/severity/status に入れる。\n" ++
 "  - \"capability\"        : agent 自身の能力・役割を問うメタ質問のみ (「何ができる?」「君の役割は?」「使い方は?」)。\n" ++
 "  - \"out_of_scope\"      : 在庫・法務・発注・承認など incident 以外の依頼\n" ++
 "  - \"unknown\"           : 上記に当てはまらない / 判断不能\n" ++
@@ -636,6 +639,10 @@ var nullEnts = { supplierGoldenId: null, supplierName: null, partNumber: null, i
   { role: "assistant", content: ex("lookup_incident", nullEnts ++ { incidentId: "INC-2026-0579" }) },
   { role: "user",      content: "INC-2026-0579 を対応完了でクローズして" },
   { role: "assistant", content: ex("update_status", nullEnts ++ { incidentId: "INC-2026-0579", status: "RESOLVED" }) },
+  { role: "user",      content: "九州製作所の OPEN なインシデントを全部クローズして" },
+  { role: "assistant", content: ex("bulk_close", nullEnts ++ { supplierName: "九州製作所", status: "OPEN" }) },
+  { role: "user",      content: "さっき出した一覧、 まとめてクローズして" },
+  { role: "assistant", content: ex("bulk_close", nullEnts) },
   { role: "user",      content: "君は何ができるの?" },
   { role: "assistant", content: ex("capability", nullEnts) },
   { role: "user",      content: "G-KYUSHU-MFG-001 の P-2024-KYU-001 を severity HIGH で登録して" },
@@ -975,6 +982,113 @@ output application/java
 var e = vars.intent.entities default {}
 ---
 "✅ ステータスを更新しました。 **" ++ (e.incidentId as String) ++ "** → **" ++ (e.status as String) ++ "**"]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                    </otherwise>
+                </choice>
+            </when>
+
+            <!-- 一括クローズ: フィルタ条件 (取引先 / status 等) に合う複数インシデントを
+                 list で取得 → 各 incidentId を update_incident_status で RESOLVED にループ。
+                 「九州製作所の OPEN を全部クローズ」のような依頼用。 単一 incidentId は不要
+                 (むしろ与えられたら update_status 側で処理される)。 -->
+            <when expression='#[(vars.intent.intent default "") == "bulk_close"]'>
+                <flow-ref name="resolveSupplierFlow"/>
+                <!-- 1) 対象を list で取得 (フィルタは entities の非 null だけ。 既定で status=OPEN を補う) -->
+                <ee:transform doc:name="build bulk list args">
+                    <ee:variables>
+                        <ee:set-variable variableName="toolName">#['list_incidents']</ee:set-variable>
+                        <ee:set-variable variableName="mcpKind">#['mdm']</ee:set-variable>
+                        <ee:set-variable variableName="bulkStatus"><![CDATA[%dw 2.0
+output application/java
+var e = vars.intent.entities default {}
+---
+(e.status default "RESOLVED") as String]]></ee:set-variable>
+                        <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+var e = vars.intent.entities default {}
+---
+{ limit: 50 } ++
+  (if (e.supplierGoldenId != null) { supplierGoldenId: e.supplierGoldenId } else {}) ++
+  (if (e.partNumber != null)       { partNumber: e.partNumber } else {}) ++
+  (if (e.severity != null)         { severity: e.severity } else {}) ++
+  // クローズ対象は既定で OPEN + IN_PROGRESS。 ユーザが status を明示したらそれで絞る。
+  (if (e.status != null)           { status: e.status } else {})]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <flow-ref name="callMcpExecuteFlow"/>
+                <ee:transform doc:name="extract target incidentIds">
+                    <ee:variables>
+                        <ee:set-variable variableName="bulkTargets"><![CDATA[%dw 2.0
+output application/java
+var r = (vars.toolResult.result default vars.toolResult default {})
+var items = (r.items default [])
+---
+// 既に RESOLVED のものは除く。 incidentId が取れるものだけ。
+(items
+  filter ((it) -> ((it.status default "") as String) != "RESOLVED")
+  map ((it) -> (it.incidentId default it.name default "") as String)
+  filter ((id) -> id != "")) distinctBy ((id) -> id)]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <choice>
+                    <when expression="#[sizeOf(vars.bulkTargets default []) == 0]">
+                        <ee:transform>
+                            <ee:variables>
+                                <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"クローズ対象のインシデントが見つかりませんでした。 (条件に合う未クローズの INC なし)"]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                    </when>
+                    <otherwise>
+                        <!-- 2) 各 incidentId を RESOLVED に更新。 結果を vars.bulkResults に集約 -->
+                        <ee:transform>
+                            <ee:variables>
+                                <ee:set-variable variableName="bulkResults"><![CDATA[%dw 2.0
+output application/java
+---
+[]]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                        <foreach collection="#[vars.bulkTargets]">
+                            <ee:transform>
+                                <ee:variables>
+                                    <ee:set-variable variableName="toolName">#['update_incident_status']</ee:set-variable>
+                                    <ee:set-variable variableName="mcpKind">#['incident']</ee:set-variable>
+                                    <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+---
+{ incidentId: (payload as String), status: "RESOLVED" }]]></ee:set-variable>
+                                </ee:variables>
+                            </ee:transform>
+                            <flow-ref name="callMcpExecuteFlow"/>
+                            <ee:transform>
+                                <ee:variables>
+                                    <ee:set-variable variableName="bulkResults"><![CDATA[%dw 2.0
+output application/java
+var prev = (vars.bulkResults default [])
+var ok = ((vars.toolResult.status default "ok") as String) != "error"
+---
+prev ++ [{ incidentId: (vars.toolArgs.incidentId default "") as String, ok: ok }]]]></ee:set-variable>
+                                </ee:variables>
+                            </ee:transform>
+                        </foreach>
+                        <ee:transform doc:name="format bulk result">
+                            <ee:variables>
+                                <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+var res = (vars.bulkResults default [])
+var okList = res filter ((x) -> x.ok == true)
+var ngList = res filter ((x) -> x.ok != true)
+---
+"✅ 一括クローズ完了: **" ++ (sizeOf(okList) as String) ++ " 件**を RESOLVED にしました。\n\n" ++
+(okList map ((x) -> "- **" ++ (x.incidentId as String) ++ "** → RESOLVED") joinBy "\n") ++
+(if (sizeOf(ngList) > 0)
+  ("\n\n⚠️ 失敗 " ++ (sizeOf(ngList) as String) ++ " 件:\n" ++
+   (ngList map ((x) -> "- " ++ (x.incidentId as String)) joinBy "\n"))
+ else "")]]></ee:set-variable>
                             </ee:variables>
                         </ee:transform>
                     </otherwise>
