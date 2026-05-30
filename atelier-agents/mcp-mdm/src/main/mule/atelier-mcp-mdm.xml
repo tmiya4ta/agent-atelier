@@ -132,15 +132,21 @@ output application/json
                 </ee:transform>
             </when>
 
-            <when expression='#[vars.rpcMethod == "notifications/initialized"]'>
-                <!-- MCP notification (no id, no response body required). Reply 200 empty per spec. -->
-                <ee:transform doc:name="ack notification">
+            <when expression='#[(vars.rpcMethod default "") startsWith "notifications/"]'>
+                <!-- MCP notification (no id). Per Streamable HTTP spec the server MUST reply
+                     202 Accepted with NO body. A 200 + JSON body (even {}) makes the official
+                     MCP client try to deserialize it as a JSONRPCMessage and fail
+                     ("Cannot deserialize JSONRPCMessage: {}"), aborting client initialization. -->
+                <ee:transform doc:name="ack notification (202, empty)">
                     <ee:message>
                         <ee:set-payload><![CDATA[%dw 2.0
-output application/json
+output text/plain
 ---
-{}]]></ee:set-payload>
+""]]></ee:set-payload>
                     </ee:message>
+                    <ee:variables>
+                        <ee:set-variable variableName="httpStatus">202</ee:set-variable>
+                    </ee:variables>
                 </ee:transform>
             </when>
 

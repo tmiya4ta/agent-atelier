@@ -29,6 +29,8 @@ export class AgentWindow {
     this.startedAt = Date.now();
     this.lastLatency = null;
     this.lastSendAt = null;
+    // ピン留め: true の間は drag / resize を無効化し位置・サイズを固定する。
+    this.pinned = !!(this.restore && this.restore.pinned);
 
     this._buildDom();
     this._wireAdapter();
@@ -78,6 +80,7 @@ export class AgentWindow {
     node.querySelector(".aw-btn-close").addEventListener("click", () => this.close());
     node.querySelector('.aw-traffic-dot[data-act="close"]').addEventListener("click", () => this.close());
     node.querySelector(".aw-btn-max")?.addEventListener("click", () => this.toggleMaximize());
+    node.querySelector(".aw-btn-pin")?.addEventListener("click", () => this.togglePin());
     // ヘッダーをダブルクリックで最大化トグル (icon-btn 等のボタン上は除外)
     node.querySelector(".aw-head").addEventListener("dblclick", (e) => {
       if (e.target.closest("button") || e.target.closest(".aw-traffic-dot")) return;
@@ -201,6 +204,9 @@ export class AgentWindow {
 
     this.layer.appendChild(node);
     this.focus();
+
+    // 復元時に pinned だった場合は見た目に反映 (drag/resize は _beginDrag/_beginResize 側でガード)
+    this._applyPinnedState();
 
     // MCP モード: tools タブを露出し、 chat タブを使わない構成に切り替える。
     if (this.protoId === "mcp") this._setupMcpMode(node);
@@ -326,6 +332,7 @@ export class AgentWindow {
   // Drag
   // ───────────────────────────────────────────
   _beginDrag(e) {
+    if (this.pinned) return;   // ピン留め中は移動不可
     if (e.target.closest("button") || e.target.closest(".aw-traffic-dot")) return;
     const startX = e.clientX, startY = e.clientY;
     const rect = this.el.getBoundingClientRect();
@@ -348,9 +355,29 @@ export class AgentWindow {
     window.addEventListener("mouseup", onUp);
   }
 
+  // ピン留めトグル: 位置・サイズを固定 (drag/resize 無効) する。
+  togglePin() {
+    this.pinned = !this.pinned;
+    this._applyPinnedState();
+    this.onChange?.();
+  }
+
+  // pinned 状態を DOM に反映 (クラス + ボタンの active 表示 + tooltip)。
+  _applyPinnedState() {
+    if (!this.el) return;
+    this.el.classList.toggle("is-pinned", this.pinned);
+    const btn = this.el.querySelector(".aw-btn-pin");
+    if (btn) {
+      btn.classList.toggle("is-active", this.pinned);
+      btn.title = this.pinned ? "Unpin window (allow move/resize)" : "Pin window in place (lock position/size)";
+      btn.setAttribute("aria-pressed", this.pinned ? "true" : "false");
+    }
+  }
+
   // 4 辺 + 4 角でリサイズ。 dir = "n"|"s"|"e"|"w"|"ne"|"nw"|"se"|"sw"
   // n/w 側を引っ張ったときは left/top も動かす必要がある。
   _beginResize(e, dir = "se") {
+    if (this.pinned) return;   // ピン留め中はリサイズ不可
     if (this.el.classList.contains("is-maximized")) return;
     e.preventDefault();
     e.stopPropagation();

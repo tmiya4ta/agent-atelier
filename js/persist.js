@@ -91,7 +91,8 @@ function snapshotWindow(win) {
       height: win.el.style.height,
       zIndex: win.el.style.zIndex
     },
-    activeTab: win.el.querySelector(".aw-tab.is-active")?.dataset.tab || "chat"
+    activeTab: win.el.querySelector(".aw-tab.is-active")?.dataset.tab || "chat",
+    pinned: !!win.pinned
   };
 }
 

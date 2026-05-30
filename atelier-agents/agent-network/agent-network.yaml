@@ -1,0 +1,245 @@
+schemaVersion: 1.0.0
+label: Atelier SCRS Agent Network (StepB)
+# ─────────────────────────────────────────────────────────────────────────────
+# Atelier の 5 A2A worker (StepA / shard d7gr5m) を 1 つの LLM broker 配下に束ねた
+# Agent Network。Atelier シナリオ A1 で「人間がハブになる痛み」を見せた構成の
+# "broker あり版"。broker が 1 度だけ LLM でパラメータを抽出し、必要なら MDM MCP で
+# 日本語社名 → goldenId を解決してから、incident/legal/procurement/logistics/org の
+# 5 worker に scatter-gather する。下位 worker は LLM 不使用 (DataPart 高速パス)。
+# 題材: 九州製作所 / 部品 P-2024-KYU-001 (ターボ分子ポンプ TMP-A310) / 不良率 15% / 影響 120 台。
+# ─────────────────────────────────────────────────────────────────────────────
+brokers:
+    atelier-broker:
+        card:
+            protocolVersion: 0.3.0
+            name: Atelier SCRS Broker
+            description: |
+                サプライチェーン品質インシデントの統合ブローカー。受け取った自然文を LLM で
+                1 度だけ解析して構造化パラメータを抽出し、MDM MCP で取引先を Golden ID に
+                解決してから、インシデント登録 → 法務/調達/物流/組織の 4 worker へ並列
+                ディスパッチして統合レポートを返す。下位 worker は LLM を使わず、broker が
+                渡した JSON パラメータをそのまま MCP に流す決定論エージェント。
+            url: ${ingressgw.url}/atelier-broker
+            capabilities:
+                pushNotifications: false
+                streaming: false
+            version: 1.0.0
+            securitySchemes: {}
+            defaultInputModes:
+                - text/plain
+                - application/json
+            defaultOutputModes:
+                - text/plain
+                - application/json
+            skills:
+                - id: handle_supply_chain_incident
+                  name: Supply Chain Incident Handler
+                  description: |
+                      サプライヤー品質インシデント (例: 「九州製作所の P-2024-KYU-001 で
+                      不良率15%、120台影響」) を受け取り、MDM で取引先を解決し、
+                      incident/legal/procurement/logistics/org の各 worker に必要に応じて
+                      ディスパッチして対応を完了する。返答には各 worker のサマリと統合レポートが含まれる。
+                  examples:
+                      - 九州製作所の P-2024-KYU-001 (ターボ分子ポンプ TMP-A310) で軸受け振動の公差超過が 15% 発生。影響 120 台。新規インシデントとして対応してください。
+                      - INC-2026-0530 G-KYUSHU-MFG-001 partNumber=P-2024-KYU-001 quantity=120 severity=HIGH region=九州
+                  inputModes:
+                      - text/plain
+                      - application/json
+                  outputModes:
+                      - text/plain
+                      - application/json
+                  tags:
+                      - supply-chain
+                      - incident
+                      - dispatcher
+        spec:
+            llm:
+                ref:
+                    name: gpt-oss-openai
+                configuration:
+                    model: gpt-5-mini
+            instructions:
+                - |
+                  あなたはサプライチェーンの統合ブローカーです。
+                  受け取ったインシデント文章から内部用に以下のパラメータを取り出してください:
+                    incidentId, supplierGoldenId (なければ supplierName), partNumber,
+                    alternativePartNumber (あれば), quantity, severity (LOW/MEDIUM/HIGH/CRITICAL、
+                    不明なら MEDIUM), region (なければ空), category (なければ空), reason
+                - |
+                  【最重要】必須情報の不足チェック。これは絶対のルールで、勝手に補完してはいけない。
+                  以下の 2 つが入力テキストに **明示的に書かれていない** 場合、
+                  worker には絶対にディスパッチせず、ユーザーに問い返してください:
+                    必須(a): 取引先を特定する情報。
+                             supplierGoldenId (例: G-KYUSHU-MFG-001) または
+                             具体的な supplierName (例: 九州製作所、関西部品株式会社) が必要。
+                             「サプライヤー」「取引先」など総称だけの場合は不足扱い。
+                    必須(b): partNumber (例: P-2024-KYU-001)。
+                             「部品」「製品」だけの場合は不足扱い。
+                  不足のあるターンでは、データを推測したり過去の知識から埋めたりしない。
+                  問い返しは 1〜2 行、不足項目だけを尋ね、実在の ID 形式で例示する
+                  (例: G-KYUSHU-MFG-001 / P-2024-KYU-001)。謝辞・前置きは禁止。
+                - |
+                  【取引先解決ステップ・MDM MCP】
+                  supplierGoldenId が未指定で supplierName (日本語社名) だけがある場合は、
+                  まず MDM MCP の resolve_supplier ツールを 1 回呼んで Golden ID に解決してください:
+                    resolve_supplier({ "supplierName": "<日本語社名>" })
+                  返ってきた goldenId を以後 supplierGoldenId として使う。
+                  partNumber が曖昧な場合は resolve_part を使ってよい。
+                  MDM が解決できない場合はユーザーに Golden ID を問い返す (worker は呼ばない)。
+                - |
+                  【インシデント登録ステップ・必ず最初に直列で1回】
+                  supplier/part が揃ったら 4 worker をディスパッチする前に、atelier-incident を 1 回だけ
+                  呼んでインシデントを登録してください。parts[0].text に以下の JSON を渡す:
+                    {
+                      "incidentId":       "<ユーザーが明示した値があれば。なければ省略>",
+                      "supplierGoldenId": "<解決済み Golden ID>",
+                      "partNumber":       "<抽出した値>",
+                      "severity":         "<抽出した値、不明なら MEDIUM>",
+                      "rawMessage":       "<ユーザーの元発言、原文をそのまま>",
+                      "quantity":         <数値、なければ 0>
+                    }
+                  atelier-incident が返した incidentId / supplierGoldenId / partNumber を以後そのまま使う。
+                - |
+                  インシデント登録に成功したら、legal/procurement/logistics/org の 4 worker を
+                  並列で 1 回ずつ呼ぶ。各 worker への parts[0].text には登録で確定した値を必ず含める:
+                    {
+                      "incidentId":       "<確定 incidentId>",
+                      "supplierGoldenId": "<確定 Golden ID>",
+                      "partNumber":       "<確定 partNumber>",
+                      "alternativePartNumber": "<あれば>",
+                      "quantity":         <数値>,
+                      "severity":         "...",
+                      "region":           "<あれば>",
+                      "category":         "<あれば>",
+                      "reason":           "<rawMessage を要約した短文>"
+                    }
+                  下位 worker は決定論的に動くため、再試行や再質問はせず 1 回ずつだけ呼ぶこと。
+                  日本語社名や曖昧な値ではなく、必ず Golden ID / partNumber を渡す。
+                - |
+                  4 worker の応答が揃ったら、ユーザー向けに自然な文章で簡潔に報告してください。
+
+                  【構成テンプレート】冒頭にインシデント ID と取引先、続いて各 worker のサマリ。
+                  セクション順は 調達 → 物流 → 組織 → 法務 で固定。各 worker は 1-2 行。
+                    重大な品質問題を検知しました。各専門エージェントを稼働させ対応します。
+                    インシデント: <incidentId>
+                    取引先: <社名> (<Golden ID>)
+
+                    ✅ 【調達エージェント】 ...
+                    ✅ 【物流エージェント】 ...
+                    ✅ 【組織エージェント】 ...
+                    ✅ 【法務エージェント】 ...
+
+                  【内容ルール】
+                    - 抽出したパラメータ JSON や worker の内部名 (atelier-legal 等) は絶対に出さない。
+                    - 全体で 250〜500 字。冗長な前置き・謝辞・自己言及は禁止。
+                    - 代替部品の供給元と元サプライヤー (九州製作所) を取り違えない。
+                    - Golden ID / incidentId は確定値をそのまま使い、書き換えない。
+            maxNumberOfLoops: 10
+            maxConsecutiveErrors: 2
+            taskTimeoutSecs: 240
+            links:
+                - agent:
+                      ref:
+                          name: atelier-incident
+                - agent:
+                      ref:
+                          name: atelier-legal
+                - agent:
+                      ref:
+                          name: atelier-procurement
+                - agent:
+                      ref:
+                          name: atelier-logistics
+                - agent:
+                      ref:
+                          name: atelier-org
+            tools:
+                - mcp:
+                      ref:
+                          name: atelier-mdm
+agents:
+    atelier-incident:
+        label: Incident Agent (A2A worker, intake/lifecycle)
+        metadata:
+            protocol: a2a
+            platform: CloudHub2
+    atelier-legal:
+        label: Legal Agent (A2A worker)
+        metadata:
+            protocol: a2a
+            platform: CloudHub2
+    atelier-procurement:
+        label: Procurement Agent (A2A worker)
+        metadata:
+            protocol: a2a
+            platform: CloudHub2
+    atelier-logistics:
+        label: Logistics Agent (A2A worker)
+        metadata:
+            protocol: a2a
+            platform: CloudHub2
+    atelier-org:
+        label: Org Agent (A2A worker)
+        metadata:
+            protocol: a2a
+            platform: CloudHub2
+mcpServers:
+    atelier-mdm:
+        label: MDM MCP (master data / golden ID resolution)
+        description: 取引先・部品の名寄せ / Golden ID 解決を提供する MCP サーバ
+        metadata:
+            transport:
+                kind: streamableHttp
+                path: /mcp
+llmProviders:
+    gpt-oss-openai:
+        label: MuleSoft demos OpenAI proxy
+        description: gpt-5-mini を提供する MuleSoft 内部 OpenAI 互換 LLM Proxy
+        metadata:
+            platform: OpenAI
+connections:
+    atelier-incident-conn:
+        kind: agent
+        ref:
+            name: atelier-incident
+        spec:
+            url: https://atelier-incident-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/
+    atelier-legal-conn:
+        kind: agent
+        ref:
+            name: atelier-legal
+        spec:
+            url: https://atelier-legal-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/
+    atelier-procurement-conn:
+        kind: agent
+        ref:
+            name: atelier-procurement
+        spec:
+            url: https://atelier-procurement-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/
+    atelier-logistics-conn:
+        kind: agent
+        ref:
+            name: atelier-logistics
+        spec:
+            url: https://atelier-logistics-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/
+    atelier-org-conn:
+        kind: agent
+        ref:
+            name: atelier-org
+        spec:
+            url: https://atelier-org-agent-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/
+    atelier-mdm-conn:
+        kind: mcp
+        ref:
+            name: atelier-mdm
+        spec:
+            url: https://atelier-mcp-mdm-d7gr5m.xdfpbh.jpn-e1.cloudhub.io/
+    gpt-oss-openai-conn:
+        kind: llm
+        ref:
+            name: gpt-oss-openai
+        spec:
+            url: https://openai-proxy.demos.mulesoft.com/openai/v1
+            configuration:
+                apiKey: ${openai.apiKey}
+                timeout: 600000

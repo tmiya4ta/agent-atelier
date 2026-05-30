@@ -2125,6 +2125,23 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .agent-window.is-maximized .aw-btn-max .aw-max-icon { display: none; }
 .agent-window.is-maximized .aw-btn-max .aw-restore-icon { display: inline-block; }
 
+/* ピン留め: アクティブなボタンを accent で強調 */
+.aw-btn-pin.is-active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.aw-btn-pin.is-active .aw-pin-icon { fill: color-mix(in srgb, var(--accent) 22%, transparent); }
+/* ピン留め中は header の grab カーソルを止め、 移動不可を示す */
+.agent-window.is-pinned .aw-head { cursor: default; }
+.agent-window.is-pinned .aw-head:active { cursor: default; }
+/* ピン留め中はリサイズ用の辺・グリップを無効化 (操作不可を明示) */
+.agent-window.is-pinned .aw-resize-edge,
+.agent-window.is-pinned .aw-resize-grip { display: none; }
+/* ピン留め中の枠に控えめな accent リング */
+.agent-window.is-pinned {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent), var(--shadow);
+}
+
 /* 最大化遷移中だけ left/top/width/height/border-radius を transition。
    通常時の drag / resize には transition を残さない (動きが追いつかない)。
    is-animating は js 側で toggle 開始時に付け、 transitionend で外す。 */

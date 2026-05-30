@@ -3038,6 +3038,40 @@ function loadDemo() {
 // fit モード ("snap to current") は別ボタンに分離 — 既存配置を尊重するので意味が逆。
 const TILE_MODES = ["smart", "uniform", "columns"];
 let _tileModeIdx = -1;
+// tile 計算中、 unpinned を配置する空き矩形の原点ずれ。 applyTile が最終座標に加算する。
+let _layoutOffset = { x: 0, y: 0 };
+
+// ピン留めウィンドウの占有領域を避けた最大の空き矩形を返す。
+// レイヤ全体 (W×H) から、 ピン群の bounding box を引いた上/下/左/右の 4 ストリップのうち
+// 面積最大のものを採用する (ピンが端に寄っているデモ用途では完全に回避できる)。
+// ピンが無ければレイヤ全体をそのまま返す。
+function freeLayoutRect(pinned, W, H, gap) {
+  if (!pinned || pinned.length === 0) return { x: 0, y: 0, w: W, h: H };
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  pinned.forEach(p => {
+    const x = parseFloat(p.el.style.left) || 0;
+    const y = parseFloat(p.el.style.top)  || 0;
+    const w = p.el.offsetWidth  || 0;
+    const h = p.el.offsetHeight || 0;
+    minX = Math.min(minX, x);     minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x + w); maxY = Math.max(maxY, y + h);
+  });
+  // 4 候補ストリップ (ピン bbox の外側、 gap ぶん離す)
+  const candidates = [
+    { x: 0,          y: 0,          w: W,                  h: minY - gap },          // 上
+    { x: 0,          y: maxY + gap, w: W,                  h: H - (maxY + gap) },    // 下
+    { x: 0,          y: 0,          w: minX - gap,         h: H },                   // 左
+    { x: maxX + gap, y: 0,          w: W - (maxX + gap),   h: H }                    // 右
+  ];
+  let best = null, bestArea = -1;
+  candidates.forEach(c => {
+    if (c.w <= 80 || c.h <= 80) return;   // 狭すぎるストリップは無効
+    const area = c.w * c.h;
+    if (area > bestArea) { bestArea = area; best = c; }
+  });
+  // どのストリップも狭すぎる (ピンが中央を大きく占有) 場合は全面に重ねるしかない → 全体を返す
+  return best || { x: 0, y: 0, w: W, h: H };
+}
 function cycleTileMode() {
   _tileModeIdx = (_tileModeIdx + 1) % TILE_MODES.length;
   const mode = TILE_MODES[_tileModeIdx];
@@ -3052,14 +3086,24 @@ function flashTileLabel(mode) {
 }
 
 function tileWindows(mode) {
-  const ws = activeWorkspace();
-  if (!ws) return;
+  const realWs = activeWorkspace();
+  if (!realWs) return;
+  // ピン留めウィンドウはレイアウト対象から除外し、その場に固定する。
+  // 以降の tile ロジックは ws.windows しか参照しないので、 unpinned だけの shim を渡せば
+  // 全モード (uniform / columns / fit / smart / 5-grid) が自動的にピンを尊重する。
+  const pinned = realWs.windows.filter(w => w.pinned);
+  const ws = { windows: realWs.windows.filter(w => !w.pinned) };
   const rect = $("#windowsLayer").getBoundingClientRect();
   const n = ws.windows.length;
-  if (n === 0) return;
+  if (n === 0) { _layoutOffset = { x: 0, y: 0 }; return; }
 
   const gap = 16;
-  const W = rect.width, H = rect.height;
+  // ピン留め領域を避けた「空き矩形」を求め、 unpinned はその中だけに並べる。
+  // 全 tile ヘルパは gap 基準で (0,0)〜(W,H) に配置するので、 空き矩形ぶんの原点ずれを
+  // _layoutOffset に積み、 applyTile が最終座標に加算する。
+  const free = freeLayoutRect(pinned, rect.width, rect.height, gap);
+  _layoutOffset = { x: free.x, y: free.y };
+  const W = free.w, H = free.h;
 
   if (mode === "uniform") return tileUniform(ws, W, H, gap);
   if (mode === "columns") return tileColumns(ws, W, H, gap);
@@ -3309,10 +3353,12 @@ function tileColumns(ws, W, H, gap) {
 }
 
 function applyTile(placements) {
+  const ox = _layoutOffset?.x || 0;
+  const oy = _layoutOffset?.y || 0;
   placements.forEach(({ win, x, y, w, h }) => {
     win.el.style.transition = "left .3s ease, top .3s ease, width .3s ease, height .3s ease";
-    win.el.style.left   = x + "px";
-    win.el.style.top    = y + "px";
+    win.el.style.left   = (x + ox) + "px";
+    win.el.style.top    = (y + oy) + "px";
     win.el.style.width  = w + "px";
     win.el.style.height = h + "px";
     setTimeout(() => win.el.style.transition = "", 320);

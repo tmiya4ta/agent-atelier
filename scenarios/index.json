@@ -4,7 +4,7 @@
     {
       "id": "scrs-a",
       "name": "SCRS — シナリオ A (九州製作所 / ターボ分子ポンプ)",
-      "description": "九州製作所の半導体製造装置部品 (P-2024-KYU-001 ターボ分子ポンプ TMP-A310) の品質トラブル。 (A1) 5 agent + MDM MCP の人間ハブ版、 (A1-AUTO) operator-agent を進行役にして 5 agent 連携を完全自動化する版、 の 2 ワークスペース。 全アプリは StepA / BetterTogetherDemo (shard d7gr5m) にデプロイ済み。",
+      "description": "九州製作所の半導体製造装置部品 (P-2024-KYU-001 ターボ分子ポンプ TMP-A310) の品質トラブル。 WS1 個別 agent (A1 人間ハブ / A1-AUTO operator 自動化)、 WS2 Broker (B1 = StepB の MAF Agent Network が自律ディスパッチ)。 5 agent + MDM MCP は StepA (d7gr5m)、 broker は StepB (n6coif)。",
       "url": "/scenarios/scrs-a.json"
     }
   ]

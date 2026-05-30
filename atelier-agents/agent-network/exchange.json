@@ -1,0 +1,23 @@
+{
+  "groupId": "4283bf7b-276e-44bc-8c6b-bd9b622d42b4",
+  "assetId": "atelier-agent-network",
+  "version": "1.0.0",
+  "name": "Atelier SCRS Agent Network (StepB)",
+  "description": "Atelier SCRS demo: atelier-broker (LLM, gpt-5-mini) -> 5 A2A worker agents (incident/legal/procurement/logistics/org on StepA shard d7gr5m, no-LLM) + MDM MCP tool. Broker-ful counterpart to scenario A1.",
+  "classifier": "agent-network",
+  "main": "agent-network.yaml",
+  "metadata": {
+    "variables": {
+      "openai.apiKey": {
+        "description": "MuleSoft demos OpenAI proxy API key. Pass via deploy --property openai.apiKey:<base64(clientId:clientSecret)>.",
+        "default": "unused",
+        "secret": true
+      },
+      "ingressgw.url": {
+        "description": "Public Omni Ingress Gateway base URL (StepB / BetterTogetherDemo). Set via deploy --property.",
+        "default": "https://agent-network-ingress-gw.example.com",
+        "secret": false
+      }
+    }
+  }
+}
