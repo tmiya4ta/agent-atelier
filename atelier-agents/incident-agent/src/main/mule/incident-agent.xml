@@ -104,7 +104,12 @@ var p = if (payload is String) read(payload, "application/json") else payload
 var fromAttr = (attributes.contextId default "") as String
 var fromMsg  = (p.message.contextId default "") as String
 ---
-if (fromAttr != "") fromAttr else fromMsg]]></ee:set-variable>
+// クライアントが contextId を送ってきたらそれを使う。 無ければ taskId をベースに採番して
+// 応答 (taskJson) で返す。 クライアント (a2a.js) は応答の contextId を保持し次ターンから送るので、
+// 同一 window 内では会話が継続する (「さっきのインシデントをクローズ」が効く)。
+if (fromAttr != "") fromAttr
+else if (fromMsg != "") fromMsg
+else ("ctx-" ++ ((attributes.taskId default (now() as String)) as String))]]></ee:set-variable>
                 <ee:set-variable variableName="userText"><![CDATA[%dw 2.0
 output application/java
 var p = if (payload is String) read(payload, "application/json") else payload
@@ -139,6 +144,7 @@ if (sizeOf(dataParts) > 0) (dataParts[0].data default null) else null]]></ee:set
                  二段構成に置換。 弱い LLM に条件分岐を語らせない。 -->
             <otherwise>
                 <try>
+                    <flow-ref name="loadMemoryFlow"/>
                     <flow-ref name="intentExtractFlow"/>
                     <flow-ref name="intentRouterFlow"/>
                     <error-handler>
@@ -592,8 +598,13 @@ var sys =
 "  - 「〜を知りたい」「〜を教えて」「〜を見たい」は **データ照会** の意図。 capability ではない。\n" ++
 "    『九州製作所のインシデントを知りたい/教えて』→ list_incidents。\n" ++
 "  - capability は『(この agent は) 何ができる?』のように、 agent の機能そのものを尋ねるときだけ。\n" ++
+"  - ★会話履歴の参照: 現発話が「さっき(の)/その/この/先ほどの インシデント」のように直前の話題を指していて、 かつ\n" ++
+"    現発話自体に incidentId が無い場合は、 直前までの会話 (assistant の応答テキストや user 発話) に出てきた\n" ++
+"    INC-... 形式の incidentId を entities.incidentId に補完してよい。 これは『捏造』ではなく『直近文脈の参照』。\n" ++
+"    例: 直前に『INC-20260530-... を登録しました』があり、 現発話が『さっきのをクローズして』→\n" ++
+"        intent=update_status, entities.incidentId=その INC-..., status=RESOLVED。\n" ++
 "\n" ++
-"entities は読み取れた値だけ入れ、 読み取れないものは null。 ★推測・正規化・捏造は禁止。\n" ++
+"entities は読み取れた値だけ入れ、 読み取れないものは null。 ★推測・正規化・捏造は禁止 (ただし上記『会話履歴の参照』は許可)。\n" ++
 "  - supplierGoldenId : 正規化済 G-XXX 形式のみ。 社名しか無ければ null。\n" ++
 "  - supplierName     : 社名そのまま (例: 九州製作所)。\n" ++
 "  - partNumber       : P-YYYY-... 形式。\n" ++
@@ -623,6 +634,8 @@ var nullEnts = { supplierGoldenId: null, supplierName: null, partNumber: null, i
   { role: "assistant", content: ex("list_incidents", nullEnts) },
   { role: "user",      content: "INC-2026-0579 はどんな状態?" },
   { role: "assistant", content: ex("lookup_incident", nullEnts ++ { incidentId: "INC-2026-0579" }) },
+  { role: "user",      content: "INC-2026-0579 を対応完了でクローズして" },
+  { role: "assistant", content: ex("update_status", nullEnts ++ { incidentId: "INC-2026-0579", status: "RESOLVED" }) },
   { role: "user",      content: "君は何ができるの?" },
   { role: "assistant", content: ex("capability", nullEnts) },
   { role: "user",      content: "G-KYUSHU-MFG-001 の P-2024-KYU-001 を severity HIGH で登録して" },
@@ -634,7 +647,16 @@ var nullEnts = { supplierGoldenId: null, supplierName: null, partNumber: null, i
   { role: "user",      content: "代替部品の発注ドラフトを作って" },
   { role: "assistant", content: ex("out_of_scope", nullEnts) },
   { role: "user",      content: "担当バイヤーに承認依頼を出して" },
-  { role: "assistant", content: ex("out_of_scope", nullEnts) },
+  { role: "assistant", content: ex("out_of_scope", nullEnts) }
+]
+// 同 contextId の直近会話 (loadMemoryFlow が読んだ priorMessages) を few-shot の後ろに挿入。
+// 「さっき登録したインシデントをクローズして」のような参照で、 抽出器が過去ターンの
+// incidentId を entities に補完できるようにする。 system/few-shot 由来の行は除き、
+// user / assistant の生の会話ターンだけを通す。
+++ ((vars.priorMessages default []) filter ((m) ->
+      (((m.role default "") as String) == "user" or ((m.role default "") as String) == "assistant")
+      and ((m.content default "") as String) != ""))
+++ [
   { role: "user",   content: (vars.userText default "") as String }
 ]]]></ee:set-variable>
             </ee:variables>
@@ -1179,13 +1201,21 @@ output application/java
                         <ee:message>
                             <ee:set-payload><![CDATA[%dw 2.0
 output application/java
-var msgs = (vars.messages default [])
-var sys = msgs filter ((m) -> ((m.role default "") as String) == "system")
-var nonTool = msgs filter ((m) -> ((m.role default "") as String) == "user" or (((m.role default "") as String) == "assistant" and ((m.content default "") as String) != ""))
-var tail = if (sizeOf(nonTool) > 4) (nonTool[-4 to -1]) else nonTool
-var compact = sys ++ tail
+// 新パイプライン (intent抽出) 用の会話メモリ。 旧 vars.messages ではなく、
+// loadMemoryFlow が読んだ priorMessages に「今回の user 発話 + agent 応答」を足して
+// 直近ターンだけ残す。 これで次ターンが「さっきの INC」を参照できる。
+var prior = (vars.priorMessages default []) filter ((m) ->
+  (((m.role default "") as String) == "user" or ((m.role default "") as String) == "assistant")
+  and ((m.content default "") as String) != "")
+var thisTurn = [
+  { role: "user",      content: (vars.userText default "") as String },
+  { role: "assistant", content: (vars.replyText default vars.finalText default "") as String }
+]
+var all = prior ++ thisTurn
+// 直近 8 ターン (= 4 往復) に圧縮。 ObjectStore 肥大と prompt 長を抑える。
+var tail = if (sizeOf(all) > 8) (all[-8 to -1]) else all
 ---
-write(compact, "application/json") as String]]></ee:set-payload>
+write(tail, "application/json") as String]]></ee:set-payload>
                         </ee:message>
                     </ee:transform>
                     <os:store key="#[vars.contextId]" objectStore="MEMORY_STORE">
