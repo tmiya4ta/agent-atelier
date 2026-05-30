@@ -128,20 +128,19 @@ if (sizeOf(dataParts) > 0) (dataParts[0].data default null) else null]]></ee:set
                 <flow-ref name="directToolFlow"/>
             </when>
             <otherwise>
-                <flow-ref name="loadMemoryFlow"/>
                 <try>
-                    <flow-ref name="initAgentStateFlow"/>
-                    <flow-ref name="agentLoopFlow"/>
+                    <flow-ref name="logExtractFlow"/>
+                    <flow-ref name="logRouterFlow"/>
                     <error-handler>
                         <on-error-continue type="ANY">
                             <logger level="WARN"
-                                    message="#['Agent loop failed: ' ++ (error.description default error.message default 'unknown')]"/>
+                                    message="#['log intent pipeline failed: ' ++ (error.description default error.message default 'unknown')]"/>
                             <ee:transform>
                                 <ee:variables>
                                     <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
 output application/java
 ---
-"⚠️ atelier-logistics-agent: Agent ループ中にエラーが発生しました。\n" ++
+"⚠️ atelier-logistics-agent: 処理中にエラーが発生しました。\n" ++
 "  " ++ ((error.description default (error.message default "unknown")) as String)]]></ee:set-variable>
                                 </ee:variables>
                             </ee:transform>
@@ -494,6 +493,172 @@ output application/java
     </sub-flow>
 
     <!-- directToolFlow — broker DataPart { tool, args } を LLM 無しで直接 MCP に流す -->
+    <!-- ============================================================
+         logExtractFlow — 自然文 → エンティティ + モード抽出のみ。
+         mode advise=在庫照会だけ / execute=仮確保まで (reserve_inventory)
+         ============================================================ -->
+    <sub-flow name="logExtractFlow">
+        <ee:transform doc:name="build extractor messages">
+            <ee:variables>
+                <ee:set-variable variableName="extractMessages"><![CDATA[%dw 2.0
+output application/java
+var sys =
+"あなたは物流・在庫 agent の『意図抽出器』です。 ユーザの 1 メッセージを読み、 下記 JSON だけを出力。 説明やコードフェンスは書かない。\n" ++
+"\n" ++
+"scope: \"logistics\" (在庫照会・仮確保・予約取消) | \"capability\" | \"out_of_scope\"\n" ++
+"mode : \"advise\" (在庫を確認するだけ) | \"execute\" (仮確保まで明示依頼: 「仮確保して」「確保して」「reserve」)\n" ++
+"\n" ++
+"entities は読めた値だけ。 null 可。 推測禁止。\n" ++
+"  partNumber (P-...) / quantity (整数) / incidentId (INC-...)\n" ++
+"\n" ++
+"出力: {\"scope\":\"...\",\"mode\":\"advise\",\"entities\":{\"partNumber\":null,\"quantity\":null,\"incidentId\":null},\"rawMessage\":\"原文\"}"
+---
+[
+  { role: "system",    content: sys },
+  { role: "user",      content: "P-2024-CHU-001 を 120 台 仮確保して。INC-2026-0579" },
+  { role: "assistant", content: write({ scope: "logistics", mode: "execute", entities: { partNumber: "P-2024-CHU-001", quantity: 120, incidentId: "INC-2026-0579" }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: "P-2024-KYU-001 の在庫ある?" },
+  { role: "assistant", content: write({ scope: "logistics", mode: "advise", entities: { partNumber: "P-2024-KYU-001", quantity: null, incidentId: null }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: "何ができる?" },
+  { role: "assistant", content: write({ scope: "capability", mode: "advise", entities: { partNumber: null, quantity: null, incidentId: null }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: "返品要求を発行して" },
+  { role: "assistant", content: write({ scope: "out_of_scope", mode: "advise", entities: { partNumber: null, quantity: null, incidentId: null }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: (vars.userText default "") as String }
+]]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <ee:transform doc:name="build extractor body">
+            <ee:variables>
+                <ee:set-variable variableName="extractBody"><![CDATA[%dw 2.0
+output application/json
+---
+{ model: (p('llm.model') default "gpt-5-mini") as String, max_completion_tokens: (p('llm.max_tokens') default 2048) as Number, messages: (vars.extractMessages default []) }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <http:request method="POST" path="/openai/v1/chat/completions" config-ref="LLM_Request_config">
+            <http:body>#[vars.extractBody]</http:body>
+            <http:response-validator><http:success-status-code-validator values="0..599"/></http:response-validator>
+        </http:request>
+        <ee:transform doc:name="parse intent JSON">
+            <ee:variables>
+                <ee:set-variable variableName="intent"><![CDATA[%dw 2.0
+output application/java
+fun extractJson(s) = do {
+  var t = trim(s default "")
+  var noFence = (t replace /```(json)?/ with "") replace "```" with ""
+  var i = noFence indexOf "{"
+  var j = noFence lastIndexOf "}"
+  --- if (i >= 0 and j > i) (noFence[i to j]) else "{}"
+}
+fun safeReadJson(s) = if (s == null or (trim(s as String)) == "") {} else read(extractJson(s as String), "application/json")
+var resp = if (payload == null) {} else if (payload is Binary) read(payload as String {encoding: "UTF-8"}, "application/json") else if (payload is String) read(payload as String, "application/json") else payload
+var raw = ((resp.choices default [])[0].message.content default "{}") as String
+var obj = safeReadJson(raw)
+---
+{ scope: (obj.scope default "logistics") as String, mode: (obj.mode default "advise") as String, entities: (obj.entities default {}), rawMessage: (obj.rawMessage default ((vars.userText default "") as String)) as String }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <logger level="INFO" message="#['log-agent scope=' ++ (vars.intent.scope default '?') ++ ' mode=' ++ (vars.intent.mode default '?') ++ ' entities=' ++ write(vars.intent.entities default {}, 'application/json')]"/>
+    </sub-flow>
+
+    <!-- ============================================================
+         logRouterFlow — check_inventory (READ) → mode=execute なら reserve_inventory。
+         partNumber 必須、 reserve には quantity + incidentId 必須。
+         ============================================================ -->
+    <sub-flow name="logRouterFlow">
+        <choice doc:name="dispatch by scope">
+            <when expression='#[(vars.intent.scope default "") == "capability"]'>
+                <ee:transform><ee:variables><ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"🚚 物流・在庫 (atelier-logistics-agent) です。\n\n**できること**\n- 在庫照会 (在庫数・倉庫・リードタイム)\n- 在庫の仮確保 (予約)\n- 予約の取消\n\n**担当外**: インシデント (incident) / 法務 (legal) / 発注 (procurement) / 承認 (org)。"]]></ee:set-variable></ee:variables></ee:transform>
+            </when>
+            <when expression='#[(vars.intent.scope default "") == "out_of_scope"]'>
+                <ee:transform><ee:variables><ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"その依頼は物流 agent の担当外です。\nインシデントは incident、 法務は legal、 発注は procurement、 承認は org、 もしくは broker へ。"]]></ee:set-variable></ee:variables></ee:transform>
+            </when>
+            <when expression='#[(vars.intent.entities.partNumber default null) == null]'>
+                <ee:transform><ee:variables><ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"[NEED_INFO]\n- 対象の部品番号 (P-YYYY-... 形式) を教えてください。\n[/NEED_INFO]"]]></ee:set-variable></ee:variables></ee:transform>
+            </when>
+            <otherwise>
+                <!-- STEP 1: 在庫照会 -->
+                <ee:transform doc:name="build check_inventory args">
+                    <ee:variables>
+                        <ee:set-variable variableName="toolName">#['check_inventory']</ee:set-variable>
+                        <ee:set-variable variableName="mcpKind">#['inventory']</ee:set-variable>
+                        <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+---
+{ partNumber: (vars.intent.entities.partNumber default "") as String } ++ (if (vars.intent.entities.quantity != null) { requiredQuantity: vars.intent.entities.quantity } else {})]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <flow-ref name="callMcpExecuteFlow"/>
+                <ee:transform doc:name="capture inventory">
+                    <ee:variables>
+                        <ee:set-variable variableName="inv"><![CDATA[%dw 2.0
+output application/java
+---
+(vars.toolResult.result default vars.toolResult default {})]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <choice doc:name="mode=execute なら仮確保">
+                    <when expression='#[(vars.intent.mode default "advise") == "execute" and (vars.intent.entities.quantity default null) != null and (vars.intent.entities.incidentId default null) != null]'>
+                        <ee:transform doc:name="build reserve_inventory args">
+                            <ee:variables>
+                                <ee:set-variable variableName="toolName">#['reserve_inventory']</ee:set-variable>
+                                <ee:set-variable variableName="mcpKind">#['inventory']</ee:set-variable>
+                                <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+var e = vars.intent.entities default {}
+---
+{ partNumber: (e.partNumber default "") as String, quantity: e.quantity, incidentId: e.incidentId }]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                        <flow-ref name="callMcpExecuteFlow"/>
+                        <ee:transform doc:name="format execute result">
+                            <ee:variables>
+                                <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+var r = (vars.toolResult.result default vars.toolResult default {})
+var inv = vars.inv default {}
+fun cell(v) = if (v == null or (v as String) == "") "—" else (v as String)
+---
+"🚚 物流エージェント (実行完了)\n\n" ++
+"| 項目 | 値 |\n|---|---|\n" ++
+"| 部品 | **" ++ cell(vars.intent.entities.partNumber) ++ "** |\n" ++
+"| 在庫数 | " ++ cell(inv.quantityOnHand) ++ " (" ++ cell(inv.warehouse) ++ ") |\n" ++
+"| 仮確保 | **" ++ cell(r.reservationId) ++ "** (" ++ cell(vars.intent.entities.quantity) ++ "個 / TTL " ++ cell(r.ttlSeconds) ++ "s) |"]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                    </when>
+                    <otherwise>
+                        <ee:transform doc:name="format advise result">
+                            <ee:variables>
+                                <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+var inv = vars.inv default {}
+fun cell(v) = if (v == null or (v as String) == "") "—" else (v as String)
+---
+"🚚 物流エージェント (在庫照会)\n\n" ++
+"| 項目 | 値 |\n|---|---|\n" ++
+"| 部品 | **" ++ cell(vars.intent.entities.partNumber) ++ "** |\n" ++
+"| 在庫数 | " ++ cell(inv.quantityOnHand) ++ " |\n" ++
+"| 倉庫 | " ++ cell(inv.warehouse) ++ " |\n" ++
+"| リードタイム | " ++ cell(inv.leadTimeHours) ++ "h |\n\n" ++
+"数量と incidentId を添えて「仮確保して」で予約します。"]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                    </otherwise>
+                </choice>
+            </otherwise>
+        </choice>
+    </sub-flow>
+
     <sub-flow name="directToolFlow">
         <ee:transform doc:name="map directPart → toolName/toolArgs/mcpKind">
             <ee:variables>

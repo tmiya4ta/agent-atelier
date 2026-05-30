@@ -149,21 +149,23 @@ if (sizeOf(dataParts) > 0) (dataParts[0].data default null) else null]]></ee:set
             <when expression="#[vars.directPart != null]">
                 <flow-ref name="directToolFlow"/>
             </when>
+            <!-- 人間の自然文 → エンティティ+モード抽出 (LLM) → 社名解決 → 決定論ツールチェーン。
+                 弱い LLM に分岐を語らせず、 抽出だけさせる。 法務の処理連鎖は Mule で固定。 -->
             <otherwise>
-                <flow-ref name="loadMemoryFlow"/>
-                <try doc:name="agent loop (best effort)">
-                    <flow-ref name="initAgentStateFlow"/>
-                    <flow-ref name="agentLoopFlow"/>
+                <try doc:name="intent pipeline (best effort)">
+                    <flow-ref name="legalExtractFlow"/>
+                    <flow-ref name="resolveSupplierFlow"/>
+                    <flow-ref name="legalRouterFlow"/>
                     <error-handler>
                         <on-error-continue type="ANY">
                             <logger level="WARN"
-                                    message="#['Agent loop failed: ' ++ (error.description default error.message default 'unknown')]"/>
+                                    message="#['legal intent pipeline failed: ' ++ (error.description default error.message default 'unknown')]"/>
                             <ee:transform doc:name="build error text">
                                 <ee:variables>
                                     <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
 output application/java
 ---
-"⚠️ atelier-legal-agent: Agent ループ中にエラーが発生しました。\n" ++
+"⚠️ atelier-legal-agent: 処理中にエラーが発生しました。\n" ++
 "  " ++ ((error.description default (error.message default "unknown")) as String)]]></ee:set-variable>
                                 </ee:variables>
                             </ee:transform>
@@ -588,6 +590,307 @@ output application/java
                         </ee:variables>
                     </ee:transform>
                 </foreach>
+            </otherwise>
+        </choice>
+    </sub-flow>
+
+    <!-- ============================================================
+         legalExtractFlow — LLM は「自然文 → エンティティ + モード」抽出だけ。
+         分岐や処理連鎖はしない。 出力 vars.intent = { entities{...}, mode, scope }
+         mode  = "advise" (協定確認・提案) | "execute" (返品要求/ペナルティまで実行)
+         scope = "legal" (法務の依頼) | "out_of_scope" | "capability"
+         ============================================================ -->
+    <sub-flow name="legalExtractFlow">
+        <ee:transform doc:name="build extractor messages">
+            <ee:variables>
+                <ee:set-variable variableName="extractMessages"><![CDATA[%dw 2.0
+output application/java
+var sys =
+"あなたは法務 agent の『意図抽出器』です。 ユーザの 1 メッセージを読み、 下記 JSON だけを出力。 説明やコードフェンスは書かない。\n" ++
+"\n" ++
+"scope は次のいずれか:\n" ++
+"  - \"legal\"        : 品質保証協定・返品請求・ペナルティ・契約に関する依頼\n" ++
+"  - \"capability\"   : 「何ができる?」等のメタ質問\n" ++
+"  - \"out_of_scope\" : インシデント起票 / 在庫 / 発注 / 承認 など法務以外\n" ++
+"\n" ++
+"mode は次のいずれか (scope=legal のときのみ意味を持つ):\n" ++
+"  - \"advise\"  : 「確認して」「見て」「できますか?」など、 まず協定を調べて提案するだけ\n" ++
+"  - \"execute\" : 「返品要求を発行して」「ペナルティ通知して」「対応して」など、 実行まで明示依頼\n" ++
+"\n" ++
+"entities は読み取れた値だけ。 読めないものは null。 推測・正規化・捏造は禁止。\n" ++
+"  supplierName (社名そのまま 例:九州製作所) / supplierGoldenId (G-XXX のみ) / partNumber (P-...) /\n" ++
+"  incidentId (INC-...) / quantity (整数)\n" ++
+"  ※ 社名は GoldenId に変換しない。 supplierName にそのまま入れる (解決は後段が行う)。\n" ++
+"\n" ++
+"出力スキーマ:\n" ++
+"{\"scope\":\"...\",\"mode\":\"advise\",\"entities\":{\"supplierName\":null,\"supplierGoldenId\":null,\"partNumber\":null,\"incidentId\":null,\"quantity\":null},\"rawMessage\":\"原文\"}"
+---
+[
+  { role: "system",    content: sys },
+  { role: "user",      content: "九州製作所との品質保証協定で P-2024-KYU-001 の不良で返品請求できますか?" },
+  { role: "assistant", content: write({ scope: "legal", mode: "advise", entities: { supplierName: "九州製作所", supplierGoldenId: null, partNumber: "P-2024-KYU-001", incidentId: null, quantity: null }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: "九州製作所に返品要求書を発行してペナルティ通知して。INC-2026-0579、120個。" },
+  { role: "assistant", content: write({ scope: "legal", mode: "execute", entities: { supplierName: "九州製作所", supplierGoldenId: null, partNumber: null, incidentId: "INC-2026-0579", quantity: 120 }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: "君は何ができるの?" },
+  { role: "assistant", content: write({ scope: "capability", mode: "advise", entities: { supplierName: null, supplierGoldenId: null, partNumber: null, incidentId: null, quantity: null }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: "横浜倉庫の在庫を仮確保して" },
+  { role: "assistant", content: write({ scope: "out_of_scope", mode: "advise", entities: { supplierName: null, supplierGoldenId: null, partNumber: null, incidentId: null, quantity: null }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: (vars.userText default "") as String }
+]]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <ee:transform doc:name="build extractor body">
+            <ee:variables>
+                <ee:set-variable variableName="extractBody"><![CDATA[%dw 2.0
+output application/json
+---
+{
+  model:      (p('llm.model') default "gpt-5-mini") as String,
+  max_completion_tokens: (p('llm.max_tokens') default 2048) as Number,
+  messages:   (vars.extractMessages default [])
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <http:request method="POST" path="/openai/v1/chat/completions" config-ref="LLM_Request_config">
+            <http:body>#[vars.extractBody]</http:body>
+            <http:response-validator>
+                <http:success-status-code-validator values="0..599"/>
+            </http:response-validator>
+        </http:request>
+        <ee:transform doc:name="parse intent JSON">
+            <ee:variables>
+                <ee:set-variable variableName="intent"><![CDATA[%dw 2.0
+output application/java
+fun extractJson(s) = do {
+  var t = trim(s default "")
+  var noFence = (t replace /```(json)?/ with "") replace "```" with ""
+  var i = noFence indexOf "{"
+  var j = noFence lastIndexOf "}"
+  ---
+  if (i >= 0 and j > i) (noFence[i to j]) else "{}"
+}
+fun safeReadJson(s) = if (s == null or (trim(s as String)) == "") {} else read(extractJson(s as String), "application/json")
+var resp =
+  if (payload == null) {}
+  else if (payload is Binary) read(payload as String {encoding: "UTF-8"}, "application/json")
+  else if (payload is String) read(payload as String, "application/json")
+  else payload
+var raw = ((resp.choices default [])[0].message.content default "{}") as String
+var obj = safeReadJson(raw)
+---
+{
+  scope:      (obj.scope default "legal") as String,
+  mode:       (obj.mode default "advise") as String,
+  entities:   (obj.entities default {}),
+  rawMessage: (obj.rawMessage default ((vars.userText default "") as String)) as String
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <logger level="INFO"
+                message="#['legal-agent scope=' ++ (vars.intent.scope default '?') ++ ' mode=' ++ (vars.intent.mode default '?') ++ ' entities=' ++ write(vars.intent.entities default {}, 'application/json')]"/>
+    </sub-flow>
+
+    <!-- ============================================================
+         resolveSupplierFlow — 社名→GoldenId を agent 自身が MDM で解決し entities に書き戻す。
+         ドメイン内の正規化は各 agent 持ち (broker はドメイン横断のみ)。
+         ============================================================ -->
+    <sub-flow name="resolveSupplierFlow">
+        <choice>
+            <when expression='#[(vars.intent.entities.supplierGoldenId default null) == null and (vars.intent.entities.supplierName default null) != null]'>
+                <ee:transform doc:name="build resolve_supplier args">
+                    <ee:variables>
+                        <ee:set-variable variableName="toolName">#['resolve_supplier']</ee:set-variable>
+                        <ee:set-variable variableName="mcpKind">#['mdm']</ee:set-variable>
+                        <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+---
+{ supplierName: (vars.intent.entities.supplierName default "") as String }]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <flow-ref name="callMcpExecuteFlow"/>
+                <ee:transform doc:name="merge resolved goldenId">
+                    <ee:variables>
+                        <ee:set-variable variableName="intent"><![CDATA[%dw 2.0
+output application/java
+var r = (vars.toolResult.result default vars.toolResult default {})
+var gid = if ((r.matched default false) == true) (r.supplier.goldenId default null) else null
+---
+vars.intent ++ { entities: (vars.intent.entities default {}) ++ (if (gid != null) { supplierGoldenId: gid } else {}) }]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <logger level="INFO"
+                        message="#['legal-agent resolved ' ++ (vars.intent.entities.supplierName default '?') ++ ' -> ' ++ (vars.intent.entities.supplierGoldenId default 'UNRESOLVED')]"/>
+            </when>
+            <otherwise>
+                <logger level="INFO" message="resolveSupplierFlow skipped"/>
+            </otherwise>
+        </choice>
+    </sub-flow>
+
+    <!-- ============================================================
+         legalRouterFlow — 決定論。 capability/out_of_scope は静的応答。
+         legal は get_quality_agreement (READ) を必ず引き、 mode=execute なら
+         返品要求書 + ペナルティ通知まで連鎖。 GoldenId 必須。
+         ============================================================ -->
+    <sub-flow name="legalRouterFlow">
+        <choice doc:name="dispatch by scope">
+            <when expression='#[(vars.intent.scope default "") == "capability"]'>
+                <ee:transform>
+                    <ee:variables>
+                        <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"⚖️ 法務 (atelier-legal-agent) です。\n\n**できること**\n- 品質保証協定書の確認 (条項・ペナルティ上限)\n- 返品要求書の発行\n- ペナルティ通知書の送付\n- サプライヤーリスクスコアの更新\n\n**担当外**: インシデント起票 (incident) / 在庫 (logistics) / 発注 (procurement) / 承認 (org)。\n※ 取引先は社名で言ってくれれば GoldenId は自分で解決します。"]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </when>
+            <when expression='#[(vars.intent.scope default "") == "out_of_scope"]'>
+                <ee:transform>
+                    <ee:variables>
+                        <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"その依頼は法務 agent の担当外です。\nインシデント起票は incident、 在庫は logistics、 発注は procurement、 承認は org の各 agent、 もしくは broker へお願いします。"]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </when>
+            <!-- scope=legal: GoldenId 必須。 無ければ NEED_INFO -->
+            <when expression='#[(vars.intent.entities.supplierGoldenId default null) == null]'>
+                <ee:transform>
+                    <ee:variables>
+                        <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+var nm = vars.intent.entities.supplierName default null
+---
+"[NEED_INFO]\n- " ++
+(if (nm != null) ("取引先「" ++ (nm as String) ++ "」を解決できませんでした。 正式な取引先名または GoldenId (G-XXX)") else "取引先 (社名 または GoldenId G-XXX)") ++
+" を教えてください。\n[/NEED_INFO]"]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </when>
+            <otherwise>
+                <!-- STEP 1: 品質保証協定書を引く (READ) -->
+                <ee:transform doc:name="build get_quality_agreement args">
+                    <ee:variables>
+                        <ee:set-variable variableName="toolName">#['get_quality_agreement']</ee:set-variable>
+                        <ee:set-variable variableName="mcpKind">#['contract']</ee:set-variable>
+                        <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+var e = vars.intent.entities default {}
+---
+{ supplierGoldenId: e.supplierGoldenId } ++ (if (e.partNumber != null) { partNumber: e.partNumber } else {})]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <flow-ref name="callMcpExecuteFlow"/>
+                <ee:transform doc:name="capture agreement">
+                    <ee:variables>
+                        <ee:set-variable variableName="agreement"><![CDATA[%dw 2.0
+output application/java
+---
+(vars.toolResult.result default vars.toolResult default {})]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <choice doc:name="mode=execute なら 返品要求+ペナルティまで">
+                    <when expression='#[(vars.intent.mode default "advise") == "execute"]'>
+                        <!-- STEP 2: 返品要求書 (incidentId 必須) -->
+                        <choice>
+                            <when expression='#[(vars.intent.entities.incidentId default null) != null]'>
+                                <ee:transform doc:name="build generate_return_request args">
+                                    <ee:variables>
+                                        <ee:set-variable variableName="toolName">#['generate_return_request']</ee:set-variable>
+                                        <ee:set-variable variableName="mcpKind">#['contract']</ee:set-variable>
+                                        <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+var e = vars.intent.entities default {}
+---
+{
+  supplierGoldenId: e.supplierGoldenId,
+  partNumber:       (e.partNumber default "") as String,
+  incidentId:       e.incidentId
+} ++ (if (e.quantity != null) { quantity: e.quantity } else {})
+  ++ { reason: (vars.intent.rawMessage default "") as String }]]></ee:set-variable>
+                                    </ee:variables>
+                                </ee:transform>
+                                <flow-ref name="callMcpExecuteFlow"/>
+                                <ee:transform doc:name="capture returnReq">
+                                    <ee:variables>
+                                        <ee:set-variable variableName="returnReq"><![CDATA[%dw 2.0
+output application/java
+---
+(vars.toolResult.result default vars.toolResult default {})]]></ee:set-variable>
+                                    </ee:variables>
+                                </ee:transform>
+                                <!-- STEP 3: ペナルティ通知 (協定の penaltyCap を金額に使う) -->
+                                <ee:transform doc:name="build send_penalty_notice args">
+                                    <ee:variables>
+                                        <ee:set-variable variableName="toolName">#['send_penalty_notice']</ee:set-variable>
+                                        <ee:set-variable variableName="mcpKind">#['contract']</ee:set-variable>
+                                        <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+var e = vars.intent.entities default {}
+var cap = (vars.agreement.penaltyCap default 0)
+---
+{
+  supplierGoldenId: e.supplierGoldenId,
+  incidentId:       e.incidentId,
+  amount:           cap,
+  currency:         "JPY"
+}]]></ee:set-variable>
+                                    </ee:variables>
+                                </ee:transform>
+                                <flow-ref name="callMcpExecuteFlow"/>
+                                <ee:transform doc:name="format execute result">
+                                    <ee:variables>
+                                        <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+var ag = vars.agreement default {}
+var rr = vars.returnReq default {}
+var pn = (vars.toolResult.result default vars.toolResult default {})
+var e  = vars.intent.entities default {}
+fun cell(v) = if (v == null or (v as String) == "") "—" else (v as String)
+---
+"⚖️ 法務エージェント (実行完了)\n\n" ++
+"| 項目 | 値 |\n|---|---|\n" ++
+"| 取引先 | " ++ cell(e.supplierGoldenId) ++ " |\n" ++
+"| 該当条項 | " ++ cell(ag.clause) ++ " |\n" ++
+"| 返品要求書 | **" ++ cell(rr.requestId) ++ "** |\n" ++
+"| ペナルティ通知 | **" ++ cell(pn.noticeId) ++ "** (¥" ++ cell(pn.amount default ag.penaltyCap) ++ ") |"]]></ee:set-variable>
+                                    </ee:variables>
+                                </ee:transform>
+                            </when>
+                            <otherwise>
+                                <ee:transform doc:name="execute だが incidentId 無し">
+                                    <ee:variables>
+                                        <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"[NEED_INFO]\n- 返品要求書の発行には incidentId (INC-XXXX) が必要です。\n[/NEED_INFO]"]]></ee:set-variable>
+                                    </ee:variables>
+                                </ee:transform>
+                            </otherwise>
+                        </choice>
+                    </when>
+                    <!-- mode=advise: 協定を引いて提案だけ -->
+                    <otherwise>
+                        <ee:transform doc:name="format advise result">
+                            <ee:variables>
+                                <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+var ag = vars.agreement default {}
+var e  = vars.intent.entities default {}
+fun cell(v) = if (v == null or (v as String) == "") "—" else (v as String)
+var hasClause = ((ag.clause default "") as String) != ""
+---
+"⚖️ 法務エージェント (相談)\n\n" ++
+"| 項目 | 値 |\n|---|---|\n" ++
+"| 取引先 | " ++ cell(e.supplierGoldenId) ++ " |\n" ++
+"| 該当条項 | " ++ (if (hasClause) cell(ag.clause) else "該当する品質保証協定は見つかりませんでした") ++ " |\n" ++
+"| ペナルティ上限 | " ++ (if ((ag.penaltyCap default null) != null) ("¥" ++ cell(ag.penaltyCap)) else "—") ++ " |\n\n" ++
+(if (hasClause) "推奨アクション: 返品要求 / ペナルティ通知 / リスクスコア引上げ。 「発行して」「通知して」で実行します。" else "")]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                    </otherwise>
+                </choice>
             </otherwise>
         </choice>
     </sub-flow>

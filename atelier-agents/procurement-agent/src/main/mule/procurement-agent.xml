@@ -131,20 +131,19 @@ if (sizeOf(dataParts) > 0) (dataParts[0].data default null) else null]]></ee:set
                 <flow-ref name="directToolFlow"/>
             </when>
             <otherwise>
-                <flow-ref name="loadMemoryFlow"/>
                 <try>
-                    <flow-ref name="initAgentStateFlow"/>
-                    <flow-ref name="agentLoopFlow"/>
+                    <flow-ref name="procExtractFlow"/>
+                    <flow-ref name="procRouterFlow"/>
                     <error-handler>
                         <on-error-continue type="ANY">
                             <logger level="WARN"
-                                    message="#['Agent loop failed: ' ++ (error.description default error.message default 'unknown')]"/>
+                                    message="#['proc intent pipeline failed: ' ++ (error.description default error.message default 'unknown')]"/>
                             <ee:transform>
                                 <ee:variables>
                                     <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
 output application/java
 ---
-"⚠️ atelier-procurement-agent: Agent ループ中にエラーが発生しました。\n" ++
+"⚠️ atelier-procurement-agent: 処理中にエラーが発生しました。\n" ++
 "  " ++ ((error.description default (error.message default "unknown")) as String)]]></ee:set-variable>
                                 </ee:variables>
                             </ee:transform>
@@ -497,6 +496,184 @@ output application/java
                         </ee:variables>
                     </ee:transform>
                 </foreach>
+            </otherwise>
+        </choice>
+    </sub-flow>
+
+    <!-- ============================================================
+         procExtractFlow — LLM は「自然文 → エンティティ + モード」抽出だけ。
+         vars.intent = { scope, mode, entities{...}, rawMessage }
+         mode advise=代替部品を見せるだけ / execute=発注ドラフト作成まで
+         ============================================================ -->
+    <sub-flow name="procExtractFlow">
+        <ee:transform doc:name="build extractor messages">
+            <ee:variables>
+                <ee:set-variable variableName="extractMessages"><![CDATA[%dw 2.0
+output application/java
+var sys =
+"あなたは調達・在庫 agent の『意図抽出器』です。 ユーザの 1 メッセージを読み、 下記 JSON だけを出力。 説明やコードフェンスは書かない。\n" ++
+"\n" ++
+"scope: \"procurement\" (代替部品・発注・仕入先通知) | \"capability\" (メタ質問) | \"out_of_scope\" (調達以外)\n" ++
+"mode : \"advise\" (代替部品を調べて提案するだけ) | \"execute\" (発注ドラフト作成まで明示依頼: 「ドラフト作って」「発注して」「PO作成」)\n" ++
+"\n" ++
+"entities は読めた値だけ。 読めないものは null。 推測・捏造禁止。 社名は GoldenId に変換せず supplierName にそのまま。\n" ++
+"  supplierName / supplierGoldenId (G-XXX) / partNumber (P-...) / incidentId (INC-...) / quantity (整数)\n" ++
+"\n" ++
+"出力: {\"scope\":\"...\",\"mode\":\"advise\",\"entities\":{\"supplierName\":null,\"supplierGoldenId\":null,\"partNumber\":null,\"incidentId\":null,\"quantity\":null},\"rawMessage\":\"原文\"}"
+---
+[
+  { role: "system",    content: sys },
+  { role: "user",      content: "九州製作所 P-2024-KYU-001 の代替部品で 120 台分の発注ドラフトを作って" },
+  { role: "assistant", content: write({ scope: "procurement", mode: "execute", entities: { supplierName: "九州製作所", supplierGoldenId: null, partNumber: "P-2024-KYU-001", incidentId: null, quantity: 120 }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: "P-2024-KYU-001 の代替部品ある?" },
+  { role: "assistant", content: write({ scope: "procurement", mode: "advise", entities: { supplierName: null, supplierGoldenId: null, partNumber: "P-2024-KYU-001", incidentId: null, quantity: null }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: "君は何ができる?" },
+  { role: "assistant", content: write({ scope: "capability", mode: "advise", entities: { supplierName: null, supplierGoldenId: null, partNumber: null, incidentId: null, quantity: null }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: "返品要求書を発行して" },
+  { role: "assistant", content: write({ scope: "out_of_scope", mode: "advise", entities: { supplierName: null, supplierGoldenId: null, partNumber: null, incidentId: null, quantity: null }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: (vars.userText default "") as String }
+]]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <ee:transform doc:name="build extractor body">
+            <ee:variables>
+                <ee:set-variable variableName="extractBody"><![CDATA[%dw 2.0
+output application/json
+---
+{ model: (p('llm.model') default "gpt-5-mini") as String, max_completion_tokens: (p('llm.max_tokens') default 2048) as Number, messages: (vars.extractMessages default []) }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <http:request method="POST" path="/openai/v1/chat/completions" config-ref="LLM_Request_config">
+            <http:body>#[vars.extractBody]</http:body>
+            <http:response-validator><http:success-status-code-validator values="0..599"/></http:response-validator>
+        </http:request>
+        <ee:transform doc:name="parse intent JSON">
+            <ee:variables>
+                <ee:set-variable variableName="intent"><![CDATA[%dw 2.0
+output application/java
+fun extractJson(s) = do {
+  var t = trim(s default "")
+  var noFence = (t replace /```(json)?/ with "") replace "```" with ""
+  var i = noFence indexOf "{"
+  var j = noFence lastIndexOf "}"
+  --- if (i >= 0 and j > i) (noFence[i to j]) else "{}"
+}
+fun safeReadJson(s) = if (s == null or (trim(s as String)) == "") {} else read(extractJson(s as String), "application/json")
+var resp = if (payload == null) {} else if (payload is Binary) read(payload as String {encoding: "UTF-8"}, "application/json") else if (payload is String) read(payload as String, "application/json") else payload
+var raw = ((resp.choices default [])[0].message.content default "{}") as String
+var obj = safeReadJson(raw)
+---
+{ scope: (obj.scope default "procurement") as String, mode: (obj.mode default "advise") as String, entities: (obj.entities default {}), rawMessage: (obj.rawMessage default ((vars.userText default "") as String)) as String }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <logger level="INFO" message="#['proc-agent scope=' ++ (vars.intent.scope default '?') ++ ' mode=' ++ (vars.intent.mode default '?') ++ ' entities=' ++ write(vars.intent.entities default {}, 'application/json')]"/>
+    </sub-flow>
+
+    <!-- ============================================================
+         procRouterFlow — get_alternative_parts (READ) → 最良代替を選び、
+         mode=execute なら create_purchase_order_draft (代替の supplier 宛)。 partNumber 必須。
+         ============================================================ -->
+    <sub-flow name="procRouterFlow">
+        <choice doc:name="dispatch by scope">
+            <when expression='#[(vars.intent.scope default "") == "capability"]'>
+                <ee:transform><ee:variables><ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"📦 調達・在庫 (atelier-procurement-agent) です。\n\n**できること**\n- 代替部品の検索 (互換率つき)\n- 発注ドラフトの作成\n- 仕入先への通知\n\n**担当外**: インシデント (incident) / 法務 (legal) / 在庫仮確保 (logistics) / 承認 (org)。"]]></ee:set-variable></ee:variables></ee:transform>
+            </when>
+            <when expression='#[(vars.intent.scope default "") == "out_of_scope"]'>
+                <ee:transform><ee:variables><ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"その依頼は調達 agent の担当外です。\nインシデントは incident、 法務は legal、 在庫仮確保は logistics、 承認は org、 もしくは broker へ。"]]></ee:set-variable></ee:variables></ee:transform>
+            </when>
+            <when expression='#[(vars.intent.entities.partNumber default null) == null]'>
+                <ee:transform><ee:variables><ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"[NEED_INFO]\n- 対象の部品番号 (P-YYYY-... 形式) を教えてください。\n[/NEED_INFO]"]]></ee:set-variable></ee:variables></ee:transform>
+            </when>
+            <otherwise>
+                <!-- STEP 1: 代替部品を引く -->
+                <ee:transform doc:name="build get_alternative_parts args">
+                    <ee:variables>
+                        <ee:set-variable variableName="toolName">#['get_alternative_parts']</ee:set-variable>
+                        <ee:set-variable variableName="mcpKind">#['procurement']</ee:set-variable>
+                        <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+---
+{ partNumber: (vars.intent.entities.partNumber default "") as String }]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <flow-ref name="callMcpExecuteFlow"/>
+                <ee:transform doc:name="pick best alternative">
+                    <ee:variables>
+                        <ee:set-variable variableName="alts"><![CDATA[%dw 2.0
+output application/java
+---
+((vars.toolResult.result default {}).alternatives default [])]]></ee:set-variable>
+                        <ee:set-variable variableName="bestAlt"><![CDATA[%dw 2.0
+output application/java
+var a = ((vars.toolResult.result default {}).alternatives default [])
+---
+if (sizeOf(a) > 0) a[0] else null]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <choice doc:name="mode=execute なら 発注ドラフト">
+                    <when expression='#[(vars.intent.mode default "advise") == "execute" and (vars.bestAlt default null) != null and (vars.intent.entities.quantity default null) != null]'>
+                        <ee:transform doc:name="build create_purchase_order_draft args">
+                            <ee:variables>
+                                <ee:set-variable variableName="toolName">#['create_purchase_order_draft']</ee:set-variable>
+                                <ee:set-variable variableName="mcpKind">#['procurement']</ee:set-variable>
+                                <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+var alt = vars.bestAlt
+---
+{
+  partNumber:       (alt.partNumber default "") as String,
+  quantity:         vars.intent.entities.quantity,
+  supplierGoldenId: (alt.supplierGoldenId default "") as String
+} ++ (if ((vars.intent.entities.incidentId default null) != null) { incidentId: vars.intent.entities.incidentId } else {})]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                        <flow-ref name="callMcpExecuteFlow"/>
+                        <ee:transform doc:name="format execute result">
+                            <ee:variables>
+                                <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+var d = (vars.toolResult.result default vars.toolResult default {})
+var alt = vars.bestAlt default {}
+fun cell(v) = if (v == null or (v as String) == "") "—" else (v as String)
+---
+"📦 調達エージェント (実行完了)\n\n" ++
+"| 項目 | 値 |\n|---|---|\n" ++
+"| 代替部品 | **" ++ cell(alt.partNumber) ++ "** (互換 " ++ cell((alt.compatibility default 0) * 100) ++ "%) |\n" ++
+"| 供給元 | " ++ cell(alt.supplierName default alt.supplierGoldenId) ++ " |\n" ++
+"| 数量 | " ++ cell(vars.intent.entities.quantity) ++ " |\n" ++
+"| 発注ドラフト | **" ++ cell(d.draftId) ++ "** |\n" ++
+"| 概算額 | ¥" ++ cell(d.totalAmount) ++ " |"]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                    </when>
+                    <otherwise>
+                        <ee:transform doc:name="format advise result">
+                            <ee:variables>
+                                <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+var a = vars.alts default []
+fun cell(v) = if (v == null or (v as String) == "") "—" else (v as String)
+---
+if (sizeOf(a) == 0)
+  ("📦 調達エージェント: " ++ (vars.intent.entities.partNumber default "") ++ " の代替部品は見つかりませんでした。")
+else
+  ("📦 調達エージェント (相談)\n\n代替部品候補:\n\n" ++
+   "| 部品 | 互換 | 供給元 | リードタイム |\n|---|---|---|---|\n" ++
+   (a map ((x) -> "| **" ++ cell(x.partNumber) ++ "** | " ++ cell((x.compatibility default 0) * 100) ++ "% | " ++ cell(x.supplierName default x.supplierGoldenId) ++ " | " ++ cell(x.leadTimeHours) ++ "h |") joinBy "\n") ++
+   "\n\n数量を添えて「発注ドラフト作って」で PO を作成します。")]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                    </otherwise>
+                </choice>
             </otherwise>
         </choice>
     </sub-flow>

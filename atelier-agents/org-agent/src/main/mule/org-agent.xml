@@ -128,20 +128,19 @@ if (sizeOf(dataParts) > 0) (dataParts[0].data default null) else null]]></ee:set
                 <flow-ref name="directToolFlow"/>
             </when>
             <otherwise>
-                <flow-ref name="loadMemoryFlow"/>
                 <try>
-                    <flow-ref name="initAgentStateFlow"/>
-                    <flow-ref name="agentLoopFlow"/>
+                    <flow-ref name="orgExtractFlow"/>
+                    <flow-ref name="orgRouterFlow"/>
                     <error-handler>
                         <on-error-continue type="ANY">
                             <logger level="WARN"
-                                    message="#['Agent loop failed: ' ++ (error.description default error.message default 'unknown')]"/>
+                                    message="#['org intent pipeline failed: ' ++ (error.description default error.message default 'unknown')]"/>
                             <ee:transform>
                                 <ee:variables>
                                     <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
 output application/java
 ---
-"⚠️ atelier-org-agent: Agent ループ中にエラーが発生しました。\n" ++
+"⚠️ atelier-org-agent: 処理中にエラーが発生しました。\n" ++
 "  " ++ ((error.description default (error.message default "unknown")) as String)]]></ee:set-variable>
                                 </ee:variables>
                             </ee:transform>
@@ -486,6 +485,203 @@ output application/java
     </sub-flow>
 
     <!-- directToolFlow — broker DataPart { tool, args } を LLM 無しで直接 MCP に流す -->
+    <!-- ============================================================
+         orgExtractFlow — 自然文 → エンティティ + モード抽出のみ。
+         mode advise=担当バイヤーを探すだけ / execute=承認依頼送信まで
+         ============================================================ -->
+    <sub-flow name="orgExtractFlow">
+        <ee:transform doc:name="build extractor messages">
+            <ee:variables>
+                <ee:set-variable variableName="extractMessages"><![CDATA[%dw 2.0
+output application/java
+var sys =
+"あなたは組織・人事 agent の『意図抽出器』です。 ユーザの 1 メッセージを読み、 下記 JSON だけを出力。 説明やコードフェンスは書かない。\n" ++
+"\n" ++
+"scope: \"org\" (担当者検索・承認依頼) | \"capability\" | \"out_of_scope\"\n" ++
+"mode : \"advise\" (適任の担当バイヤーを探すだけ) | \"execute\" (承認依頼を送信まで明示依頼: 「承認依頼を出して」「依頼して」「送って」)\n" ++
+"\n" ++
+"entities は読めた値だけ。 null 可。 推測禁止。\n" ++
+"  region (例:九州) / category (例:機械部品) / incidentId (INC-...) / partNumber (P-...)\n" ++
+"\n" ++
+"出力: {\"scope\":\"...\",\"mode\":\"advise\",\"entities\":{\"region\":null,\"category\":null,\"incidentId\":null,\"partNumber\":null},\"rawMessage\":\"原文\"}"
+---
+[
+  { role: "system",    content: sys },
+  { role: "user",      content: "九州の機械部品の担当バイヤーに承認依頼を出して。INC-2026-0579" },
+  { role: "assistant", content: write({ scope: "org", mode: "execute", entities: { region: "九州", category: "機械部品", incidentId: "INC-2026-0579", partNumber: null }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: "機械部品の担当者は誰?" },
+  { role: "assistant", content: write({ scope: "org", mode: "advise", entities: { region: null, category: "機械部品", incidentId: null, partNumber: null }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: "何ができる?" },
+  { role: "assistant", content: write({ scope: "capability", mode: "advise", entities: { region: null, category: null, incidentId: null, partNumber: null }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: "在庫を仮確保して" },
+  { role: "assistant", content: write({ scope: "out_of_scope", mode: "advise", entities: { region: null, category: null, incidentId: null, partNumber: null }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: (vars.userText default "") as String }
+]]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <ee:transform doc:name="build extractor body">
+            <ee:variables>
+                <ee:set-variable variableName="extractBody"><![CDATA[%dw 2.0
+output application/json
+---
+{ model: (p('llm.model') default "gpt-5-mini") as String, max_completion_tokens: (p('llm.max_tokens') default 2048) as Number, messages: (vars.extractMessages default []) }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <http:request method="POST" path="/openai/v1/chat/completions" config-ref="LLM_Request_config">
+            <http:body>#[vars.extractBody]</http:body>
+            <http:response-validator><http:success-status-code-validator values="0..599"/></http:response-validator>
+        </http:request>
+        <ee:transform doc:name="parse intent JSON">
+            <ee:variables>
+                <ee:set-variable variableName="intent"><![CDATA[%dw 2.0
+output application/java
+fun extractJson(s) = do {
+  var t = trim(s default "")
+  var noFence = (t replace /```(json)?/ with "") replace "```" with ""
+  var i = noFence indexOf "{"
+  var j = noFence lastIndexOf "}"
+  --- if (i >= 0 and j > i) (noFence[i to j]) else "{}"
+}
+fun safeReadJson(s) = if (s == null or (trim(s as String)) == "") {} else read(extractJson(s as String), "application/json")
+var resp = if (payload == null) {} else if (payload is Binary) read(payload as String {encoding: "UTF-8"}, "application/json") else if (payload is String) read(payload as String, "application/json") else payload
+var raw = ((resp.choices default [])[0].message.content default "{}") as String
+var obj = safeReadJson(raw)
+---
+{ scope: (obj.scope default "org") as String, mode: (obj.mode default "advise") as String, entities: (obj.entities default {}), rawMessage: (obj.rawMessage default ((vars.userText default "") as String)) as String }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <logger level="INFO" message="#['org-agent scope=' ++ (vars.intent.scope default '?') ++ ' mode=' ++ (vars.intent.mode default '?') ++ ' entities=' ++ write(vars.intent.entities default {}, 'application/json')]"/>
+    </sub-flow>
+
+    <!-- ============================================================
+         orgRouterFlow — find_best_buyer (READ) → mode=execute なら send_approval_request。
+         incidentId は execute 時に必須。
+         ============================================================ -->
+    <sub-flow name="orgRouterFlow">
+        <choice doc:name="dispatch by scope">
+            <when expression='#[(vars.intent.scope default "") == "capability"]'>
+                <ee:transform><ee:variables><ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"👥 組織・人事 (atelier-org-agent) です。\n\n**できること**\n- 適任の担当バイヤー検索 (region / category)\n- 承認依頼の送信 (Slack DM)\n\n**担当外**: インシデント (incident) / 法務 (legal) / 発注 (procurement) / 在庫 (logistics)。"]]></ee:set-variable></ee:variables></ee:transform>
+            </when>
+            <when expression='#[(vars.intent.scope default "") == "out_of_scope"]'>
+                <ee:transform><ee:variables><ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+---
+"その依頼は組織・人事 agent の担当外です。\nインシデントは incident、 法務は legal、 発注は procurement、 在庫は logistics、 もしくは broker へ。"]]></ee:set-variable></ee:variables></ee:transform>
+            </when>
+            <otherwise>
+                <!-- STEP 1: 担当バイヤー検索 -->
+                <ee:transform doc:name="build find_best_buyer args">
+                    <ee:variables>
+                        <ee:set-variable variableName="toolName">#['find_best_buyer']</ee:set-variable>
+                        <ee:set-variable variableName="mcpKind">#['hr']</ee:set-variable>
+                        <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+var e = vars.intent.entities default {}
+---
+{} ++ (if (e.region != null) { region: e.region } else {}) ++ (if (e.category != null) { category: e.category } else {})]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <flow-ref name="callMcpExecuteFlow"/>
+                <ee:transform doc:name="pick buyer (1st pass)">
+                    <ee:variables>
+                        <ee:set-variable variableName="buyer"><![CDATA[%dw 2.0
+output application/java
+var b = ((vars.toolResult.result default {}).buyers default [])
+---
+if (sizeOf(b) > 0) b[0] else null]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <!-- 絞り込みで 0 件なら filter を外して全社から再検索 (専任不在→全社で探す自然な挙動) -->
+                <choice>
+                    <when expression='#[(vars.buyer default null) == null and ((vars.intent.entities.region default null) != null or (vars.intent.entities.category default null) != null)]'>
+                        <ee:transform doc:name="retry find_best_buyer no filter">
+                            <ee:variables>
+                                <ee:set-variable variableName="toolName">#['find_best_buyer']</ee:set-variable>
+                                <ee:set-variable variableName="mcpKind">#['hr']</ee:set-variable>
+                                <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+---
+{}]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                        <flow-ref name="callMcpExecuteFlow"/>
+                        <ee:transform doc:name="pick buyer (fallback)">
+                            <ee:variables>
+                                <ee:set-variable variableName="buyer"><![CDATA[%dw 2.0
+output application/java
+var b = ((vars.toolResult.result default {}).buyers default [])
+---
+if (sizeOf(b) > 0) b[0] else null]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                    </when>
+                    <otherwise>
+                        <logger level="INFO" message="org buyer 1st pass OK or no filter"/>
+                    </otherwise>
+                </choice>
+                <choice doc:name="mode=execute なら承認依頼">
+                    <when expression='#[(vars.intent.mode default "advise") == "execute" and (vars.buyer default null) != null and (vars.intent.entities.incidentId default null) != null]'>
+                        <ee:transform doc:name="build send_approval_request args">
+                            <ee:variables>
+                                <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+var e = vars.intent.entities default {}
+var due = (now() + |P3D|) as String { format: "yyyy-MM-dd'T'HH:mm:ss'Z'" }
+---
+{
+  approverId: (vars.buyer.employeeId default "") as String,
+  subject:    ("インシデント " ++ (e.incidentId default "") as String ++ " の対応承認依頼"),
+  dueAt:      due
+} ++ (if (e.incidentId != null) { incidentId: e.incidentId } else {})]]></ee:set-variable>
+                                <ee:set-variable variableName="toolName">#['send_approval_request']</ee:set-variable>
+                                <ee:set-variable variableName="mcpKind">#['hr']</ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                        <flow-ref name="callMcpExecuteFlow"/>
+                        <ee:transform doc:name="format execute result">
+                            <ee:variables>
+                                <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+var r = (vars.toolResult.result default vars.toolResult default {})
+var b = vars.buyer default {}
+fun cell(v) = if (v == null or (v as String) == "") "—" else (v as String)
+---
+"👥 組織エージェント (実行完了)\n\n" ++
+"| 項目 | 値 |\n|---|---|\n" ++
+"| 担当バイヤー | **" ++ cell(b.name default b.employeeName) ++ "** (" ++ cell(b.employeeId) ++ ") |\n" ++
+"| 承認依頼 | **" ++ cell(r.approvalRequestId default r.approvalId) ++ "** |\n" ++
+"| 期限 | " ++ cell(r.dueAt) ++ " |"]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                    </when>
+                    <otherwise>
+                        <ee:transform doc:name="format advise result">
+                            <ee:variables>
+                                <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+var b = vars.buyer default null
+fun cell(v) = if (v == null or (v as String) == "") "—" else (v as String)
+---
+if (b == null)
+  "👥 組織エージェント: 条件に合う担当バイヤーが見つかりませんでした。 region / category を指定してください。"
+else
+  ("👥 組織エージェント (担当者検索)\n\n" ++
+   "| 項目 | 値 |\n|---|---|\n" ++
+   "| 担当バイヤー | **" ++ cell(b.name default b.employeeName) ++ "** (" ++ cell(b.employeeId) ++ ") |\n" ++
+   "| 役割 | " ++ cell(b.role) ++ " |\n" ++
+   "| 地域 / カテゴリ | " ++ cell(b.region) ++ " / " ++ cell(b.category) ++ " |\n\n" ++
+   "incidentId を添えて「承認依頼を出して」で送信します。")]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                    </otherwise>
+                </choice>
+            </otherwise>
+        </choice>
+    </sub-flow>
+
     <sub-flow name="directToolFlow">
         <ee:transform doc:name="map directPart → toolName/toolArgs/mcpKind">
             <ee:variables>
