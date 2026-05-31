@@ -4,9 +4,9 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>fe1db8fb-8261-4b5c-a591-06fea582f980</groupId>
+    <groupId>4283bf7b-276e-44bc-8c6b-bd9b622d42b4</groupId>
     <artifactId>atelier-static</artifactId>
-    <version>1.0.44</version>
+    <version>2026.5.31</version>
     <packaging>mule-application</packaging>
 
     <name>atelier-static</name>
@@ -15,14 +15,14 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-        <app.runtime>4.10.1</app.runtime>
+        <app.runtime>4.9.8</app.runtime>
         <mule.maven.plugin.version>4.9.1</mule.maven.plugin.version>
         <!-- 親 (../) にある Atelier の静的アセット。 build 時に src/main/resources/static/ にコピー -->
         <atelier.root>${project.basedir}/..</atelier.root>
 
-        <anypoint.businessGroup>MuleSoft\T1</anypoint.businessGroup>
-        <anypoint.environment>Sandbox</anypoint.environment>
-        <anypoint.targetSpace>rootps</anypoint.targetSpace>
+        <anypoint.businessGroup>Salesforce</anypoint.businessGroup>
+        <anypoint.environment>StepA</anypoint.environment>
+        <anypoint.targetSpace>BetterTogetherDemo</anypoint.targetSpace>
     </properties>
 
     <build>
@@ -73,8 +73,9 @@
                     <classifier>mule-application</classifier>
                     <cloudhub2Deployment>
                         <muleVersion>${app.runtime}</muleVersion>
-                        <username>${anypoint.username}</username>
-                        <password>${anypoint.password}</password>
+                        <connectedAppClientId>${anypoint.connectedApp.clientId}</connectedAppClientId>
+                        <connectedAppClientSecret>${anypoint.connectedApp.clientSecret}</connectedAppClientSecret>
+                        <connectedAppGrantType>client_credentials</connectedAppGrantType>
                         <businessGroup>${anypoint.businessGroup}</businessGroup>
                         <environment>${anypoint.environment}</environment>
                         <target>${anypoint.targetSpace}</target>
@@ -121,7 +122,7 @@
         <repository>
             <id>anypoint-exchange-v3</id>
             <name>Anypoint Exchange v3</name>
-            <url>https://maven.anypoint.mulesoft.com/api/v3/organizations/fe1db8fb-8261-4b5c-a591-06fea582f980/maven</url>
+            <url>https://maven.anypoint.mulesoft.com/api/v3/organizations/4283bf7b-276e-44bc-8c6b-bd9b622d42b4/maven</url>
             <layout>default</layout>
         </repository>
     </distributionManagement>
