@@ -707,21 +707,37 @@ fun extractJson(s) = do {
   ---
   if (i >= 0 and j > i) (noFence[i to j]) else "{}"
 }
+// 不正/途中切れ JSON でも落ちないよう try で包む (read は default では捕まらず throw)。
 fun safeReadJson(s) =
   if (s == null or (trim(s as String)) == "") {}
-  else read(extractJson(s as String), "application/json")
+  else (dw::Runtime::try(() -> read(extractJson(s as String), "application/json")).result default {})
 // HTTP レスポンス payload は Binary のことがあるので明示的に JSON 化してから choices を読む
 var resp =
   if (payload == null) {}
-  else if (payload is Binary) read(payload as String {encoding: "UTF-8"}, "application/json")
-  else if (payload is String) read(payload as String, "application/json")
+  else if (payload is Binary) (dw::Runtime::try(() -> read(payload as String {encoding: "UTF-8"}, "application/json")).result default {})
+  else if (payload is String) (dw::Runtime::try(() -> read(payload as String, "application/json")).result default {})
   else payload
 var raw = ((resp.choices default [])[0].message.content default "{}") as String
 var obj = safeReadJson(raw)
+// ── 決定論バックフィル: userText から正規表現で確実に拾える値を、 LLM が null に
+//    した場合だけ補う。 gpt-5-mini の抽出ブレ (partNumber/incidentId 取りこぼし) を
+//    打ち消し、 デモを安定させる。 LLM が入れた値は尊重し上書きしない。 ──
+var ut = (vars.userText default "") as String
+fun firstMatch(re) = do { var m = (ut scan re); --- if (sizeOf(m) > 0) m[0][0] else null }
+var rxPart  = firstMatch(/P-\d{4}-[A-Z0-9]+-\d+/)
+var rxInc   = firstMatch(/INC-[0-9A-Za-z-]+/)
+var rxSev   = upper(((firstMatch(/(?i)(CRITICAL|HIGH|MEDIUM|LOW)/)) default "") as String)
+var rxQty   = do { var m = (ut scan /(\d+)\s*(台|個|pcs|units?)/); --- if (sizeOf(m) > 0) (m[0][1]) else null }
+var llmEnts = (obj.entities default {})
+var ents = llmEnts ++
+  (if ((llmEnts.partNumber  default null) == null and rxPart != null) { partNumber: rxPart } else {}) ++
+  (if ((llmEnts.incidentId  default null) == null and rxInc  != null) { incidentId: rxInc } else {}) ++
+  (if ((llmEnts.severity    default null) == null and rxSev != "")    { severity: rxSev } else {}) ++
+  (if ((llmEnts.quantity    default null) == null and rxQty != null)  { quantity: (rxQty as Number) } else {})
 ---
 {
   intent:     (obj.intent default "unknown") as String,
-  entities:   (obj.entities default {}),
+  entities:   ents,
   rawMessage: (obj.rawMessage default ((vars.userText default "") as String)) as String,
   language:   (obj.language default "ja") as String
 }]]></ee:set-variable>
