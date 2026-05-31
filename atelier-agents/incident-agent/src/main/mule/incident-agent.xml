@@ -723,11 +723,11 @@ var obj = safeReadJson(raw)
 //    した場合だけ補う。 gpt-5-mini の抽出ブレ (partNumber/incidentId 取りこぼし) を
 //    打ち消し、 デモを安定させる。 LLM が入れた値は尊重し上書きしない。 ──
 var ut = (vars.userText default "") as String
-fun firstMatch(re) = do { var m = (ut scan re); --- if (sizeOf(m) > 0) m[0][0] else null }
+fun firstMatch(re) = do { var m = (ut scan re) --- if (sizeOf(m) > 0) m[0][0] else null }
 var rxPart  = firstMatch(/P-\d{4}-[A-Z0-9]+-\d+/)
 var rxInc   = firstMatch(/INC-[0-9A-Za-z-]+/)
 var rxSev   = upper(((firstMatch(/(?i)(CRITICAL|HIGH|MEDIUM|LOW)/)) default "") as String)
-var rxQty   = do { var m = (ut scan /(\d+)\s*(台|個|pcs|units?)/); --- if (sizeOf(m) > 0) (m[0][1]) else null }
+var rxQty   = do { var m = (ut scan /(\d+)\s*(台|個|pcs|units?)/) --- if (sizeOf(m) > 0) (m[0][1]) else null }
 var llmEnts = (obj.entities default {})
 var ents = llmEnts ++
   (if ((llmEnts.partNumber  default null) == null and rxPart != null) { partNumber: rxPart } else {}) ++

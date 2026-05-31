@@ -542,16 +542,17 @@ output application/java
 var sys =
 "あなたは組織・人事 agent の『意図抽出器』です。 ユーザの 1 メッセージを読み、 下記 JSON だけを出力。 説明やコードフェンスは書かない。\n" ++
 "\n" ++
-"scope: \"org\" (担当者検索・承認依頼のみ) | \"capability\" | \"out_of_scope\"\n" ++
-"  - \"org\"          : 担当バイヤー/担当者を探す、 承認依頼を出す。 これだけ。\n" ++
-"  - \"out_of_scope\" : 上記以外は全部これ。 特に → 法務・契約・返品請求・ペナルティ (legal) / 代替部品・発注・発注ドラフト (procurement) / 在庫・仮確保 (logistics) / インシデント起票 (incident)。\n" ++
-"    ※ 文中に取引先名・部品番号・インシデントID が出てきても、 依頼の動詞が「担当者を探す/承認依頼を出す」でなければ out_of_scope。 entities に釣られて org にしない。\n" ++
+"scope: \"org\" (担当者検索・承認依頼) | \"list_suppliers\" (取引先一覧の照会) | \"capability\" | \"out_of_scope\"\n" ++
+"  - \"org\"            : 担当バイヤー/担当者を探す、 承認依頼を出す。\n" ++
+"  - \"list_suppliers\" : 取引先(サプライヤー)の一覧を見たい。 「取引先一覧」「サプライヤー一覧」「〇〇地域の取引先」「リスクの高い取引先」等。 region/status/リスクで絞れる。\n" ++
+"  - \"out_of_scope\"   : 上記以外は全部これ。 特に → 法務・契約・返品請求・ペナルティ (legal) / 代替部品・発注・発注ドラフト (procurement) / 在庫・仮確保 (logistics) / インシデント起票 (incident)。\n" ++
+"    ※ 文中に取引先名・部品番号・インシデントID が出てきても、 依頼の動詞が「担当者を探す/承認依頼を出す/取引先一覧を見る」でなければ out_of_scope。 entities に釣られて org にしない。\n" ++
 "mode : \"advise\" (適任の担当バイヤーを探すだけ) | \"execute\" (承認依頼を送信まで明示依頼: 「承認依頼を出して」「依頼して」「送って」)\n" ++
 "\n" ++
 "entities は読めた値だけ。 null 可。 推測禁止。\n" ++
-"  region (例:九州) / category (例:機械部品) / incidentId (INC-...) / partNumber (P-...)\n" ++
+"  region (例:九州) / category (例:機械部品) / incidentId (INC-...) / partNumber (P-...) / status (ACTIVE/INACTIVE 等)\n" ++
 "\n" ++
-"出力: {\"scope\":\"...\",\"mode\":\"advise\",\"entities\":{\"region\":null,\"category\":null,\"incidentId\":null,\"partNumber\":null},\"rawMessage\":\"原文\"}"
+"出力: {\"scope\":\"...\",\"mode\":\"advise\",\"entities\":{\"region\":null,\"category\":null,\"incidentId\":null,\"partNumber\":null,\"status\":null},\"rawMessage\":\"原文\"}"
 ---
 [
   { role: "system",    content: sys },
@@ -559,6 +560,10 @@ var sys =
   { role: "assistant", content: write({ scope: "org", mode: "execute", entities: { region: "九州", category: "機械部品", incidentId: "INC-2026-0579", partNumber: null }, rawMessage: "" }, "application/json") },
   { role: "user",      content: "機械部品の担当者は誰?" },
   { role: "assistant", content: write({ scope: "org", mode: "advise", entities: { region: null, category: "機械部品", incidentId: null, partNumber: null }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: "九州地域の取引先一覧を見せて" },
+  { role: "assistant", content: write({ scope: "list_suppliers", mode: "advise", entities: { region: "九州", category: null, incidentId: null, partNumber: null, status: null }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: "リスクの高いサプライヤーを教えて" },
+  { role: "assistant", content: write({ scope: "list_suppliers", mode: "advise", entities: { region: null, category: null, incidentId: null, partNumber: null, status: null }, rawMessage: "" }, "application/json") },
   { role: "user",      content: "何ができる?" },
   { role: "assistant", content: write({ scope: "capability", mode: "advise", entities: { region: null, category: null, incidentId: null, partNumber: null }, rawMessage: "" }, "application/json") },
   { role: "user",      content: "在庫を仮確保して" },
@@ -603,7 +608,7 @@ var raw = ((resp.choices default [])[0].message.content default "{}") as String
 var obj = safeReadJson(raw)
 // 決定論バックフィル: userText から正規表現で確実に拾える値を LLM が null にした時だけ補う。
 var ut = (vars.userText default "") as String
-fun firstMatch(re) = do { var m = (ut scan re); --- if (sizeOf(m) > 0) m[0][0] else null }
+fun firstMatch(re) = do { var m = (ut scan re) --- if (sizeOf(m) > 0) m[0][0] else null }
 var rxPart = firstMatch(/P-\d{4}-[A-Z0-9]+-\d+/)
 var rxInc  = firstMatch(/INC-[0-9A-Za-z-]+/)
 var le = (obj.entities default {})
@@ -629,7 +634,43 @@ var ents = le ++
                 <ee:transform><ee:variables><ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
 output application/java
 ---
-"👥 組織・人事 (atelier-org-agent) です。\n\n**できること**\n- 適任の担当バイヤー検索 (region / category)\n- 承認依頼の送信 (Slack DM)\n\n**担当外**: インシデント (incident) / 法務 (legal) / 発注 (procurement) / 在庫 (logistics)。"]]></ee:set-variable></ee:variables></ee:transform>
+"👥 組織・人事 (atelier-org-agent) です。\n\n**できること**\n- 適任の担当バイヤー検索 (region / category)\n- 承認依頼の送信 (Slack DM)\n- 取引先(サプライヤー)一覧の照会 (region / status / リスクスコアで絞込み)\n\n**担当外**: インシデント (incident) / 法務 (legal) / 発注 (procurement) / 在庫 (logistics)。"]]></ee:set-variable></ee:variables></ee:transform>
+            </when>
+            <!-- 取引先一覧の照会 (READ-ONLY): MDM list_suppliers。 region/status で絞り、 リスクスコア順に表示 -->
+            <when expression='#[(vars.intent.scope default "") == "list_suppliers"]'>
+                <ee:transform doc:name="build list_suppliers args">
+                    <ee:variables>
+                        <ee:set-variable variableName="toolName">#['list_suppliers']</ee:set-variable>
+                        <ee:set-variable variableName="mcpKind">#['mdm']</ee:set-variable>
+                        <ee:set-variable variableName="toolArgs"><![CDATA[%dw 2.0
+output application/java
+var e = vars.intent.entities default {}
+---
+{ limit: 20 } ++
+  (if (e.region != null) { region: e.region } else {}) ++
+  (if (e.status != null) { status: e.status } else {})]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <flow-ref name="callMcpExecuteFlow"/>
+                <ee:transform doc:name="format supplier list">
+                    <ee:variables>
+                        <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
+output application/java
+var r = (vars.toolResult.result default vars.toolResult default {})
+var items = (r.suppliers default r.items default [])
+fun cell(v) = if (v == null or (v as String) == "") "—" else (v as String)
+---
+if (sizeOf(items) == 0)
+  "👥 組織・人事: 条件に合う取引先は見つかりませんでした。"
+else
+  ("👥 組織・人事 (取引先一覧 " ++ (sizeOf(items) as String) ++ "件)\n\n" ++
+   "| GoldenId | 取引先 | region | status | リスク |\n|---|---|---|---|---|\n" ++
+   (items map ((s) ->
+     "| **" ++ cell(s.goldenId default s.supplierGoldenId) ++ "** | " ++ cell(s.name default s.supplierName) ++
+     " | " ++ cell(s.region) ++ " | " ++ cell(s.status) ++ " | " ++ cell(s.riskScore) ++ " |"
+   ) joinBy "\n"))]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
             </when>
             <when expression='#[(vars.intent.scope default "") == "out_of_scope"]'>
                 <ee:transform><ee:variables><ee:set-variable variableName="finalText"><![CDATA[%dw 2.0

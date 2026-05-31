@@ -618,11 +618,11 @@ var raw = ((resp.choices default [])[0].message.content default "{}") as String
 var obj = safeReadJson(raw)
 // 決定論バックフィル: userText から正規表現で確実に拾える値を LLM が null にした時だけ補う。
 var ut = (vars.userText default "") as String
-fun firstMatch(re) = do { var m = (ut scan re); --- if (sizeOf(m) > 0) m[0][0] else null }
+fun firstMatch(re) = do { var m = (ut scan re) --- if (sizeOf(m) > 0) m[0][0] else null }
 var rxPart = firstMatch(/P-\d{4}-[A-Z0-9]+-\d+/)
 var rxInc  = firstMatch(/INC-[0-9A-Za-z-]+/)
 var rxGid  = firstMatch(/G-[A-Z0-9-]+/)
-var rxQty  = do { var m = (ut scan /(\d+)\s*(台|個|pcs|units?)/); --- if (sizeOf(m) > 0) (m[0][1]) else null }
+var rxQty  = do { var m = (ut scan /(\d+)\s*(台|個|pcs|units?)/) --- if (sizeOf(m) > 0) (m[0][1]) else null }
 var le = (obj.entities default {})
 var ents = le ++
   (if ((le.partNumber       default null) == null and rxPart != null) { partNumber: rxPart } else {}) ++
