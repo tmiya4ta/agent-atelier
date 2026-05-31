@@ -7,7 +7,7 @@ import { AgentWindow }                      from "./window.js";
 import * as persist                         from "./persist.js";
 import { modalConfirm, modalAlert, modalPrompt, modalChoice } from "./modal.js";
 import { runAuthCodeFlow, redirectUri }     from "./oauth.js";
-import { parseScript, ScriptRunner }        from "./script.js";
+import { parseScript, parseMocks, ScriptRunner }        from "./script.js";
 
 // /demo用のフォールバック (ブックマーク0件の時のみ使用)
 const DEMO_AGENTS = [
@@ -2208,6 +2208,16 @@ function highlightDslLine(raw) {
       + `<span class="tk-punct">${escapeHtmlInline(m[5])}</span>${escapeHtmlInline(m[6])}`
       + `<span class="tk-text">${highlightVarRefs(m[7])}</span>`;
   }
+  // $> 応答 — mock 応答。 直前の window に紐づく。 mock OFF 時はコメント同様 dim 表示。
+  if ((m = trimmed.match(/^(\$>)(\s?)([\s\S]*)$/))) {
+    if (!state.scriptMock) {
+      // 通常モードでは実行されない (コメント扱い) ので dim でハイライトオフ
+      return escapeHtmlInline(lead) + `<span class="tk-comment">${escapeHtmlInline(trimmed)}</span>`;
+    }
+    return escapeHtmlInline(lead)
+      + `<span class="tk-mock">${escapeHtmlInline(m[1])}</span>${escapeHtmlInline(m[2])}`
+      + `<span class="tk-mock-text">${escapeHtmlInline(m[3])}</span>`;
+  }
   // > name [timeout] [as var]  (wait for agent reply)
   if ((m = trimmed.match(/^(>)(\s+)(.+?)(?:(\s+)(\d+(?:\.\d+)?)\s*s?)?(?:(\s+)(as)(\s+)([a-zA-Z_][a-zA-Z0-9_]*))?$/))) {
     let out = escapeHtmlInline(lead)
@@ -2473,12 +2483,12 @@ async function runScript(opts = {}) {
   if (state.scriptPanelOpen) closeScriptPanel();
 
   // ─── モックモード: ON なら対象 window の adapter を mock に乗っ取る ───
-  // script.mocks = { "<window名>": [{match,reply},...] }。 実通信せずローカル応答。
+  // 台本インラインの `$> 応答` を { "<window名>": ["応答1", ...] } に畳んでローカル応答に。 実通信なし。
   const mockWins = [];
   if (state.scriptMock) {
-    const mocks = script?.mocks;
-    if (!mocks || !Object.keys(mocks).length) {
-      appendScriptLog({ level: "err", text: `mock mode ON だが "${script?.name || '?'}" に mocks が定義されていません — 通常実行します` });
+    const mocks = parseMocks(text);
+    if (!Object.keys(mocks).length) {
+      appendScriptLog({ level: "err", text: `mock mode ON だが "${script?.name || '?'}" に mock 応答 ($> 行) がありません — 通常実行します` });
     } else {
       for (const winName of Object.keys(mocks)) {
         const w = findWindowByQuery(winName);
@@ -2653,6 +2663,8 @@ function wireScriptPanel() {
     btn.classList.toggle("is-on", state.scriptMock);
     btn.setAttribute("aria-pressed", state.scriptMock ? "true" : "false");
     setScriptStatus(state.scriptMock ? "MOCK モード ON (ローカル応答・実通信なし)" : "MOCK モード OFF", state.scriptMock ? "running" : "");
+    // $> 行のハイライトは mock ON/OFF で切り替わる (ON=mock 色 / OFF=コメント dim)
+    updateScriptHighlight();
     setTimeout(() => { if (!state._script) setScriptStatus("", ""); }, 2500);
   });
   $("#scriptClear").addEventListener("click", () => {

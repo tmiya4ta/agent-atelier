@@ -263,6 +263,13 @@ export function importJson(str, opts = {}) {
     e.code = "IMPORT_UNSAFE";
     throw e;
   }
+  // theme は「ユーザー設定」であって snapshot の中身ではない。 import で上書きすると
+  // ダークモードのユーザーが light の snapshot を読んだ瞬間ライトに飛ぶ。 現在値を保持する。
+  try {
+    const cur = JSON.parse(localStorage.getItem(KEY) || "null");
+    if (cur && (cur.theme === "dark" || cur.theme === "light")) state.theme = cur.theme;
+  } catch {}
+
   // import 時は secrets を必ず除去 (snapshot 由来の token を流し込ませない)
   if (Array.isArray(state.catalogs))  state.catalogs  = state.catalogs.map(stripSecrets);
   if (Array.isArray(state.bookmarks)) state.bookmarks = state.bookmarks.map(stripSecrets);

@@ -28,36 +28,27 @@
 
 ---
 
-## データ形式 (シナリオ JSON 埋め込み)
+## データ形式 (台本インライン `$>`)
 
-各 script に `mocks` を追加 (省略時は mock 不可)。**window 名 × 入力パターン → 応答** の辞書:
+mock 応答は **台本 (`body`) の中にインライン**で書く。直前の送信/待機に紐づく `$>` 行として並べるので、台本とモックが 1 つのテキストで完結し、エディタからそのまま編集できる:
 
-```jsonc
-{
-  "id": "A1",
-  "name": "...",
-  "body": "...",
-  "mocks": {
-    "インシデント": [
-      { "match": "登録",   "reply": "✅ インシデントを登録しました。\n\n| 項目 | 値 |..." },
-      { "match": "ついで", "reply": "その依頼は incident-agent の担当外です。..." }
-    ],
-    "法務": [
-      { "match": "返品", "reply": "⚖️ 法務エージェント (相談)\n\n| 項目 | 値 |..." }
-    ],
-    "Broker (Agent Network)": [
-      { "match": "*", "reply": "重大な品質問題を検知しました。\nインシデント: INC-MOCK-0001\n【調達】...\n【物流】...\n【法務】..." }
-    ]
-  }
-}
+```
+< インシデント: 九州製作所の P-2024-KYU-001 で品質トラブル。登録して。
+> インシデント 90s
+$> ✅ インシデントを登録しました。\n\n| 項目 | 値 |\n|---|---|\n| incidentId | INC-... |
+
+< 法務: 九州製作所の不良 15% について返品請求できますか?
+> 法務 60s
+$> ⚖️ 法務エージェント (相談)\n\n| 項目 | 値 |\n|---|---|\n| 取引先 | G-KYUSHU-MFG-001 |
 ```
 
-### マッチ規則
-- window 名は **完全一致** (台本の `< 法務:` の `法務` と同じ)。
-- `match`: 入力テキストに**含まれる部分文字列**。複数候補は**配列の順 + マッチした中で最初**を採用。
-- `"*"` は無条件マッチ (ブローカーのように 1 応答で済むもの)。
-- 同じ window に複数回送る台本 (例: A1 の incident は起票→ついで法務の 2 回) は、各送信テキストに対して match で出し分ける。
-- マッチ無し時のフォールバック: `"⚠️ (mock) 応答が定義されていません: <入力先頭40字>"` を返す (デモ中に気づける)。
+### 構文・解決規則
+- `$> <応答>`: 直前の `> <window>` (無ければ直前の `< <window>:`) に紐づく mock 応答。**window 名は書かない**。
+- 改行は `\n` リテラルで表現 (`$>` は 1 行)。`parseMocks` が実改行に展開する。
+- 同じ window に複数回送る台本 (例: A1 の incident は 起票 → ついで法務で弾かれ → 最後にクローズ) は、**送信順に `$>` を並べる**。n 回目の send が n 番目の `$>` を取る (順番消費型 `_mockResolve`)。
+- 応答が尽きた場合のフォールバック: `"⚠️ (mock) 応答が尽きました: <入力先頭40字>"` (デモ中に気づける)。
+- **mock OFF 時は `$>` 行はコメント同様 no-op** (実行されず、ハイライトも dim)。`# コメント` と同じ扱いになるので、同じ台本を実通信モードでもそのまま流せる。
+- (旧仕様の JSON `mocks` キーは廃止。`runScript` は `parseMocks(text)` だけを見る。)
 
 ---
 
@@ -78,9 +69,10 @@
 
 1. **UI**: スクリプトパネルのツールバーに `mock` チェックボックス/トグルを追加。状態は `state.scriptMock` (persist しなくてよい。セッション内のみ)。
 2. **runScript**: 開始時に `state.scriptMock` を見て、
-   - ON → 対象スクリプトの各 window に `win.adapter.mockInstall(scriptMocks[winName])` を呼び、state を "open" に。
+   - ON → `parseMocks(text)` で台本の `$>` を `{ "<window>": ["応答1", ...] }` に畳み、対象 window に `win.adapter.mockInstall(dict[winName])` を呼び、state を "open" に。
    - 実行後 (finally) → `win.adapter.mockRestore()` で元の send/state に戻す。
-3. **mocks が無いスクリプトで mock ON** → ログに警告 + 実行は通常どおり (フォールバック応答が出るだけ)。
+3. **`$>` が無いスクリプトで mock ON** → ログに警告 + 実行は通常どおり (実通信)。
+4. **ハイライト**: mock トグルで `updateScriptHighlight()` を呼び、`$>` 行を ON=mock 色 / OFF=コメント dim に切り替える。
 
 ---
 
@@ -102,5 +94,5 @@
 - mock ON のまま実通信したい誤操作を防ぐため、トグル状態をパネルに明示 (例: 実行ボタン横に "MOCK" バッジ)。
 
 ## 関連
-- 実装の中心: `js/protocols/base.js` (mockInstall/Restore), `js/window.js` (sendProgrammatic/waitForReply は変更不要), `js/app.js` (runScript 配線), `scenarios/scrs-a.json` (mocks データ)
+- 実装の中心: `js/script.js` (`$>` parser + `parseMocks`), `js/protocols/base.js` (mockInstall/Restore + 順番消費型 `_mockResolve`), `js/window.js` (sendProgrammatic/waitForReply は変更不要), `js/app.js` (runScript 配線 + `$>` ハイライト), `scenarios/scrs-a.json` (`$>` インライン)
 - 既存 `js/protocols/mock.js` は汎用ペルソナ用で別物 (今回は使わない or 参考)

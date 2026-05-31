@@ -3645,6 +3645,11 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
 .tk-var     { color: #b14df0; font-weight: 600; }             /* ${var} reference / capture target */
 .tk-comment { color: var(--ink-4);  }
 .tk-err     { color: var(--warn); text-decoration: underline wavy; }
+/* mock 応答行 (@ Agent: ...) — アンバー系で「擬似応答」と分かるように */
+.tk-mock      { color: #b8860b; font-weight: 700; }
+.tk-mock-text { color: #9a7b2e; }
+body.is-dark .tk-mock      { color: #E0A93B; }
+body.is-dark .tk-mock-text { color: #C8A85A; }
 
 /* ─── Toolbar status (run progress / errors) ─── */
 .script-status {
@@ -3767,7 +3772,8 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
 /* シナリオ選択肢は "new connection" (.side-cta) と同じ navy グラデーションに揃える。
    (同じ色・同じインセット影・白文字。 トーンを統一する) */
 .modal-choice.primary-btn {
-  color: var(--paper);
+  /* navy グラデーション背景なので文字は常に白固定 (--paper はダークで黒になり溶けるため使わない) */
+  color: #F5F7FA;
   background: linear-gradient(180deg, color-mix(in srgb, var(--ink-navy-2) 70%, transparent) 0%, color-mix(in srgb, var(--ink-navy) 70%, transparent) 100%);
   box-shadow: 0 1px 0 rgba(255,255,255, 0.12) inset,
               0 2px 8px -3px rgba(31,42,74, 0.22),
@@ -3783,7 +3789,7 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
 .modal-choice-label { font-weight: 500; }
 .modal-choice-desc {
   font-size: calc(11px * var(--fs-mul, 1.1) * var(--fs, 1));
-  color: rgba(255,255,255,0.7);
+  color: rgba(255,255,255,0.86);
   font-weight: 400;
   /* 長い説明は最大 2 行で省略 (…)。 シナリオ一覧が読みやすくなる。 */
   display: -webkit-box;
@@ -4242,6 +4248,38 @@ body.is-dark .script-gutter {
 body.is-dark .tk-comment { color: #8A97B5; }
 body.is-dark .tk-var     { color: #D08BFF; }
 body.is-dark #scriptEditor::selection { background: rgba(56,182,232, 0.28); }
+
+/* dark: script panel 上の windows/commands ラベルとチップが暗背景に沈む対策。
+   ラベルは明るめ、 チップは panel が背景と同化するので少し浮かせ + 枠/ID を明色に。 */
+/* dark: primary-btn は navy グラデーション背景。 文字 color が var(--paper) で
+   ダークだと黒(#0E1320)になり溶けるので白固定 (modal の OK ボタン / connect ボタン等)。 */
+body.is-dark .primary-btn { color: #F5F7FA; }
+body.is-dark .primary-btn .arrow,
+body.is-dark .primary-btn .primary-btn-glyph { color: #F5F7FA; }
+
+body.is-dark .script-windows-label { color: #AEB9D4; }
+body.is-dark .swc-chip {
+  background: #2A3650;
+  border-color: #4A587A;
+  color: #EAEEF7;
+}
+body.is-dark .swc-chip:hover { background: #364563; border-color: #6B7AA0; color: #fff; }
+body.is-dark .swc-chip-id { color: #A6B0CC; }
+body.is-dark .swc-empty   { color: #A6B0CC; }
+body.is-dark .swc-cmd {
+  background: #15334A;
+  border-color: #3A6E8C;
+  color: #7FD4F2;
+}
+body.is-dark .swc-cmd:hover { background: #1C4863; border-color: #4F90B5; color: #fff; }
+
+/* dark: compose の role/stream メタ行が暗くて読めない */
+body.is-dark .compose-meta-item { color: #9AA6C4; }
+body.is-dark .cm-key { color: #7E8AA8; }
+body.is-dark .cm-val { color: #C2CADD; }
+
+/* dark: import モーダルの選択肢説明文 (modal-choice-desc は白70%で OK だが、
+   modal 背景が panel(明るめ) になる場合に備え ink 連動を維持) — 既に対応済みなので追記不要。 */
 
 /* sidebar の new connection ボタン: 元実装は color: var(--paper) (light=白)。
    dark では --paper が黒に変わって背景の navy と同化するので、

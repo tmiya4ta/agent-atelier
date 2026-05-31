@@ -52,6 +52,7 @@ export class ProtocolAdapter extends EventTarget {
     this._realState   = this.state;
     this._realCard    = this.agentCard;
     this._mockEntries = Array.isArray(entries) ? entries.slice() : [];
+    this._mockSeq     = 0;   // 順番消費型 (文字列配列) の位置
 
     // 擬似 agentCard + open 状態 (ネット fetch なし)
     if (!this.agentCard) {
@@ -69,8 +70,9 @@ export class ProtocolAdapter extends EventTarget {
         params: { message: { role: "user", parts: [{ kind: "text", text }], messageId: `m-${turn}-u` } } };
       this._emit("rpc", { dir: "out", method: "message/send (mock)", payload: rpcOut, raw: JSON.stringify(rpcOut, null, 2) });
 
-      // 人工 delay (LLM っぽさ。 長すぎるとデモがだれるので 0.3〜0.8s)
-      await new Promise(r => setTimeout(r, 300 + Math.random() * 500));
+      // 人工 delay: ユーザー入力表示が終わってからスピナーを ~3 秒回し、 LLM の
+      // 思考時間っぽさを出してから応答する (短いと入力と応答が被って不自然)。
+      await new Promise(r => setTimeout(r, 3000 + Math.random() * 600));
 
       const reply = this._mockResolve(text);
       this._emit("message", { role: "agent", text: reply, final: true });
@@ -81,10 +83,20 @@ export class ProtocolAdapter extends EventTarget {
     };
   }
 
-  // 入力テキストから mock 応答を解決。 配列順で最初にマッチしたもの。 "*" は無条件。
+  // 入力テキストから mock 応答を解決。 2 形式を受ける:
+  //   - 文字列配列 ["応答1","応答2"] (台本インライン `@` 由来) → 送信順に消費
+  //   - [{match,reply}] (JSON mocks 由来) → 部分一致 / "*" で解決
   _mockResolve(text) {
+    const entries = this._mockEntries || [];
+    if (entries.length && typeof entries[0] === "string") {
+      // 順番消費型: n 回目の send が n 番目の応答を取る
+      this._mockSeq = (this._mockSeq || 0);
+      const r = entries[this._mockSeq];
+      this._mockSeq += 1;
+      return r != null ? String(r) : `⚠️ (mock) 応答が尽きました: ${String(text||"").slice(0,40)}`;
+    }
     const t = String(text || "");
-    for (const e of (this._mockEntries || [])) {
+    for (const e of entries) {
       const m = e && e.match;
       if (m === "*" || (m && t.indexOf(m) >= 0)) return String(e.reply ?? "");
     }
