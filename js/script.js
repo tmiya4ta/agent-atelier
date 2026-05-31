@@ -11,9 +11,9 @@
 //   sleep 2s                                      pause execution
 //   clear                                         全 window のチャットをクリア
 //   clear <window>                                指定 window のチャットをクリア
-//   $> <応答>                                     mock 応答。 直前の `> <window>` (無ければ直前の `< <window>:`)
-//                                                 に紐づく。 mock モード ON 時のみ使用。 改行は \n で表現。
-//                                                 mock OFF 時はコメント同様 no-op (ハイライトも dim)。
+//   $> <window>: <応答>                          mock 応答 (`<` と対称)。 その window への n 回目の send が
+//                                                 n 番目の $> を取る。 mock モード ON 時のみ使用。 改行は \n。
+//                                                 mock OFF 時は非表示 (実行されない)。
 //   # ...                                         comment (ignored)
 //
 //  <window> はウインドウ名 (大文字小文字区別なし、部分一致OK) または ID (例 aw-1)
@@ -26,68 +26,52 @@ const WAIT_RE     = /^>\s*(.+?)(?:\s+(\d+(?:\.\d+)?)\s*s?)?(?:\s+as\s+([a-zA-Z_]
 const OPERATOR_RE = /^\^\s*(.+?)\s*:\s*(.+?)\s*(?:->|→)\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*$/;
 const SLEEP_RE    = /^sleep\s+(\d+(?:\.\d+)?)\s*s?$/i;
 const CLEAR_RE    = /^clear(?:\s+(.+))?$/i;
-// `$> <応答テキスト>` — mock モード時の擬似応答。 改行は \n で表現。
-// window 名は書かず、 台本上の直前の `> <window>` (無ければ直前の `< <window>:`) に紐づく。
-// 同じ window への複数の $> は送信順に消費される。
-const MOCK_RE     = /^\$>\s?([\s\S]*)$/;
+// `$> <window>: <応答テキスト>` — mock モード時の擬似応答 (`<` と対称)。 改行は \n で表現。
+// window 名を明示し、 その window への n 回目の send が n 番目の $> を取る (送信順に消費)。
+const MOCK_RE     = /^\$>\s*(.+?)\s*:\s*([\s\S]*)$/;
 
 export function parseScript(text) {
   const ops = [];
   const lines = text.split(/\r?\n/);
-  // `$>` mock 行が紐づく直近 window 名 (`> win` 優先、 無ければ `< win:`)。
-  let lastWin = null;
+  const clean = w => w.trim().replace(/^["']|["']$/g, "");
   lines.forEach((raw, i) => {
     const ln = raw.trim();
     if (!ln || ln.startsWith("#")) return;
     let m;
-    // `$> ...` は mock 応答定義。 実行 op としては no-op (mock 辞書は parseMocks で別途構築)。
-    // window 名を持たないので、 直前に出てきた window に紐づける。
-    if ((m = ln.match(MOCK_RE)))  { ops.push({ kind: "mock", win: lastWin, line: i + 1 }); return; }
+    // `$> win: ...` は mock 応答定義。 実行 op としては no-op (mock 辞書は parseMocks で別途構築)。
+    if ((m = ln.match(MOCK_RE)))  { ops.push({ kind: "mock", win: clean(m[1]), line: i + 1 }); return; }
     if ((m = ln.match(OPERATOR_RE))) {
-      const win = m[1].trim().replace(/^["']|["']$/g, "");
-      lastWin = win;
-      ops.push({ kind: "operator", win, hint: m[2].trim(), outVar: m[3], line: i + 1 });
+      ops.push({ kind: "operator", win: clean(m[1]), hint: m[2].trim(), outVar: m[3], line: i + 1 });
       return;
     }
     if ((m = ln.match(SEND_RE)))  {
-      const win = m[1].trim().replace(/^["']|["']$/g, "");
-      lastWin = win;
-      ops.push({ kind: "send", win, text: m[2].trim(), line: i + 1 });
+      ops.push({ kind: "send", win: clean(m[1]), text: m[2].trim(), line: i + 1 });
       return;
     }
     if ((m = ln.match(WAIT_RE)))  {
-      const win = m[1].trim().replace(/^["']|["']$/g, "");
-      lastWin = win;
-      ops.push({ kind: "wait", win, timeout: parseFloat(m[2] || "60"), outVar: m[3] || null, line: i + 1 });
+      ops.push({ kind: "wait", win: clean(m[1]), timeout: parseFloat(m[2] || "60"), outVar: m[3] || null, line: i + 1 });
       return;
     }
     if ((m = ln.match(SLEEP_RE))) { ops.push({ kind: "sleep", duration: parseFloat(m[1]), line: i + 1 }); return; }
-    if ((m = ln.match(CLEAR_RE))) { ops.push({ kind: "clear", win: m[1] ? m[1].trim().replace(/^["']|["']$/g, "") : null, line: i + 1 }); return; }
+    if ((m = ln.match(CLEAR_RE))) { ops.push({ kind: "clear", win: m[1] ? clean(m[1]) : null, line: i + 1 }); return; }
     ops.push({ kind: "error", raw, line: i + 1 });
   });
   return ops;
 }
 
 // 台本から mock 辞書を組み立てる: { "<window名>": ["応答1", "応答2", ...] }。
-// `$> text` は台本上の直前の window (`> win` 優先、 無ければ `< win:`) に紐づけ、
-// その window への n 回目の send が n 番目の応答を取る。 \n リテラルは実改行に展開。
+// `$> win: text` の win から直接引き、 その window への n 回目の send が n 番目の応答を取る。
+// \n リテラルは実改行に展開。
 export function parseMocks(text) {
   const dict = {};
-  let lastWin = null;
   String(text || "").split(/\r?\n/).forEach(raw => {
     const ln = raw.trim();
     if (!ln || ln.startsWith("#")) return;
-    let m;
-    // window を持つ directive は lastWin を更新 (mock の紐づけ先になる)
-    if ((m = ln.match(OPERATOR_RE)) || (m = ln.match(SEND_RE)) || (m = ln.match(WAIT_RE))) {
-      lastWin = m[1].trim().replace(/^["']|["']$/g, "");
-      return;
-    }
-    if ((m = ln.match(MOCK_RE))) {
-      if (!lastWin) return;   // 紐づく window が未確定の $> は捨てる (先頭の孤立 $> など)
-      const reply = m[1].replace(/\\n/g, "\n");
-      (dict[lastWin] = dict[lastWin] || []).push(reply);
-    }
+    const m = ln.match(MOCK_RE);
+    if (!m) return;
+    const win = m[1].trim().replace(/^["']|["']$/g, "");
+    const reply = m[2].replace(/\\n/g, "\n");
+    (dict[win] = dict[win] || []).push(reply);
   });
   return dict;
 }

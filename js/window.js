@@ -552,16 +552,24 @@ export class AgentWindow {
   // Script から呼び出される。返り値は adapter.send の Promise
   sendProgrammatic(text) {
     if (!text || this.adapter.state !== "open") return Promise.reject(new Error("not connected"));
-    this._addUserMessage(text);
-    this._showTyping(true);
-    this.lastSendAt = Date.now();
-    return this.adapter.send(text, { stream: true }).catch(err => {
-      // 停止ボタンによる中断は _stopInflight 側で表示済みなので、 ここでは何も出さない
-      if (err?.name === "AbortError") { this._showTyping(false); throw err; }
-      this._showTyping(false);
-      this._addSystemMessage(`send failed: ${err.message}`);
-      throw err;
-    });
+    const userDone = this._addUserMessage(text);
+    const doSend = () => {
+      this._showTyping(true);
+      this.lastSendAt = Date.now();
+      return this.adapter.send(text, { stream: true }).catch(err => {
+        // 停止ボタンによる中断は _stopInflight 側で表示済みなので、 ここでは何も出さない
+        if (err?.name === "AbortError") { this._showTyping(false); throw err; }
+        this._showTyping(false);
+        this._addSystemMessage(`send failed: ${err.message}`);
+        throw err;
+      });
+    };
+    // mock モード時は「入力表示が終わってから」応答遅延を開始する。 これで入力の長短に
+    // かかわらず "表示完了 → 約3秒後に応答" が一定になる (実通信時は並行のまま遅延ゼロ)。
+    if (this.adapter._mockActive) {
+      return userDone.then(doSend);
+    }
+    return doSend();
   }
 
   // 次の最終応答を待つ Promise を返す
@@ -601,13 +609,15 @@ export class AgentWindow {
     });
   }
 
+  // 返り値: 入力 typewriter が完了する Promise
   _addUserMessage(text) {
     const stream = this.el.querySelector(".chat-stream");
     const node = this._renderMsg("user", "you", "");
     stream.appendChild(node);
     const body = node.querySelector(".msg-body");
-    this._typewriteUser(body, text);
+    const done = this._typewriteUser(body, text);
     this._scrollChat(true);
+    return done;
   }
 
   _addSystemMessage(text) {
@@ -698,46 +708,51 @@ export class AgentWindow {
   // user 側の typewriter (agent と同じ感覚で少し速め)。 typewriter 中は textContent
   // (literal \n を含む input が改行に見えるよう pre-line で表示) で逐次表示し、 完了後に
   // protocol に応じた markdown / mrkdwn 整形を innerHTML で適用する。
+  // 入力 (user 発言) を typewriter 表示。 表示が完了したら resolve する Promise を返す
+  // (mock モードで「入力表示が終わってから応答遅延を開始」するために使う)。
   _typewriteUser(body, fullText) {
-    if (this._userTypeTimer) {
-      clearTimeout(this._userTypeTimer);
-      this._userTypeTimer = null;
-    }
-    // literal "\n" sequence (script DSL から渡る "\\n") を実改行に正規化
-    const normalized = String(fullText).replace(/\\n/g, "\n");
-    const msg = body.closest(".msg") || body.parentElement;
-    msg.dataset.typing = "1";
-    let i = 0;
-    const total = normalized.length;
-    const stepSize = total > 400 ? 3 : total > 120 ? 2 : 1;
-    const interval = 26;
-    const finalize = () => {
-      msg.dataset.typing = "0";
-      this._userTypeTimer = null;
-      // protocol に応じた整形
-      if (this.protoId === "slack") {
-        body.innerHTML = safeHtml(mrkdwnToHtml(normalized));
-        body.dataset.md = "1";
-      } else if (this.protoId === "a2a" && window.marked) {
-        try {
-          window.marked.setOptions({ gfm: true, breaks: false });
-          body.innerHTML = safeHtml(window.marked.parse(normalized));
-          body.dataset.md = "1";
-        } catch (e) {
-          console.warn("[window] marked.parse (user) failed:", e);
-        }
+    return new Promise((resolve) => {
+      if (this._userTypeTimer) {
+        clearTimeout(this._userTypeTimer);
+        this._userTypeTimer = null;
       }
-      this._scrollChat();
-    };
-    const tick = () => {
-      if (i >= total) { finalize(); return; }
-      const next = Math.min(i + stepSize, total);
-      body.textContent = normalized.slice(0, next);
-      i = next;
-      this._scrollChat();
-      this._userTypeTimer = setTimeout(tick, interval);
-    };
-    tick();
+      // literal "\n" sequence (script DSL から渡る "\\n") を実改行に正規化
+      const normalized = String(fullText).replace(/\\n/g, "\n");
+      const msg = body.closest(".msg") || body.parentElement;
+      msg.dataset.typing = "1";
+      let i = 0;
+      const total = normalized.length;
+      const stepSize = total > 400 ? 3 : total > 120 ? 2 : 1;
+      const interval = 26;
+      const finalize = () => {
+        msg.dataset.typing = "0";
+        this._userTypeTimer = null;
+        // protocol に応じた整形
+        if (this.protoId === "slack") {
+          body.innerHTML = safeHtml(mrkdwnToHtml(normalized));
+          body.dataset.md = "1";
+        } else if (this.protoId === "a2a" && window.marked) {
+          try {
+            window.marked.setOptions({ gfm: true, breaks: false });
+            body.innerHTML = safeHtml(window.marked.parse(normalized));
+            body.dataset.md = "1";
+          } catch (e) {
+            console.warn("[window] marked.parse (user) failed:", e);
+          }
+        }
+        this._scrollChat();
+        resolve();
+      };
+      const tick = () => {
+        if (i >= total) { finalize(); return; }
+        const next = Math.min(i + stepSize, total);
+        body.textContent = normalized.slice(0, next);
+        i = next;
+        this._scrollChat();
+        this._userTypeTimer = setTimeout(tick, interval);
+      };
+      tick();
+    });
   }
 
   _renderMsg(role, author, text) {

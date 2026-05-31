@@ -2208,18 +2208,22 @@ function highlightDslLine(raw) {
       + `<span class="tk-punct">${escapeHtmlInline(m[5])}</span>${escapeHtmlInline(m[6])}`
       + `<span class="tk-text">${highlightVarRefs(m[7])}</span>`;
   }
-  // $> 応答 — mock 応答。 直前の window に紐づく。 mock OFF 時はコメント同様 dim 表示。
-  if ((m = trimmed.match(/^(\$>)(\s?)([\s\S]*)$/))) {
-    if (!state.scriptMock) {
-      // 通常モードでは実行されない (コメント扱い) ので dim でハイライトオフ
-      return escapeHtmlInline(lead) + `<span class="tk-comment">${escapeHtmlInline(trimmed)}</span>`;
-    }
+  // $> window: 応答 — mock 応答 (`<` と対称)。
+  // mock ON 時のみ可視。 OFF 時は「実行されない行」なので空に描いて消す
+  // (textarea には行が残り高さは維持されるが、 文字・色が消えて目立たない)。
+  if ((m = trimmed.match(/^(\$>)(\s*)(.+?)(\s*)(:)(\s*)([\s\S]*)$/))) {
+    if (!state.scriptMock) return "";
     return escapeHtmlInline(lead)
       + `<span class="tk-mock">${escapeHtmlInline(m[1])}</span>${escapeHtmlInline(m[2])}`
-      + `<span class="tk-mock-text">${escapeHtmlInline(m[3])}</span>`;
+      + `<span class="tk-name">${escapeHtmlInline(m[3])}</span>${escapeHtmlInline(m[4])}`
+      + `<span class="tk-punct">${escapeHtmlInline(m[5])}</span>${escapeHtmlInline(m[6])}`
+      + `<span class="tk-mock-text">${escapeHtmlInline(m[7])}</span>`;
   }
   // > name [timeout] [as var]  (wait for agent reply)
   if ((m = trimmed.match(/^(>)(\s+)(.+?)(?:(\s+)(\d+(?:\.\d+)?)\s*s?)?(?:(\s+)(as)(\s+)([a-zA-Z_][a-zA-Z0-9_]*))?$/))) {
+    // mock モード時は応答源が直後の $> なので wait 行は無関係。 空に描いて消す
+    // ($> と対称。 実通信モードでは通常ハイライト)。
+    if (state.scriptMock) return "";
     let out = escapeHtmlInline(lead)
       + `<span class="tk-cmd">${escapeHtmlInline(m[1])}</span>${escapeHtmlInline(m[2])}`
       + `<span class="tk-name">${escapeHtmlInline(m[3])}</span>`;
