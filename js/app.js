@@ -2472,6 +2472,27 @@ async function runScript(opts = {}) {
   // script の実行は panel と独立なので、 閉じても走り続ける。
   if (state.scriptPanelOpen) closeScriptPanel();
 
+  // ─── モックモード: ON なら対象 window の adapter を mock に乗っ取る ───
+  // script.mocks = { "<window名>": [{match,reply},...] }。 実通信せずローカル応答。
+  const mockWins = [];
+  if (state.scriptMock) {
+    const mocks = script?.mocks;
+    if (!mocks || !Object.keys(mocks).length) {
+      appendScriptLog({ level: "err", text: `mock mode ON だが "${script?.name || '?'}" に mocks が定義されていません — 通常実行します` });
+    } else {
+      for (const winName of Object.keys(mocks)) {
+        const w = findWindowByQuery(winName);
+        if (w && w.adapter?.mockInstall) {
+          w.adapter.mockInstall(mocks[winName]);
+          mockWins.push(w);
+        } else {
+          appendScriptLog({ level: "err", text: `mock: window "${winName}" が見つかりません (接続して名前を一致させてください)` });
+        }
+      }
+      if (mockWins.length) appendScriptLog({ level: "dim", text: `· MOCK モード: ${mockWins.length} window をローカル応答に切替` });
+    }
+  }
+
   $("#scriptRun").disabled  = true;
   $("#scriptStop").disabled = false;
   state._script = { runner: null, loopScriptId: script?.id || null, loopShouldStop: false };
@@ -2496,6 +2517,8 @@ async function runScript(opts = {}) {
       await new Promise(r => setTimeout(r, 500));
     } while (loopMode && state._script);
   } finally {
+    // mock で乗っ取った adapter を元に戻す (実通信に復帰)
+    mockWins.forEach(w => { try { w.adapter.mockRestore(); } catch {} });
     $("#scriptRun").disabled  = false;
     $("#scriptStop").disabled = true;
     const elapsed = Math.round(performance.now() - t0);
@@ -2623,6 +2646,15 @@ function wireScriptPanel() {
   $("#scriptCollapse").addEventListener("click", closeScriptPanel);
   $("#scriptRun").addEventListener("click",  runScript);
   $("#scriptStop").addEventListener("click", () => state._script?.runner?.stop());
+  // mock トグル: セッション内のみ (persist しない)。 ON で実通信せずローカル応答。
+  $("#scriptMock").addEventListener("click", (e) => {
+    state.scriptMock = !state.scriptMock;
+    const btn = e.currentTarget;
+    btn.classList.toggle("is-on", state.scriptMock);
+    btn.setAttribute("aria-pressed", state.scriptMock ? "true" : "false");
+    setScriptStatus(state.scriptMock ? "MOCK モード ON (ローカル応答・実通信なし)" : "MOCK モード OFF", state.scriptMock ? "running" : "");
+    setTimeout(() => { if (!state._script) setScriptStatus("", ""); }, 2500);
+  });
   $("#scriptClear").addEventListener("click", () => {
     const ed = $("#scriptEditor");
     if (!ed.value) return;

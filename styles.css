@@ -3437,6 +3437,17 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
   color: var(--paper);
 }
 .script-tool-icon { padding: 4px 6px; }
+/* mock トグル: ON でアンバー系に点灯し「実通信していない」ことを明示 */
+.script-tool-toggle.is-on {
+  background: #b8860b;
+  color: #fff;
+  border-color: #b8860b;
+}
+.script-tool-toggle.is-on:hover:not(:disabled) {
+  background: #a07408;
+  border-color: #a07408;
+  color: #fff;
+}
 
 /* ─── Windows chips bar ─── */
 .script-windows-bar {
