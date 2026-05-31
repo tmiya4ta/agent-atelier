@@ -3,8 +3,8 @@
   "items": [
     {
       "id": "scrs-a",
-      "name": "SCRS — シナリオ A (九州製作所 / ターボ分子ポンプ)",
-      "description": "九州製作所の半導体製造装置部品 (P-2024-KYU-001 ターボ分子ポンプ TMP-A310) の品質トラブル。 WS1 個別 agent (A1 人間ハブ / A1-AUTO operator 自動化)、 WS2 Broker (B1 = StepB の MAF Agent Network が自律ディスパッチ)。 5 agent + MDM MCP は StepA (d7gr5m)、 broker は StepB (n6coif)。",
+      "name": "SCRS — シナリオ A/B (品質トラブル横断対応)",
+      "description": "サプライヤー品質トラブルの横断対応デモ。 A1-A3=Broker なし (人間が 5 窓口を持ち回るハブ)、 B1-B3=Broker あり (StepB の MAF Agent Network に 1 文で自律ディスパッチ)。 A1/B1 九州製作所 ターボ分子ポンプ、 A2/B2 関西部品 コアスチール、 A3/B3 東京精密 電子部品。 WS1 個別 agent、 WS2 Broker。 5 agent + MDM MCP は StepA (d7gr5m)、 broker は StepB (n6coif)。",
       "url": "/scenarios/scrs-a.json"
     }
   ]
