@@ -938,9 +938,14 @@ var e = vars.intent.entities default {}
                             <ee:variables>
                                 <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
 output application/java
-var r = (vars.toolResult.result default vars.toolResult default {})
+var tr = vars.toolResult default {}
+var r  = (tr.result default tr default {})
+var isErr = ((tr.status default "") as String) == "error"
 fun cell(v) = if (v == null or (v as String) == "") "—" else (v as String)
 ---
+if (isErr)
+  "⚠️ インシデントを登録できませんでした。 — " ++ ((r.message default r.code default "unknown") as String)
+else
 "✅ インシデントを登録しました。\n\n" ++
 "| 項目 | 値 |\n|---|---|\n" ++
 "| incidentId | **" ++ cell(r.incidentId) ++ "** |\n" ++
@@ -995,9 +1000,19 @@ var e = vars.intent.entities default {}
                             <ee:variables>
                                 <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
 output application/java
-var e = vars.intent.entities default {}
+var e  = vars.intent.entities default {}
+var tr = vars.toolResult default {}
+// MCP/backend がエラー (存在しない incidentId 等) を返したら成功を偽らない。
+var isErr = ((tr.status default "") as String) == "error"
+var code  = (tr.result.code default "") as String
+var msg   = (tr.result.message default "") as String
 ---
-"✅ ステータスを更新しました。 **" ++ (e.incidentId as String) ++ "** → **" ++ (e.status as String) ++ "**"]]></ee:set-variable>
+if (isErr)
+  "⚠️ ステータスを更新できませんでした。 **" ++ (e.incidentId default "?" as String) ++ "**"
+    ++ (if (code == "NOT_FOUND") " — 該当インシデントが見つかりません。 incidentId をご確認ください。"
+        else " — " ++ (if (msg != "") msg else code))
+else
+  "✅ ステータスを更新しました。 **" ++ (e.incidentId as String) ++ "** → **" ++ (e.status as String) ++ "**"]]></ee:set-variable>
                             </ee:variables>
                         </ee:transform>
                     </otherwise>
