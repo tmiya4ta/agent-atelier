@@ -2392,6 +2392,14 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .msg-body[data-md="1"] p:empty { display: none; }
 .msg-body[data-md="1"] br + br { display: none; }
 
+/* broker 統合レポートの 【○○エージェント】タグ — アクセント色 + 太字で各担当を視認しやすく。
+   formatBrokerReport が <span class="agent-tag">【…】</span> を出力する。 */
+.agent-tag {
+  font-weight: 700;
+  color: var(--accent);
+}
+body.is-dark .agent-tag { color: #5BB8E8; }
+
 /* bubble = body + copy ボタンの relative ラップ。 ボタンを body の外に置くことで
    marked.js が body.innerHTML を書き換えてもボタンが消えない。 */
 .msg-bubble {
@@ -3644,6 +3652,9 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
 .tk-num     { color: var(--accent);     font-weight: 700; }   /* timeout / duration */
 .tk-var     { color: #b14df0; font-weight: 600; }             /* ${var} reference / capture target */
 .tk-comment { color: var(--ink-4);  }
+/* mock OFF 時の $> 行 — 絵文字 (✅⚖️📦) は固有色を持ち、 文字色を dim にしても
+   そこだけ目立つ。 grayscale + 低不透明度で行全体 (絵文字含む) を背景に沈める。 */
+.tk-mock-off { opacity: 0.45; filter: grayscale(1); }
 .tk-err     { color: var(--warn); text-decoration: underline wavy; }
 /* mock 応答行 (@ Agent: ...) — アンバー系で「擬似応答」と分かるように */
 .tk-mock      { color: #b8860b; font-weight: 700; }

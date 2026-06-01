@@ -663,13 +663,15 @@ export class AgentWindow {
         body.dataset.md = "1";
       }
       // a2a: Markdown (GFM) を HTML 化
-      // breaks:false にして "\n" 1 つは段落内改行扱い (= 詰める)、空行のみ段落分け。
-      // pre-wrap と <br> の二重改行を避けるため md 完了で data-md=1 を立てて
-      // white-space: normal に切替 (CSS 側で扱う)。
+      // breaks:true で単一 "\n" も <br> 改行にする。 broker の統合レポートは各
+      // 【○○エージェント】を単一改行で区切るので、 breaks:false だと 1 段落に潰れて
+      // 非常に読みづらい (実機応答で確認)。 table 構文は breaks 設定の影響を受けず
+      // 壊れないことを検証済み (marked 11.2.0)。
       else if (final && this.protoId === "a2a" && window.marked) {
         try {
-          window.marked.setOptions({ gfm: true, breaks: false });
-          body.innerHTML = safeHtml(window.marked.parse(fullText));
+          window.marked.setOptions({ gfm: true, breaks: true });
+          // broker 統合レポートは整形してから Markdown 化 (それ以外はそのまま)
+          body.innerHTML = safeHtml(window.marked.parse(formatBrokerReport(fullText)));
           body.dataset.md = "1";
         } catch (e) {
           // fallback to plain text on parse error
@@ -733,7 +735,7 @@ export class AgentWindow {
           body.dataset.md = "1";
         } else if (this.protoId === "a2a" && window.marked) {
           try {
-            window.marked.setOptions({ gfm: true, breaks: false });
+            window.marked.setOptions({ gfm: true, breaks: true });
             body.innerHTML = safeHtml(window.marked.parse(normalized));
             body.dataset.md = "1";
           } catch (e) {
@@ -1416,6 +1418,28 @@ function safeHtml(html) {
     .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, "")
     .replace(/\s(href|src)\s*=\s*"\s*javascript:[^"]*"/gi, ' $1="#"')
     .replace(/\s(href|src)\s*=\s*'\s*javascript:[^']*'/gi, " $1='#'");
+}
+
+// broker (Agent Network) 統合レポートの整形。
+// broker の LLM は 【○○エージェント】の前に改行を入れたり入れなかったりムラがあるため
+// (実機で確認)、 表示側で安定して整形する:
+//   - 【○○エージェント】を必ず段落区切り (空行) + アクセント色 span に
+//   - 冒頭の「インシデント:」「取引先:」ラベルを行立てして太字に
+// 表 (| ... |) を含む応答 (incident/法務 等) や 【】が 1 個未満のものには適用しない
+// (broker 専用の整形なので、 通常の agent 応答を壊さない)。
+function formatBrokerReport(text) {
+  const t = String(text || "");
+  if (/^\s*\|.*\|/m.test(t)) return t;                 // 表形式は触らない
+  if ((t.match(/【[^】]+】/g) || []).length < 2) return t;  // broker レポート以外は触らない
+
+  let out = t;
+  // 冒頭ヘッダのラベルを行立て (改行が無くても分割): 「…します。インシデント: X取引先: Y【…」
+  out = out.replace(/(インシデント|取引先|担当バイヤー)\s*[:：]/g, "\n**$1:** ");
+  // 各 【…】 を段落区切り + アクセント色 span に (前の改行有無に依存しない)
+  out = out.replace(/\s*【([^】]+)】\s*/g, '\n\n<span class="agent-tag">【$1】</span> ');
+  // 連続改行を 2 つに圧縮し、 先頭の余分な改行を除去
+  out = out.replace(/\n{3,}/g, "\n\n").replace(/^\n+/, "");
+  return out;
 }
 
 function timeStr(ts) {

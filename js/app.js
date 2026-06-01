@@ -1808,10 +1808,13 @@ function renderScripts() {
     const meta = `${lineCount} ops${ageSec != null ? ` · edited ${formatAge(ageSec)}` : ""}${s.autoLoop ? " · auto loop ON" : ""}`;
     li.title = desc ? `${desc}\n\n${meta}` : meta;
     const isRunningThis = !!(state._script && state._script.loopScriptId === s.id);
+    // 他の script が実行中 — この script の run ボタンは押せなくする (見た目も無効化)
+    const isBusyOther = !!(state._script && !isRunningThis);
     li.innerHTML = `
       <span class="script-name">${escapeHtml(s.name)}</span>
       <button class="script-run ${isRunningThis ? "is-stop" : ""}"
-              title="${isRunningThis ? "Stop this script" : "Run this script (no panel open)"}"
+              ${isBusyOther ? "disabled" : ""}
+              title="${isRunningThis ? "Stop this script" : isBusyOther ? "別のシナリオを実行中です" : "Run this script (no panel open)"}"
               aria-label="${isRunningThis ? "stop script" : "run script"}">
         ${isRunningThis
           ? `<svg viewBox="0 0 12 12" width="8" height="8"><rect x="2.5" y="2.5" width="7" height="7" rx="1" fill="currentColor"/></svg>`
@@ -2209,10 +2212,14 @@ function highlightDslLine(raw) {
       + `<span class="tk-text">${highlightVarRefs(m[7])}</span>`;
   }
   // $> window: 応答 — mock 応答 (`<` と対称)。
-  // mock ON 時のみ可視。 OFF 時は「実行されない行」なので空に描いて消す
-  // (textarea には行が残り高さは維持されるが、 文字・色が消えて目立たない)。
+  // mock ON: mock 色で強調 / OFF: コメント色 dim (実行されない行なので目立たせない)。
+  // ※ 空文字を返すと overlay の行が消えて textarea と行高がずれるので、 必ず 1 行描画する。
   if ((m = trimmed.match(/^(\$>)(\s*)(.+?)(\s*)(:)(\s*)([\s\S]*)$/))) {
-    if (!state.scriptMock) return "";
+    if (!state.scriptMock) {
+      // OFF 時はコメント扱い。 絵文字 (✅⚖️📦 等) は固有色を持ち dim グレーでも目立つので
+      // tk-mock-off クラス側で grayscale+低不透明度にして沈める。
+      return escapeHtmlInline(lead) + `<span class="tk-comment tk-mock-off">${escapeHtmlInline(trimmed)}</span>`;
+    }
     return escapeHtmlInline(lead)
       + `<span class="tk-mock">${escapeHtmlInline(m[1])}</span>${escapeHtmlInline(m[2])}`
       + `<span class="tk-name">${escapeHtmlInline(m[3])}</span>${escapeHtmlInline(m[4])}`
@@ -2221,9 +2228,11 @@ function highlightDslLine(raw) {
   }
   // > name [timeout] [as var]  (wait for agent reply)
   if ((m = trimmed.match(/^(>)(\s+)(.+?)(?:(\s+)(\d+(?:\.\d+)?)\s*s?)?(?:(\s+)(as)(\s+)([a-zA-Z_][a-zA-Z0-9_]*))?$/))) {
-    // mock モード時は応答源が直後の $> なので wait 行は無関係。 空に描いて消す
-    // ($> と対称。 実通信モードでは通常ハイライト)。
-    if (state.scriptMock) return "";
+    // mock モード時は応答源が直後の $> なので wait 行は無関係。 dim にして沈める
+    // ($> OFF 時と対称)。 空文字では消さない (overlay の行が消えて行高がずれるため)。
+    if (state.scriptMock) {
+      return escapeHtmlInline(lead) + `<span class="tk-comment tk-mock-off">${escapeHtmlInline(trimmed)}</span>`;
+    }
     let out = escapeHtmlInline(lead)
       + `<span class="tk-cmd">${escapeHtmlInline(m[1])}</span>${escapeHtmlInline(m[2])}`
       + `<span class="tk-name">${escapeHtmlInline(m[3])}</span>`;
@@ -2476,6 +2485,12 @@ function runCurrentLine() {
 }
 
 async function runScript(opts = {}) {
+  // 既に別の script が実行中なら多重実行しない (サイドバー run / Ctrl+Enter / line 実行
+  // など複数の入口があるため、 ここで一括ガード)。 停止は stop ボタン経由で。
+  if (state._script) {
+    appendScriptLog({ level: "err", text: "別のシナリオを実行中です。停止してから実行してください。" });
+    return;
+  }
   // opts.text + opts.scriptId でサイドバーから呼べる。引数なしならエディタの内容を使う。
   const text = opts.text != null ? opts.text : $("#scriptEditor").value;
   const ops  = parseScript(text);
@@ -2667,7 +2682,7 @@ function wireScriptPanel() {
     btn.classList.toggle("is-on", state.scriptMock);
     btn.setAttribute("aria-pressed", state.scriptMock ? "true" : "false");
     setScriptStatus(state.scriptMock ? "MOCK モード ON (ローカル応答・実通信なし)" : "MOCK モード OFF", state.scriptMock ? "running" : "");
-    // $> 行のハイライトは mock ON/OFF で切り替わる (ON=mock 色 / OFF=コメント dim)
+    // ハイライトを mock ON/OFF で切替: $> は ON=mock 色 / OFF=dim、 > は ON=dim / OFF=通常
     updateScriptHighlight();
     setTimeout(() => { if (!state._script) setScriptStatus("", ""); }, 2500);
   });
