@@ -3806,8 +3806,9 @@ body.is-dark .tk-mock-text { color: #C8A85A; }
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 10px 2px 4px;
-  border-top: 1px solid var(--line);
+  padding: 4px 2px 10px;
+  /* extras は choices ボタンの上に置く。 下境界で「このチェックは下のボタンに効く」と示す。 */
+  border-bottom: 1px solid var(--line);
 }
 .modal-extra {
   display: flex;

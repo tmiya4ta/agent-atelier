@@ -121,8 +121,8 @@ export function modalChoice({ title, message, choices = [], extras, cancelLabel 
         </header>
         ${message ? `<div class="modal-body"><p class="modal-msg">${escapeHtml(message)}</p></div>` : ""}
         <footer class="modal-foot modal-foot-stack">
-          <div class="modal-choices">${buttons}</div>
           ${extrasHtml}
+          <div class="modal-choices">${buttons}</div>
           <div class="modal-foot-actions">
             <button type="button" class="ghost-btn modal-cancel">${escapeHtml(cancelLabel || "Cancel")}</button>
           </div>
