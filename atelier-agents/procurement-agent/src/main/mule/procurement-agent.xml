@@ -27,7 +27,7 @@
             <a2a:json><![CDATA[{
   "protocolVersion": "0.3.0",
   "name": "atelier-procurement-agent",
-  "description": "調達担当 AI エージェント (Atelier 用 同期 A2A 版)。代替部品検索 / 在庫予約 / 発注ドラフト / サプライヤー通知を LLM tool-use ループで実施し、統合サマリを返す。サプライヤーリスクスコア更新・KG 記録は対象外 (legal-agent 経路)。",
+  "description": "調達担当 AI エージェント (Atelier 用 同期 A2A 版)。代替部品検索 / 発注ドラフト / サプライヤー通知を LLM tool-use ループで実施し、統合サマリを返す。在庫照会・仮確保は logistics-agent、 サプライヤーリスクスコア更新・KG 記録は legal-agent 経路 (いずれも対象外)。",
   "url": "${agent.public.url}",
   "version": "1.0.0",
   "preferredTransport": "JSONRPC",
@@ -38,7 +38,7 @@
     {
       "id": "procurement_handle_incident",
       "name": "調達インシデント対応 (LLM tool-use)",
-      "description": "サプライヤー品質インシデント連絡を自然文で受け取り、代替部品検索 / 在庫照会 / 在庫予約 / 発注ドラフト / 通知 を tool-use ループで実施し、Slack 投稿フォーマットの統合サマリを返す。",
+      "description": "サプライヤー品質インシデント連絡を自然文で受け取り、代替部品検索 / 発注ドラフト / 通知 を tool-use ループで実施し、Slack 投稿フォーマットの統合サマリを返す。在庫照会・仮確保は logistics-agent の担当 (対象外)。",
       "examples": [
         "関西部品 G-KANSAI-PARTS-001 の P-2024-KAN-001 で不良率15% (500個 HIGH)。INC-2026-0521。代替部品で調達対応してほしい。"
       ],
@@ -167,7 +167,7 @@ var fallbackByReason =
   if ((vars.finishReason default "") as String == "length")
     "ℹ️ 調達 (atelier-procurement-agent) です。\n\n回答が文字数上限に達しました。\nサプライヤー名・部品番号・必要数のいずれかを指定して再度お試しください。"
   else
-    "ℹ️ 調達 (atelier-procurement-agent) です。\n\n**実行可能な操作**\n- 取引先のゴールデン ID 解決\n- 過去インシデント・取引先関係の照会\n- 取引先一覧 (region / status / リスクスコア範囲で絞込み)\n- 取引先 region 一覧 (各 region の件数付き)\n- 代替部品候補の取得\n- 部品在庫の照会\n- 在庫の仮確保\n- 発注ドラフトの作成\n- 取引先への通知メッセージ送付\n\n**対象外** (依頼されても実施しません): サプライヤーリスクスコア更新 / KG (オントロジー) 記録 / 法務契約照会 / 承認依頼送信 / インシデント採番。\n\nお手数ですがサプライヤー名・部品番号・必要数のいずれかを指定してください。"
+    "ℹ️ 調達 (atelier-procurement-agent) です。\n\n**実行可能な操作**\n- 取引先のゴールデン ID 解決\n- 過去インシデント・取引先関係の照会\n- 取引先一覧 (region / status / リスクスコア範囲で絞込み)\n- 取引先 region 一覧 (各 region の件数付き)\n- 代替部品候補の取得\n- 発注ドラフトの作成\n- 取引先への通知メッセージ送付\n\n**対象外** (依頼されても実施しません): 在庫照会・在庫の仮確保 (logistics) / サプライヤーリスクスコア更新 / KG (オントロジー) 記録 / 法務契約照会 / 承認依頼送信 / インシデント採番。\n\nお手数ですがサプライヤー名・部品番号・必要数のいずれかを指定してください。"
 ---
 if (t != "") t
 else if (lastAssistantContent != "") lastAssistantContent
@@ -558,7 +558,9 @@ output application/java
 var sys =
 "あなたは調達・在庫 agent の『意図抽出器』です。 ユーザの 1 メッセージを読み、 下記 JSON だけを出力。 説明やコードフェンスは書かない。\n" ++
 "\n" ++
-"scope: \"procurement\" (代替部品・発注・仕入先通知) | \"capability\" (メタ質問) | \"out_of_scope\" (調達以外)\n" ++
+"scope: \"procurement\" (代替部品検索・発注ドラフト・仕入先通知 のみ) | \"capability\" (メタ質問) | \"out_of_scope\" (調達以外)\n" ++
+"【重要】在庫照会・在庫の仮確保・予約は調達ではなく logistics の担当なので、 必ず out_of_scope。\n" ++
+"  「仮確保」「在庫はある?」「在庫を押さえて」「ついでに〜在庫を確保」等は、 代替部品の話が前に出ていても out_of_scope。\n" ++
 "mode : \"advise\" (代替部品を調べて提案するだけ) | \"execute\" (発注ドラフト作成まで明示依頼: 「ドラフト作って」「発注して」「PO作成」)\n" ++
 "\n" ++
 "entities は読めた値だけ。 読めないものは null。 推測・捏造禁止。 社名は GoldenId に変換せず supplierName にそのまま。\n" ++
@@ -579,6 +581,8 @@ var sys =
   { role: "user",      content: "P-2024-KYU-001 の在庫はある? 120台必要" },
   { role: "assistant", content: write({ scope: "out_of_scope", mode: "advise", entities: { supplierName: null, supplierGoldenId: null, partNumber: null, incidentId: null, quantity: null }, rawMessage: "" }, "application/json") },
   { role: "user",      content: "代替部品を120台仮確保して" },
+  { role: "assistant", content: write({ scope: "out_of_scope", mode: "advise", entities: { supplierName: null, supplierGoldenId: null, partNumber: null, incidentId: null, quantity: null }, rawMessage: "" }, "application/json") },
+  { role: "user",      content: "ついでにその代替部品の在庫を 120 台ぶん仮確保しておいて。" },
   { role: "assistant", content: write({ scope: "out_of_scope", mode: "advise", entities: { supplierName: null, supplierGoldenId: null, partNumber: null, incidentId: null, quantity: null }, rawMessage: "" }, "application/json") },
   { role: "user",      content: "担当バイヤーに承認依頼を出して" },
   { role: "assistant", content: write({ scope: "out_of_scope", mode: "advise", entities: { supplierName: null, supplierGoldenId: null, partNumber: null, incidentId: null, quantity: null }, rawMessage: "" }, "application/json") },
