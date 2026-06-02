@@ -27,7 +27,7 @@
             <a2a:json><![CDATA[{
   "protocolVersion": "0.3.0",
   "name": "atelier-incident-agent",
-  "description": "インシデント管理 AI アドバイザ (Atelier 用 同期 A2A 版)。Atelier の chat 入力をそのまま受け、LLM tool-use ループ (incident-mcp / mdm-mcp) で既存インシデント参照・新規採番・ステータス更新の相談に応じる。副作用 tool (register / update_status) はユーザの明示指示時のみ実行。",
+  "description": "インシデント管理 AI エージェント (Atelier 用 同期 A2A 版)。サプライチェーン品質インシデントの照会・新規登録・ステータス更新 (OPEN/IN_PROGRESS/RESOLVED)・一覧検索を LLM tool-use ループ (incident-mcp / mdm-mcp) で実施する。副作用 tool (register / update_status) はユーザの明示指示時のみ実行。",
   "url": "${agent.public.url}",
   "version": "1.0.0",
   "preferredTransport": "JSONRPC",
@@ -36,16 +36,17 @@
   "defaultOutputModes": ["text/plain", "application/json"],
   "skills": [
     {
-      "id": "incident_advise_or_register",
-      "name": "インシデント相談 / 登録 (LLM tool-use, ADVISORY デフォルト)",
-      "description": "サプライヤー品質インシデントの相談を自然文で受け取り、既存 incidentId の照会、必須情報の確認、新規採番方針の提案を行う。ユーザが「登録してください」「クローズしてください」と明示指示したときだけ register / update_status を実行する。",
+      "id": "incident_lifecycle",
+      "name": "インシデント照会・登録・ステータス更新",
+      "description": "サプライチェーン品質インシデントの照会 (incidentId / 社名 / 部品番号)、新規登録 (採番)、ステータス更新 (OPEN/IN_PROGRESS/RESOLVED)、条件一覧検索を行う。register / update_status はユーザの明示指示時のみ実行する。",
       "examples": [
-        "関西部品の P-2024-KAN-001 で不良率15% 出てます。インシデント登録すべきですか?",
-        "INC-2026-0521 はどんな状態ですか? 解決済みにしてください。"
+        "INC-2026-0633 はどんな状態? 解決済みにしてください。",
+        "九州製作所の P-2024-KYU-001 で不良率15% (120台 HIGH)。新規インシデントとして登録してほしい。",
+        "OPEN のインシデントを一覧で見せて。"
       ],
       "inputModes": ["text/plain", "application/json"],
       "outputModes": ["text/plain", "application/json"],
-      "tags": ["incident", "advisory", "salesforce", "intake"]
+      "tags": ["incident", "lifecycle", "status-update", "salesforce", "intake"]
     }
   ]
 }]]></a2a:json>

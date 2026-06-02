@@ -27,7 +27,7 @@
             <a2a:json><![CDATA[{
   "protocolVersion": "0.3.0",
   "name": "atelier-org-agent",
-  "description": "組織/人事担当 AI エージェント (Atelier 用 同期 A2A 版)。バイヤー検索 / 承認依頼送信を LLM tool-use ループで実施し、統合サマリを返す。リスクスコア更新・KG 記録は対象外 (legal-agent 経路)。",
+  "description": "組織/人事担当 AI エージェント (Atelier 用 同期 A2A 版)。担当バイヤーの検索 (category/region) / 承認依頼の送信を LLM tool-use ループで実施し、統合サマリを返す。協定・ペナルティは legal-agent の担当 (対象外)。",
   "url": "${agent.public.url}",
   "version": "1.0.0",
   "preferredTransport": "JSONRPC",
@@ -36,15 +36,16 @@
   "defaultOutputModes": ["text/plain", "application/json"],
   "skills": [
     {
-      "id": "org_handle_incident",
-      "name": "組織/人事インシデント対応 (LLM tool-use)",
-      "description": "サプライヤー品質インシデント連絡を自然文で受け取り、調達担当バイヤー検索 / 承認依頼送信 を tool-use ループで実施し、統合サマリを返す。",
+      "id": "org_buyer_lookup_approval",
+      "name": "担当バイヤー検索・承認依頼送信",
+      "description": "category や region から調達担当バイヤーを検索し、必要なら承認依頼を送信する。自然文を受け取り tool-use ループで実施して統合サマリを返す。",
       "examples": [
-        "INC-2026-0521 関西部品 (G-KANSAI-PARTS-001) の調達担当者を見つけて承認依頼を出してほしい。"
+        "素材カテゴリ・東北リージョンの担当バイヤーは誰?",
+        "九州製作所 P-2024-KYU-001 の代替調達について担当バイヤーに承認依頼を出してほしい。"
       ],
       "inputModes": ["text/plain", "application/json"],
       "outputModes": ["text/plain", "application/json"],
-      "tags": ["org", "hr", "approval"]
+      "tags": ["org", "hr", "buyer-lookup", "approval"]
     }
   ]
 }]]></a2a:json>

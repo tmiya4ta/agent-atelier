@@ -20,3 +20,8 @@ target/
 
 # personal handoff notes (per-session scratch)
 /handoffs/
+
+# maven settings holding Exchange/Connected-App secrets (never commit)
+**/sf-bg-settings.xml
+*-settings.xml
+credentials.env.txt

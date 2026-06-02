@@ -27,7 +27,7 @@
             <a2a:json><![CDATA[{
   "protocolVersion": "0.3.0",
   "name": "atelier-legal-agent",
-  "description": "法務担当 AI エージェント (Atelier 用 同期 A2A 版)。Slack を介さず、Atelier の chat 入力をそのまま受けて LLM tool-use ループ (contract-mcp / mdm-mcp) を回し、統合サマリを A2A Task response で返す。",
+  "description": "法務担当 AI エージェント (Atelier 用 同期 A2A 版)。品質保証協定の条項・ペナルティ確認 / 返品要求書の発行 / ペナルティ通知 / サプライヤーリスクスコア更新 を LLM tool-use ループ (contract-mcp / mdm-mcp) で実施し、統合サマリを A2A Task response で返す。",
   "url": "${agent.public.url}",
   "version": "1.0.0",
   "preferredTransport": "JSONRPC",
@@ -36,15 +36,16 @@
   "defaultOutputModes": ["text/plain", "application/json"],
   "skills": [
     {
-      "id": "legal_handle_incident",
-      "name": "法務インシデント対応 (LLM tool-use)",
-      "description": "サプライヤー品質インシデント連絡を自然文で受け取り、品質保証協定書照会 / 返品要求書発行 / ペナルティ通知 / リスクスコア更新 / KG 記録を LLM の tool-use ループで実施し、Slack 投稿用フォーマットの統合サマリを返す。",
+      "id": "legal_contract_penalty",
+      "name": "協定・ペナルティ確認 / 返品要求書発行",
+      "description": "サプライヤーとの品質保証協定の条項・ペナルティ条件の確認、返品要求書の発行、ペナルティ通知、リスクスコア更新を自然文で受け取り、LLM tool-use ループで実施して統合サマリを返す。",
       "examples": [
-        "関西部品 (G-KANSAI-PARTS-001) の P-2024-KAN-001 で不良率15% (500個) が出た。HIGH severity でインシデント INC-2026-0521 として法務対応してほしい。"
+        "東北メタル (G-TOHOKU-MET-001) の品質保証協定でペナルティ条項を確認したい。",
+        "九州製作所 P-2024-KYU-001 の不良ロットについて返品要求書を発行してほしい。"
       ],
       "inputModes": ["text/plain", "application/json"],
       "outputModes": ["text/plain", "application/json"],
-      "tags": ["legal", "contract", "penalty", "risk"]
+      "tags": ["legal", "contract", "penalty", "risk", "return-order"]
     }
   ]
 }]]></a2a:json>

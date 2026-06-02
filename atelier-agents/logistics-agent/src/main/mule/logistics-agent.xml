@@ -27,7 +27,7 @@
             <a2a:json><![CDATA[{
   "protocolVersion": "0.3.0",
   "name": "atelier-logistics-agent",
-  "description": "物流担当 AI エージェント (Atelier 用 同期 A2A 版)。在庫照会 / 仮確保 / 仮確保キャンセルを LLM tool-use ループで実施し、統合サマリを返す。リスクスコア更新・KG 記録は対象外 (legal-agent 経路)。",
+  "description": "物流担当 AI エージェント (Atelier 用 同期 A2A 版)。部品在庫の照会 / 在庫の仮確保 / 仮確保キャンセルを LLM tool-use ループで実施し、統合サマリを返す。代替部品検索・発注は procurement-agent の担当 (対象外)。",
   "url": "${agent.public.url}",
   "version": "1.0.0",
   "preferredTransport": "JSONRPC",
@@ -36,11 +36,12 @@
   "defaultOutputModes": ["text/plain", "application/json"],
   "skills": [
     {
-      "id": "logistics_handle_incident",
-      "name": "物流インシデント対応 (LLM tool-use)",
-      "description": "サプライヤー品質インシデント連絡を自然文で受け取り、在庫照会 / 仮確保 / 仮確保キャンセル を tool-use ループで実施し、統合サマリを返す。",
+      "id": "logistics_inventory_reservation",
+      "name": "在庫照会・仮確保・仮確保キャンセル",
+      "description": "部品の在庫数量の照会、在庫の仮確保、仮確保のキャンセルを自然文で受け取り、tool-use ループで実施して統合サマリを返す。",
       "examples": [
-        "INC-2026-0521 関西部品 P-2024-KAN-001 (500個 HIGH) の予約 RSV-2026-1134 をキャンセルし、代替 P-2024-ALT-005 を仮確保してほしい。"
+        "P-2024-TOH-500 の在庫を見せて。代替の P-2024-CHU-500 はどれくらいある?",
+        "代替部品 P-2024-CHU-500 を 120 台ぶん仮確保しておいて。"
       ],
       "inputModes": ["text/plain", "application/json"],
       "outputModes": ["text/plain", "application/json"],

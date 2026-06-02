@@ -27,7 +27,7 @@
             <a2a:json><![CDATA[{
   "protocolVersion": "0.3.0",
   "name": "atelier-procurement-agent",
-  "description": "調達担当 AI エージェント (Atelier 用 同期 A2A 版)。代替部品検索 / 発注ドラフト / サプライヤー通知を LLM tool-use ループで実施し、統合サマリを返す。在庫照会・仮確保は logistics-agent、 サプライヤーリスクスコア更新・KG 記録は legal-agent 経路 (いずれも対象外)。",
+  "description": "調達担当 AI エージェント (Atelier 用 同期 A2A 版)。代替部品の検索 (互換スコア順) / 発注ドラフト作成 / サプライヤー通知を LLM tool-use ループで実施し、統合サマリを返す。在庫照会・仮確保は logistics-agent、 協定・ペナルティ・リスクスコア更新は legal-agent の担当 (いずれも対象外)。",
   "url": "${agent.public.url}",
   "version": "1.0.0",
   "preferredTransport": "JSONRPC",
@@ -36,15 +36,16 @@
   "defaultOutputModes": ["text/plain", "application/json"],
   "skills": [
     {
-      "id": "procurement_handle_incident",
-      "name": "調達インシデント対応 (LLM tool-use)",
-      "description": "サプライヤー品質インシデント連絡を自然文で受け取り、代替部品検索 / 発注ドラフト / 通知 を tool-use ループで実施し、Slack 投稿フォーマットの統合サマリを返す。在庫照会・仮確保は logistics-agent の担当 (対象外)。",
+      "id": "procurement_alt_parts_sourcing",
+      "name": "代替部品の検索・発注ドラフト・仕入先通知",
+      "description": "部品の代替候補を互換スコア順に検索し、必要なら発注ドラフトを作成して仕入先に通知する。自然文を受け取り tool-use ループで実施して統合サマリを返す。在庫照会・仮確保は logistics-agent の担当 (対象外)。",
       "examples": [
-        "関西部品 G-KANSAI-PARTS-001 の P-2024-KAN-001 で不良率15% (500個 HIGH)。INC-2026-0521。代替部品で調達対応してほしい。"
+        "P-2024-TOH-500 (東北メタル) の代替部品候補を互換スコア順で教えて。",
+        "九州製作所 P-2024-KYU-001 の代替品で 120 台ぶんの発注ドラフトを作ってほしい。"
       ],
       "inputModes": ["text/plain", "application/json"],
       "outputModes": ["text/plain", "application/json"],
-      "tags": ["procurement", "inventory", "purchase-order"]
+      "tags": ["procurement", "alternative-parts", "purchase-order"]
     }
   ]
 }]]></a2a:json>
