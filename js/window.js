@@ -269,6 +269,12 @@ export class AgentWindow {
       }
     });
 
+    // streaming (SSE) の中間進捗。 status-update の working 等を逐次 system 行で表示。
+    this.adapter.addEventListener("status", (e) => {
+      const { text } = e.detail || {};
+      if (text) this._handleStatusUpdate(text);
+    });
+
     this.adapter.addEventListener("rpc", (e) => {
       if (this.debugPaused) return;
       const f = {
@@ -623,6 +629,16 @@ export class AgentWindow {
   _addSystemMessage(text) {
     const stream = this.el.querySelector(".chat-stream");
     stream.appendChild(this._renderMsg("system", "system", text));
+    this._scrollChat(true);
+  }
+
+  // streaming の中間進捗 (status-update working)。 system 行として逐次積み上げる。
+  // typing スピナーは消さない (最終 message が来るまで思考中の演出を維持)。
+  _handleStatusUpdate(text) {
+    const stream = this.el.querySelector(".chat-stream");
+    const node = this._renderMsg("system", "status", text);
+    node.classList.add("msg-status");
+    stream.appendChild(node);
     this._scrollChat(true);
   }
 

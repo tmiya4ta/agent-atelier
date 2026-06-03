@@ -54,40 +54,26 @@ unzip -l target/atelier-static-1.0.0-mule-application.jar | grep -E '(index.html
 ```
 親フォルダの `index.html` / `js/*.js` が JAR 内 `static/...` に入っていることを確認。
 
-## ローカル実行 (mulet)
-
-```sh
-mulet run target/atelier-static-1.0.0-mule-application.jar -g mule.env=local
-```
-
-**動作確認可:** `/__health` (JSON 返答) — flow / listener / Choice まで動く
-**動作確認不可:** `/`, `/styles.css`, `/js/app.js` 等 (404 になる)
-→ `readUrl("classpath://static/...")` が mulet (Zeph 0.1) で未対応のため。
-**動作確認は CH2 デプロイ後に行う**こと (Mule EE では標準サポート)。
-
 ## CloudHub 2 デプロイ
 
 `/home/myst/.claude/rules/mule-deploy.md` のチェックリスト準拠:
 
 ```sh
-# 1. mulet validation (ch2 env で)
-mulet run target/atelier-static-1.0.0-mule-application.jar -g mule.env=ch2
-
-# 2. upload to Exchange
+# 1. upload to Exchange
 yaac upload asset target/atelier-static-1.0.0-mule-application.jar \
   -g <org> -a atelier-static -v 1.0.0
 
-# 3. deploy (CH2)
+# 2. deploy (CH2)
 yaac deploy app <org> <env> atelier-static \
   target=ch2:<ps> v-cores=0.1 \
   -g <org> -a atelier-static -v 1.0.0 \
   "+mule.env=ch2"
 
-# 4. APPLIED まで待つ
+# 3. APPLIED まで待つ
 yaac describe app <org> <env> atelier-static
 # STATUS=APPLIED, POD=RUNNING で OK
 
-# 5. ログ確認 (JMX module 経由)
+# 4. ログ確認 (JMX module 経由)
 yaac logs app <org> <env> atelier-static -j -n 50
 ```
 

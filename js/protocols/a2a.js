@@ -145,7 +145,11 @@ export class A2AAdapter extends ProtocolAdapter {
       dir: "out", method, payload: body, raw: JSON.stringify(body, null, 2)
     });
 
-    const headers = { "Content-Type": "application/json", Accept: "application/json" };
+    const headers = {
+      "Content-Type": "application/json",
+      // message/stream のときは SSE を受ける。 そうでなければ JSON。
+      Accept: useStream ? "text/event-stream" : "application/json"
+    };
     if (this.config.auth) headers["Authorization"] = `Bearer ${this.config.auth}`;
 
     // 停止ボタン用: この送信を中断できるよう AbortController を立てる
@@ -155,6 +159,16 @@ export class A2AAdapter extends ProtocolAdapter {
     try {
       const res = await fetch(proxify(this.rpcUrl), { method: "POST", headers, body: JSON.stringify(body), signal: ac.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      // ── streaming (SSE) 経路 ───────────────────────────────
+      // server が text/event-stream を返したら 1 イベントずつ読み、
+      // status-update / artifact-update を逐次 message として emit する。
+      const ctype = res.headers.get("content-type") || "";
+      if (useStream && ctype.includes("text/event-stream")) {
+        await this._consumeSse(res, method, ac);
+        return;
+      }
+
       const data = await res.json();
 
       this._emit("rpc", {
@@ -203,6 +217,100 @@ export class A2AAdapter extends ProtocolAdapter {
       throw e;
     } finally {
       if (this._inflight === ac) this._inflight = null;
+    }
+  }
+
+  // ─── SSE (text/event-stream) を 1 イベントずつ消費する ───────────
+  // A2A streaming は `event: <kind>` + `data: <json>` の SSE フレームを返す:
+  //   event: task          → 初期 Task (submitted)
+  //   event: status-update → 進捗。 status.state = working|completed|failed、 final フラグ付き
+  //   event: artifact-update → 部分成果物
+  // 中間 (final=false) の status は進捗として system 行で逐次表示し、
+  // 最終 (final=true / completed) のテキストだけを通常の agent message として出す。
+  async _consumeSse(res, method, ac) {
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buf = "";
+    let lastText = "";          // 最後に出した進捗テキスト (最終 fallback 用)
+    let finalEmitted = false;
+
+    const handleEvent = (evName, dataStr) => {
+      let data;
+      try { data = JSON.parse(dataStr); } catch { return; }
+
+      // debug タブにも生フレームを流す
+      this._emit("rpc", {
+        dir: "in", method: `SSE · ${evName}`,
+        payload: data, raw: JSON.stringify(data, null, 2)
+      });
+
+      const result = data.result || data;
+
+      // contextId を拾って保持 (次ターンの会話継続用)
+      const ctx = result.contextId || result.task?.contextId
+        || result.status?.contextId || result.message?.contextId;
+      if (ctx && !this.contextId) this.contextId = ctx;
+
+      if (data.error) { this._emit("error", new Error(`RPC error: ${data.error.message || data.error.code}`)); return; }
+
+      // status-update: status.message.parts[].text を取り出す
+      if (result.kind === "status-update" || result.status) {
+        const st    = result.status || {};
+        const state = st.state || "";
+        const txt   = collectText(st.message) || "";
+        const isFinal = result.final === true || state === "completed" || state === "failed";
+        if (txt) {
+          if (isFinal) {
+            this._emit("message", { role: "agent", text: txt, final: true });
+            finalEmitted = true;
+          } else {
+            // 中間進捗 → system 行で逐次表示 (差分 typewriter を避ける)
+            this._emit("status", { state, text: txt });
+            lastText = txt;
+          }
+        }
+        return;
+      }
+
+      // artifact-update / task / その他: テキストが取れれば最終扱いで出す
+      const msgs = collectMessages(result);
+      for (const m of msgs) {
+        const txt = collectText(m);
+        if (txt) { this._emit("message", { role: m.role || "agent", text: txt, final: true }); finalEmitted = true; }
+      }
+    };
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        // SSE フレームは空行 (\n\n) 区切り
+        let idx;
+        while ((idx = buf.indexOf("\n\n")) >= 0) {
+          const frame = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          let evName = "message", dataStr = "";
+          for (const raw of frame.split("\n")) {
+            const line = raw.replace(/\r$/, "");
+            if (line.startsWith("event:")) evName = line.slice(6).trim();
+            else if (line.startsWith("data:")) dataStr += (dataStr ? "\n" : "") + line.slice(5).trim();
+          }
+          if (dataStr) handleEvent(evName, dataStr);
+        }
+      }
+    } catch (e) {
+      if (e?.name === "AbortError") {
+        this._emit("rpc", { dir: "err", method: `aborted · ${method}`, raw: "stopped by user" });
+        this._emit("aborted", { method });
+        const err = new Error("aborted by user"); err.name = "AbortError"; throw err;
+      }
+      throw e;
+    }
+
+    // completed/final が来ないまま閉じたら、 最後の進捗を最終メッセージにする
+    if (!finalEmitted && lastText) {
+      this._emit("message", { role: "agent", text: lastText, final: true });
     }
   }
 }

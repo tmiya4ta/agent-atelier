@@ -72,9 +72,51 @@ var h = attributes.headers default {}
     (if (h."content-type"?) { "Content-Type": h."content-type" } else {}),
     "Accept": h.accept default "*/*"
 }]]></ee:set-variable>
+                        <!-- client が SSE を要求しているか (Accept: text/event-stream) -->
+                        <ee:set-variable variableName="wantsSse"><![CDATA[%dw 2.0
+output application/java
+var acc = ((attributes.headers default {}).accept default "") as String
+---
+acc contains "text/event-stream"]]></ee:set-variable>
                     </ee:variables>
                 </ee:transform>
 
+                <!-- ── SSE pass-through ──────────────────────────────
+                     A2A message/stream など。 redirect 処理や payload 変換を挟まず、
+                     upstream の InputStream をそのまま listener response に流す
+                     (streamingMode=ALWAYS で chunked のまま転送)。 -->
+                <choice>
+                    <when expression="#[vars.wantsSse default false]">
+                        <try>
+                            <!-- HTTP connector はレスポンス body を InputStream で遅延読みするので、
+                                 SSE 用の特別な属性は不要。 redirect は追わず、 payload(stream) を
+                                 そのまま listener response に流す。 -->
+                            <http:request method="#[attributes.method]"
+                                          url="#[vars.targetUrl]"
+                                          config-ref="proxy-request-config"
+                                          followRedirects="false"
+                                          responseTimeout="300000">
+                                <http:headers>#[vars.fwdHeaders]</http:headers>
+                                <http:response-validator>
+                                    <http:success-status-code-validator values="0..599"/>
+                                </http:response-validator>
+                            </http:request>
+                            <set-variable variableName="proxyStatus" value="#[attributes.statusCode default 200]"/>
+                            <set-variable variableName="proxyHeaders" value="#[{ 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', 'Access-Control-Allow-Origin': '*', 'X-Accel-Buffering': 'no' }]"/>
+                            <error-handler>
+                                <on-error-continue type="ANY">
+                                    <ee:transform>
+                                        <ee:message><ee:set-payload><![CDATA[%dw 2.0 output text/plain --- "proxy sse error: " ++ (error.description default "unknown")]]></ee:set-payload></ee:message>
+                                        <ee:variables>
+                                            <ee:set-variable variableName="proxyStatus"><![CDATA[%dw 2.0 output application/java --- 502]]></ee:set-variable>
+                                            <ee:set-variable variableName="proxyHeaders"><![CDATA[%dw 2.0 output application/java --- { "Content-Type": "text/plain; charset=utf-8", "Access-Control-Allow-Origin": "*" }]]></ee:set-variable>
+                                        </ee:variables>
+                                    </ee:transform>
+                                </on-error-continue>
+                            </error-handler>
+                        </try>
+                    </when>
+                    <otherwise>
                 <try>
                     <!-- leg 1: target にそのまま forward (redirect は手動 follow) -->
                     <!-- agent (LLM tool-use ループ) は最大 240s かかりうるので長めに取る -->
@@ -142,6 +184,8 @@ output text/plain
                         </on-error-continue>
                     </error-handler>
                 </try>
+                    </otherwise>
+                </choice>
             </otherwise>
         </choice>
     </flow>
