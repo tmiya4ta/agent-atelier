@@ -26,10 +26,14 @@ export class MCPAdapter extends ProtocolAdapter {
     this.rpcId = 0;
     this.tools = [];
     this.serverInfo = null;
+    // Streamable HTTP: initialize の応答ヘッダで発行される session id。
+    // 以降の全リクエストに Mcp-Session-Id ヘッダで付ける。
+    this.sessionId = null;
   }
 
   async connect() {
     this._setState("connecting");
+    this.sessionId = null;   // 再接続時に前回 session を持ち越さない
     try {
       const init = await this._rpc("initialize", {
         protocolVersion: "2025-03-26",
@@ -96,9 +100,12 @@ export class MCPAdapter extends ProtocolAdapter {
 
     const headers = {
       "Content-Type": "application/json",
-      "Accept":       "application/json"
+      // Streamable HTTP: server は JSON か SSE のどちらかで返す。 両方受ける。
+      "Accept":       "application/json, text/event-stream"
     };
     if (this.config.auth) headers["Authorization"] = `Bearer ${this.config.auth}`;
+    // initialize で得た session id を以降の全リクエストに付ける (無いと session 不正で弾かれる)
+    if (this.sessionId) headers["Mcp-Session-Id"] = this.sessionId;
 
     // 停止ボタン用: tools/call 等を中断できるよう AbortController を立てる
     const ac = new AbortController();
@@ -127,6 +134,10 @@ export class MCPAdapter extends ProtocolAdapter {
 
     if (this._inflight === ac) this._inflight = null;
 
+    // initialize 応答などで発行される session id を捕捉して保持。
+    const sid = res.headers.get("mcp-session-id");
+    if (sid && !this.sessionId) this.sessionId = sid;
+
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
       this._emit("rpc", { dir: "err", method: `HTTP ${res.status}: ${method}`, raw: errText });
@@ -138,9 +149,16 @@ export class MCPAdapter extends ProtocolAdapter {
       return null;
     }
 
-    const data = await res.json();
+    // Streamable HTTP: server は application/json か text/event-stream を返す。
+    // SSE のときは event/data フレームから JSON-RPC 応答 (data:) を取り出す。
+    const ctype = res.headers.get("content-type") || "";
+    const rawText = await res.text();
+    const data = ctype.includes("text/event-stream")
+      ? parseSseJsonRpc(rawText)
+      : (rawText ? JSON.parse(rawText) : {});
+
     this._emit("rpc", {
-      dir: "in", method: `${method} response`,
+      dir: "in", method: `${method} response${ctype.includes("event-stream") ? " (SSE)" : ""}`,
       payload: data, raw: JSON.stringify(data, null, 2)
     });
 
@@ -151,6 +169,29 @@ export class MCPAdapter extends ProtocolAdapter {
     }
     return data.result || {};
   }
+}
+
+// SSE (text/event-stream) のボディから JSON-RPC 応答オブジェクトを取り出す。
+// MCP の 1 リクエスト応答は単一の `event: message` + `data: {jsonrpc...}`。
+// 複数 data 行は仕様上連結する。 result を持つ最後のフレームを採用。
+function parseSseJsonRpc(text) {
+  const frames = String(text || "").split(/\n\n+/);
+  let last = {};
+  for (const frame of frames) {
+    let dataStr = "";
+    for (const raw of frame.split("\n")) {
+      const line = raw.replace(/\r$/, "");
+      if (line.startsWith("data:")) dataStr += (dataStr ? "\n" : "") + line.slice(5).trim();
+    }
+    if (!dataStr) continue;
+    try {
+      const obj = JSON.parse(dataStr);
+      // result または error を含むフレームを優先採用
+      if (obj && (obj.result !== undefined || obj.error !== undefined)) last = obj;
+      else if (Object.keys(last).length === 0) last = obj;
+    } catch { /* skip non-JSON data lines */ }
+  }
+  return last;
 }
 
 // ─── helpers (local copy of a2a.js's normalize / proxify) ───────────

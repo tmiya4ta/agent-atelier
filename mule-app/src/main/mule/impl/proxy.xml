@@ -48,7 +48,8 @@ output application/java
 {
     "Access-Control-Allow-Origin":  "*",
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With, Mcp-Session-Id, Mcp-Protocol-Version",
+    "Access-Control-Expose-Headers": "Mcp-Session-Id",
     "Access-Control-Max-Age":       "86400"
 }]]></ee:set-variable>
                     </ee:variables>
@@ -70,6 +71,8 @@ var h = attributes.headers default {}
 {
     (if (h.authorization?) { "Authorization": h.authorization } else {}),
     (if (h."content-type"?) { "Content-Type": h."content-type" } else {}),
+    (if (h."mcp-session-id"?) { "Mcp-Session-Id": h."mcp-session-id" } else {}),
+    (if (h."mcp-protocol-version"?) { "Mcp-Protocol-Version": h."mcp-protocol-version" } else {}),
     "Accept": h.accept default "*/*"
 }]]></ee:set-variable>
                         <!-- client が SSE を要求しているか (Accept: text/event-stream) -->
@@ -102,7 +105,7 @@ acc contains "text/event-stream"]]></ee:set-variable>
                                 </http:response-validator>
                             </http:request>
                             <set-variable variableName="proxyStatus" value="#[attributes.statusCode default 200]"/>
-                            <set-variable variableName="proxyHeaders" value="#[{ 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', 'Access-Control-Allow-Origin': '*', 'X-Accel-Buffering': 'no' }]"/>
+                            <set-variable variableName="proxyHeaders" value="#[{ 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'Mcp-Session-Id', 'X-Accel-Buffering': 'no' } ++ (if ((attributes.headers default {}).'mcp-session-id'?) { 'Mcp-Session-Id': (attributes.headers default {}).'mcp-session-id' } else {})]"/>
                             <error-handler>
                                 <on-error-continue type="ANY">
                                     <ee:transform>
@@ -157,13 +160,15 @@ output application/java
 attributes.statusCode default 200]]></ee:set-variable>
                             <ee:set-variable variableName="proxyHeaders"><![CDATA[%dw 2.0
 output application/java
-var ct = (attributes.headers default {})."content-type" default "application/octet-stream"
+var rh = (attributes.headers default {})
+var ct = rh."content-type" default "application/octet-stream"
 ---
 {
     "Content-Type":                ct,
     "Access-Control-Allow-Origin": "*",
+    "Access-Control-Expose-Headers": "Mcp-Session-Id",
     "Cache-Control":               "no-store"
-}]]></ee:set-variable>
+} ++ (if (rh."mcp-session-id"?) { "Mcp-Session-Id": rh."mcp-session-id" } else {})]]></ee:set-variable>
                         </ee:variables>
                     </ee:transform>
 

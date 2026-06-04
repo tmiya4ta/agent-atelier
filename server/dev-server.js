@@ -104,7 +104,9 @@ function setCors(req, res) {
     res.setHeader("Vary", "Origin");
   }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, X-Atelier-Stream");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, X-Atelier-Stream, Mcp-Session-Id, Mcp-Protocol-Version");
+  // MCP の session id を JS (fetch) から読めるよう expose する
+  res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id, X-Atelier-Proxied-Url");
   res.setHeader("Access-Control-Max-Age", "86400");
 }
 function setNoCache(res) {
@@ -300,7 +302,7 @@ async function handleProxy(req, res) {
 
   // forward only the headers we care about
   const fwdHeaders = {};
-  for (const h of ["content-type", "authorization", "accept", "x-atelier-stream"]) {
+  for (const h of ["content-type", "authorization", "accept", "x-atelier-stream", "mcp-session-id", "mcp-protocol-version"]) {
     const v = req.headers[h];
     if (v) fwdHeaders[h.replace(/(^|-)([a-z])/g, (_, p, c) => p + c.toUpperCase())] = v;
   }
@@ -333,6 +335,9 @@ async function handleProxy(req, res) {
     // pass through Content-Type
     if (upstream.headers["content-type"])
       res.setHeader("Content-Type", upstream.headers["content-type"]);
+    // MCP Streamable HTTP: session id を client に返す (initialize の応答で発行される)
+    if (upstream.headers["mcp-session-id"])
+      res.setHeader("Mcp-Session-Id", upstream.headers["mcp-session-id"]);
     setCors(req, res); setNoCache(res);
     res.setHeader("X-Atelier-Proxied-Url", target);
     if (redirectTarget) res.setHeader("X-Atelier-Followed-Redirect", redirectTarget);
