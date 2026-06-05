@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mule xmlns="http://www.mulesoft.org/schema/mule/core"
       xmlns:http="http://www.mulesoft.org/schema/mule/http"
-      xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+      xmlns:mcp="http://www.mulesoft.org/schema/mule/mcp"
       xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
       xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
       xsi:schemaLocation="
           http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
           http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
-          http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd
+          http://www.mulesoft.org/schema/mule/mcp http://www.mulesoft.org/schema/mule/mcp/current/mule-mcp.xsd
           http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
 
     <configuration-properties file="config.properties"/>
@@ -23,236 +23,365 @@
                                  protocol="${backend.mdm.protocol}"/>
     </http:request-config>
 
-    <apikit:config name="atelier-mcp-mdm-config"
-                   api="api/atelier-mcp-mdm.yaml"
-                   outboundHeadersMapName="outboundHeaders"
-                   httpStatusVarName="httpStatus"/>
+    <!-- ============================================================
+         MCP Server (Streamable HTTP transport)。 mule-mcp-connector が
+         /mcp で initialize / tools/list / tools/call / SSE / session 管理 /
+         notifications/initialized の 202 応答 を全部処理する。
+         ツールは <mcp:tool-listener> で宣言。 ビジネスロジック (backend 呼出) は
+         既存 sub-flow を流用する。
+         ============================================================ -->
+    <mcp:server-config name="MCP_Server_config"
+                       serverName="atelier-mcp-mdm"
+                       serverVersion="1.1.0">
+        <mcp:streamable-http-server-connection listenerConfig="HTTP_Listener_config"
+                                               mcpEndpointPath="/mcp"/>
+    </mcp:server-config>
 
-    <flow name="atelier-mcp-mdm-main">
-        <http:listener config-ref="HTTP_Listener_config" path="/*">
-            <http:response statusCode="#[vars.httpStatus default 200]">
-                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
-            </http:response>
-            <http:error-response statusCode="#[vars.httpStatus default 500]">
-                <http:body>#[payload]</http:body>
-                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
-            </http:error-response>
+    <!-- ============================================================
+         MCP tool: resolve_supplier
+         ============================================================ -->
+    <flow name="tool-resolve-supplier-listener">
+        <mcp:tool-listener config-ref="MCP_Server_config" name="resolve_supplier">
+            <mcp:description>サプライヤー名/ヒントから ゴールデン ID を解決する。matched=false でも success で返す。</mcp:description>
+            <mcp:parameters-schema><![CDATA[{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "supplierName": { "type": "string", "description": "サプライヤー名(例: 関西部品)" },
+    "hint":         { "type": "string", "description": "追加文脈 [地域名、業種など]" }
+  },
+  "required": ["supplierName"]
+}]]></mcp:parameters-schema>
+            <mcp:responses>
+                <mcp:text-tool-response-content text="#[write(vars.toolResult.result default vars.toolResult default {}, 'application/json') as String]"/>
+            </mcp:responses>
+            <mcp:on-error-responses>
+                <mcp:text-tool-response-content text="#['{&quot;code&quot;:&quot;TOOL_ERROR&quot;,&quot;message&quot;:&quot;' ++ (error.description default 'unknown') ++ '&quot;}']"/>
+            </mcp:on-error-responses>
+        </mcp:tool-listener>
+        <set-variable variableName="toolName" value="#['resolve_supplier']"/>
+        <flow-ref name="normalize-tool-input"/>
+        <flow-ref name="tool-resolve-supplier"/>
+        <set-variable variableName="toolResult" value="#[payload]"/>
+    </flow>
+
+    <!-- ============================================================
+         MCP tool: get_supplier_relations
+         ============================================================ -->
+    <flow name="tool-get-supplier-relations-listener">
+        <mcp:tool-listener config-ref="MCP_Server_config" name="get_supplier_relations">
+            <mcp:description>ゴールデン ID から親会社・子会社・過去インシデント・代替部品候補を取得する。</mcp:description>
+            <mcp:parameters-schema><![CDATA[{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "supplierGoldenId": { "type": "string", "description": "ゴールデン ID(例: G-KANSAI-PARTS-001)" },
+    "depth":            { "type": "integer", "description": "関係の深さ(任意・既定 1、最大 2)" }
+  },
+  "required": ["supplierGoldenId"]
+}]]></mcp:parameters-schema>
+            <mcp:responses>
+                <mcp:text-tool-response-content text="#[write(vars.toolResult.result default vars.toolResult default {}, 'application/json') as String]"/>
+            </mcp:responses>
+            <mcp:on-error-responses>
+                <mcp:text-tool-response-content text="#['{&quot;code&quot;:&quot;TOOL_ERROR&quot;,&quot;message&quot;:&quot;' ++ (error.description default 'unknown') ++ '&quot;}']"/>
+            </mcp:on-error-responses>
+        </mcp:tool-listener>
+        <set-variable variableName="toolName" value="#['get_supplier_relations']"/>
+        <flow-ref name="normalize-tool-input"/>
+        <flow-ref name="tool-get-supplier-relations"/>
+        <set-variable variableName="toolResult" value="#[payload]"/>
+    </flow>
+
+    <!-- ============================================================
+         MCP tool: update_supplier_risk_score
+         ============================================================ -->
+    <flow name="tool-update-supplier-risk-score-listener">
+        <mcp:tool-listener config-ref="MCP_Server_config" name="update_supplier_risk_score">
+            <mcp:description>サプライヤーのリスクスコア(0..1)を更新する。previousRiskScore を返す。</mcp:description>
+            <mcp:parameters-schema><![CDATA[{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "supplierGoldenId": { "type": "string" },
+    "riskScore":        { "type": "number", "description": "新しいスコア [0..1]" },
+    "reason":           { "type": "string", "description": "更新理由(任意)" },
+    "incidentId":       { "type": "string", "description": "紐付ける Incident__c.Name(任意)" }
+  },
+  "required": ["supplierGoldenId", "riskScore"]
+}]]></mcp:parameters-schema>
+            <mcp:responses>
+                <mcp:text-tool-response-content text="#[write(vars.toolResult.result default vars.toolResult default {}, 'application/json') as String]"/>
+            </mcp:responses>
+            <mcp:on-error-responses>
+                <mcp:text-tool-response-content text="#['{&quot;code&quot;:&quot;TOOL_ERROR&quot;,&quot;message&quot;:&quot;' ++ (error.description default 'unknown') ++ '&quot;}']"/>
+            </mcp:on-error-responses>
+        </mcp:tool-listener>
+        <set-variable variableName="toolName" value="#['update_supplier_risk_score']"/>
+        <flow-ref name="normalize-tool-input"/>
+        <flow-ref name="tool-update-supplier-risk-score"/>
+        <set-variable variableName="toolResult" value="#[payload]"/>
+    </flow>
+
+    <!-- ============================================================
+         MCP tool: update_ontology
+         ============================================================ -->
+    <flow name="tool-update-ontology-listener">
+        <mcp:tool-listener config-ref="MCP_Server_config" name="update_ontology">
+            <mcp:description>Knowledge Graph に subject/predicate/object のトリプルを記録する。tripleId を返す。</mcp:description>
+            <mcp:parameters-schema><![CDATA[{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "subject":    { "type": "string", "description": "主語(例: ゴールデン ID)" },
+    "predicate":  { "type": "string", "description": "述語(例: hasRiskFactor)" },
+    "object":     { "type": "string", "description": "目的語" },
+    "incidentId": { "type": "string", "description": "紐付ける Incident__c.Name(任意)" }
+  },
+  "required": ["subject", "predicate", "object"]
+}]]></mcp:parameters-schema>
+            <mcp:responses>
+                <mcp:text-tool-response-content text="#[write(vars.toolResult.result default vars.toolResult default {}, 'application/json') as String]"/>
+            </mcp:responses>
+            <mcp:on-error-responses>
+                <mcp:text-tool-response-content text="#['{&quot;code&quot;:&quot;TOOL_ERROR&quot;,&quot;message&quot;:&quot;' ++ (error.description default 'unknown') ++ '&quot;}']"/>
+            </mcp:on-error-responses>
+        </mcp:tool-listener>
+        <set-variable variableName="toolName" value="#['update_ontology']"/>
+        <flow-ref name="normalize-tool-input"/>
+        <flow-ref name="tool-update-ontology"/>
+        <set-variable variableName="toolResult" value="#[payload]"/>
+    </flow>
+
+    <!-- ============================================================
+         MCP tool: list_suppliers
+         ============================================================ -->
+    <flow name="tool-list-suppliers-listener">
+        <mcp:tool-listener config-ref="MCP_Server_config" name="list_suppliers">
+            <mcp:description>条件指定 (region / status / リスクスコア範囲 / limit) でアクティブな取引先一覧を返す。region 未指定なら全 region。</mcp:description>
+            <mcp:parameters-schema><![CDATA[{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "region":       { "type": "string", "description": "Region__c の値 (例: 関西、 中部、 兵庫)。 完全一致。" },
+    "status":       { "type": "string", "description": "ACTIVE / INACTIVE / BLOCKED / ALL (既定 ACTIVE)" },
+    "riskScoreMin": { "type": "number", "description": "0..1 の下限。 省略時は無制限。" },
+    "riskScoreMax": { "type": "number", "description": "0..1 の上限。 省略時は無制限。" },
+    "limit":        { "type": "integer", "description": "1..200 (既定 50)" }
+  },
+  "required": []
+}]]></mcp:parameters-schema>
+            <mcp:responses>
+                <mcp:text-tool-response-content text="#[write(vars.toolResult.result default vars.toolResult default {}, 'application/json') as String]"/>
+            </mcp:responses>
+            <mcp:on-error-responses>
+                <mcp:text-tool-response-content text="#['{&quot;code&quot;:&quot;TOOL_ERROR&quot;,&quot;message&quot;:&quot;' ++ (error.description default 'unknown') ++ '&quot;}']"/>
+            </mcp:on-error-responses>
+        </mcp:tool-listener>
+        <set-variable variableName="toolName" value="#['list_suppliers']"/>
+        <flow-ref name="normalize-tool-input"/>
+        <flow-ref name="tool-list-suppliers"/>
+        <set-variable variableName="toolResult" value="#[payload]"/>
+    </flow>
+
+    <!-- ============================================================
+         MCP tool: list_regions
+         ============================================================ -->
+    <flow name="tool-list-regions-listener">
+        <mcp:tool-listener config-ref="MCP_Server_config" name="list_regions">
+            <mcp:description>Supplier__c.Region__c に登録されているユニーク値と、各 region の ACTIVE 取引先件数を返す。</mcp:description>
+            <mcp:parameters-schema><![CDATA[{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {},
+  "required": []
+}]]></mcp:parameters-schema>
+            <mcp:responses>
+                <mcp:text-tool-response-content text="#[write(vars.toolResult.result default vars.toolResult default {}, 'application/json') as String]"/>
+            </mcp:responses>
+            <mcp:on-error-responses>
+                <mcp:text-tool-response-content text="#['{&quot;code&quot;:&quot;TOOL_ERROR&quot;,&quot;message&quot;:&quot;' ++ (error.description default 'unknown') ++ '&quot;}']"/>
+            </mcp:on-error-responses>
+        </mcp:tool-listener>
+        <set-variable variableName="toolName" value="#['list_regions']"/>
+        <flow-ref name="normalize-tool-input"/>
+        <flow-ref name="tool-list-regions"/>
+        <set-variable variableName="toolResult" value="#[payload]"/>
+    </flow>
+
+    <!-- ============================================================
+         MCP tool: list_parts
+         ============================================================ -->
+    <flow name="tool-list-parts-listener">
+        <mcp:tool-listener config-ref="MCP_Server_config" name="list_parts">
+            <mcp:description>条件指定 (supplierGoldenId / category / location / nameLike / limit) で部品一覧を返す (READ-ONLY)。 既定 limit=10、 上限 50。 truncated=true なら絞り込み推奨。</mcp:description>
+            <mcp:parameters-schema><![CDATA[{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "supplierGoldenId": { "type": "string", "description": "PrimarySupplier__c の GoldenId__c (例: G-TOHOKU-MET-001)。 完全一致。" },
+    "category":         { "type": "string", "description": "電力設備 / 機械部品 / 電子部品 / 素材 のいずれか。" },
+    "location":         { "type": "string", "description": "倉庫拠点コード (例: KOBE-W1)。 完全一致。" },
+    "nameLike":         { "type": "string", "description": "部品番号の部分一致 (例: TOH-500)。" },
+    "limit":            { "type": "integer", "description": "1..50 (既定 10)" }
+  },
+  "required": []
+}]]></mcp:parameters-schema>
+            <mcp:responses>
+                <mcp:text-tool-response-content text="#[write(vars.toolResult.result default vars.toolResult default {}, 'application/json') as String]"/>
+            </mcp:responses>
+            <mcp:on-error-responses>
+                <mcp:text-tool-response-content text="#['{&quot;code&quot;:&quot;TOOL_ERROR&quot;,&quot;message&quot;:&quot;' ++ (error.description default 'unknown') ++ '&quot;}']"/>
+            </mcp:on-error-responses>
+        </mcp:tool-listener>
+        <set-variable variableName="toolName" value="#['list_parts']"/>
+        <flow-ref name="normalize-tool-input"/>
+        <flow-ref name="tool-list-parts"/>
+        <set-variable variableName="toolResult" value="#[payload]"/>
+    </flow>
+
+    <!-- ============================================================
+         MCP tool: resolve_part
+         ============================================================ -->
+    <flow name="tool-resolve-part-listener">
+        <mcp:tool-listener config-ref="MCP_Server_config" name="resolve_part">
+            <mcp:description>部品番号 (Part__c.Name) から部品詳細を 1 件解決 (READ-ONLY)。 在庫 / リードタイム / 主たるサプライヤー / 代替候補数を返す。</mcp:description>
+            <mcp:parameters-schema><![CDATA[{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "partNumber": { "type": "string", "description": "部品番号 (例: P-2024-TOH-500)。 完全一致。" }
+  },
+  "required": ["partNumber"]
+}]]></mcp:parameters-schema>
+            <mcp:responses>
+                <mcp:text-tool-response-content text="#[write(vars.toolResult.result default vars.toolResult default {}, 'application/json') as String]"/>
+            </mcp:responses>
+            <mcp:on-error-responses>
+                <mcp:text-tool-response-content text="#['{&quot;code&quot;:&quot;TOOL_ERROR&quot;,&quot;message&quot;:&quot;' ++ (error.description default 'unknown') ++ '&quot;}']"/>
+            </mcp:on-error-responses>
+        </mcp:tool-listener>
+        <set-variable variableName="toolName" value="#['resolve_part']"/>
+        <flow-ref name="normalize-tool-input"/>
+        <flow-ref name="tool-resolve-part"/>
+        <set-variable variableName="toolResult" value="#[payload]"/>
+    </flow>
+
+    <!-- ============================================================
+         MCP tool: list_part_alternatives
+         ============================================================ -->
+    <flow name="tool-list-part-alternatives-listener">
+        <mcp:tool-listener config-ref="MCP_Server_config" name="list_part_alternatives">
+            <mcp:description>部品の代替品一覧を取得 (READ-ONLY)。 CompatibilityScore DESC で並ぶ。</mcp:description>
+            <mcp:parameters-schema><![CDATA[{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "partNumber": { "type": "string", "description": "オリジナル部品番号 (例: P-2024-TOH-500)。" },
+    "limit":      { "type": "integer", "description": "1..50 (既定 10)" }
+  },
+  "required": ["partNumber"]
+}]]></mcp:parameters-schema>
+            <mcp:responses>
+                <mcp:text-tool-response-content text="#[write(vars.toolResult.result default vars.toolResult default {}, 'application/json') as String]"/>
+            </mcp:responses>
+            <mcp:on-error-responses>
+                <mcp:text-tool-response-content text="#['{&quot;code&quot;:&quot;TOOL_ERROR&quot;,&quot;message&quot;:&quot;' ++ (error.description default 'unknown') ++ '&quot;}']"/>
+            </mcp:on-error-responses>
+        </mcp:tool-listener>
+        <set-variable variableName="toolName" value="#['list_part_alternatives']"/>
+        <flow-ref name="normalize-tool-input"/>
+        <flow-ref name="tool-list-part-alternatives"/>
+        <set-variable variableName="toolResult" value="#[payload]"/>
+    </flow>
+
+    <!-- ============================================================
+         MCP tool: find_suppliers_for_part
+         ============================================================ -->
+    <flow name="tool-find-suppliers-for-part-listener">
+        <mcp:tool-listener config-ref="MCP_Server_config" name="find_suppliers_for_part">
+            <mcp:description>部品を供給可能なサプライヤー一覧 (主+代替経由) を返す (READ-ONLY)。 RiskScore ASC (低リスク優先) で並ぶ。 source='PRIMARY' or 'ALTERNATIVE'。</mcp:description>
+            <mcp:parameters-schema><![CDATA[{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "partNumber": { "type": "string", "description": "部品番号 (例: P-2024-TOH-500)。" },
+    "limit":      { "type": "integer", "description": "1..50 (既定 10)" }
+  },
+  "required": ["partNumber"]
+}]]></mcp:parameters-schema>
+            <mcp:responses>
+                <mcp:text-tool-response-content text="#[write(vars.toolResult.result default vars.toolResult default {}, 'application/json') as String]"/>
+            </mcp:responses>
+            <mcp:on-error-responses>
+                <mcp:text-tool-response-content text="#['{&quot;code&quot;:&quot;TOOL_ERROR&quot;,&quot;message&quot;:&quot;' ++ (error.description default 'unknown') ++ '&quot;}']"/>
+            </mcp:on-error-responses>
+        </mcp:tool-listener>
+        <set-variable variableName="toolName" value="#['find_suppliers_for_part']"/>
+        <flow-ref name="normalize-tool-input"/>
+        <flow-ref name="tool-find-suppliers-for-part"/>
+        <set-variable variableName="toolResult" value="#[payload]"/>
+    </flow>
+
+    <!-- ============================================================
+         MCP tool: list_incidents
+         ============================================================ -->
+    <flow name="tool-list-incidents-listener">
+        <mcp:tool-listener config-ref="MCP_Server_config" name="list_incidents">
+            <mcp:description>インシデント一覧を取得 (READ-ONLY)。 ORDER BY CreatedDate DESC。 既定 limit=10、 上限 50。 truncated=true なら絞り込み推奨。</mcp:description>
+            <mcp:parameters-schema><![CDATA[{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "supplierGoldenId": { "type": "string", "description": "Supplier__c.GoldenId__c で絞り込み。" },
+    "partNumber":       { "type": "string", "description": "Part__c.Name で絞り込み。" },
+    "status":           { "type": "string", "description": "OPEN / IN_PROGRESS / RESOLVED / ALL。" },
+    "severity":         { "type": "string", "description": "CRITICAL / HIGH / MEDIUM / LOW。" },
+    "since":            { "type": "string", "description": "ISO8601 日付 (例: 2026-05-01)。 これ以降の CreatedDate のみ。" },
+    "limit":            { "type": "integer", "description": "1..50 (既定 10)" }
+  },
+  "required": []
+}]]></mcp:parameters-schema>
+            <mcp:responses>
+                <mcp:text-tool-response-content text="#[write(vars.toolResult.result default vars.toolResult default {}, 'application/json') as String]"/>
+            </mcp:responses>
+            <mcp:on-error-responses>
+                <mcp:text-tool-response-content text="#['{&quot;code&quot;:&quot;TOOL_ERROR&quot;,&quot;message&quot;:&quot;' ++ (error.description default 'unknown') ++ '&quot;}']"/>
+            </mcp:on-error-responses>
+        </mcp:tool-listener>
+        <set-variable variableName="toolName" value="#['list_incidents']"/>
+        <flow-ref name="normalize-tool-input"/>
+        <flow-ref name="tool-list-incidents"/>
+        <set-variable variableName="toolResult" value="#[payload]"/>
+    </flow>
+
+    <!-- ============================================================
+         normalize-tool-input — MCP tool 引数 payload は特殊型なので、
+         write→read で純粋な JSON Map に正規化して vars.toolInput に入れる。
+         (output application/java で payload を直接書くと "No read/write handler"
+          の writer 罠を踏むため。 値は reader で読む。)
+         ============================================================ -->
+    <sub-flow name="normalize-tool-input">
+        <ee:transform doc:name="payload(MCP args) → vars.toolInput (clean Map)">
+            <ee:variables>
+                <ee:set-variable variableName="toolInput"><![CDATA[%dw 2.0
+output application/java
+---
+read(write(payload default {}, "application/json"), "application/json")]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+    </sub-flow>
+
+    <!-- ============================================================
+         互換経路: agent が叩く簡易 REST。
+         POST /mcp/execute { toolName, input } → { status, tool, result }
+         MCP Connector 化後も agent は無改修でこの経路を使える。
+         ============================================================ -->
+    <flow name="mcp-execute-compat">
+        <http:listener config-ref="HTTP_Listener_config" path="/mcp/execute">
+            <http:response statusCode="200"/>
         </http:listener>
-        <apikit:router config-ref="atelier-mcp-mdm-config"/>
-        <error-handler>
-            <on-error-propagate type="APIKIT:BAD_REQUEST">
-                <ee:transform>
-                    <ee:message>
-                        <ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{ code: "BAD_REQUEST", message: error.description default (error.message default "bad request") }]]></ee:set-payload>
-                    </ee:message>
-                    <ee:variables>
-                        <ee:set-variable variableName="httpStatus">400</ee:set-variable>
-                    </ee:variables>
-                </ee:transform>
-            </on-error-propagate>
-            <on-error-propagate type="APIKIT:NOT_FOUND">
-                <ee:transform>
-                    <ee:message>
-                        <ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{ code: "NOT_FOUND", message: error.description default "resource not found" }]]></ee:set-payload>
-                    </ee:message>
-                    <ee:variables>
-                        <ee:set-variable variableName="httpStatus">404</ee:set-variable>
-                    </ee:variables>
-                </ee:transform>
-            </on-error-propagate>
-            <on-error-propagate type="APIKIT:METHOD_NOT_ALLOWED">
-                <ee:transform>
-                    <ee:message>
-                        <ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{ code: "METHOD_NOT_ALLOWED", message: error.description default "method not allowed" }]]></ee:set-payload>
-                    </ee:message>
-                    <ee:variables>
-                        <ee:set-variable variableName="httpStatus">405</ee:set-variable>
-                    </ee:variables>
-                </ee:transform>
-            </on-error-propagate>
-        </error-handler>
-    </flow>
-
-    <!-- ============================================================
-         MCP JSON-RPC dispatcher (POST /mcp)
-         Handles initialize / tools/list / tools/call per MCP spec 2025-03-26.
-         Body: { jsonrpc:"2.0", id, method, params }
-         ============================================================ -->
-    <flow name="post:\mcp:application\json:atelier-mcp-mdm-config">
-        <ee:transform doc:name="capture rpc fields">
-            <ee:variables>
-                <ee:set-variable variableName="rpcId"><![CDATA[%dw 2.0
-output application/java
----
-payload.id default null]]></ee:set-variable>
-                <ee:set-variable variableName="rpcMethod"><![CDATA[%dw 2.0
-output application/java
----
-(payload.method default "") as String]]></ee:set-variable>
-                <ee:set-variable variableName="rpcParams"><![CDATA[%dw 2.0
-output application/java
----
-payload.params default {}]]></ee:set-variable>
-            </ee:variables>
-        </ee:transform>
-
-        <choice doc:name="dispatch by JSON-RPC method">
-            <when expression='#[vars.rpcMethod == "initialize"]'>
-                <ee:transform doc:name="initialize result">
-                    <ee:message>
-                        <ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{
-  jsonrpc: "2.0",
-  id:      vars.rpcId,
-  result: {
-    protocolVersion: "2025-03-26",
-    serverInfo: {
-      name:    "atelier-mcp-mdm",
-      version: "1.0.0"
-    },
-    capabilities: {
-      tools: {
-        listChanged: false
-      }
-    }
-  }
-}]]></ee:set-payload>
-                    </ee:message>
-                </ee:transform>
-            </when>
-
-            <when expression='#[(vars.rpcMethod default "") startsWith "notifications/"]'>
-                <!-- MCP notification (no id). Per Streamable HTTP spec the server MUST reply
-                     202 Accepted with NO body. A 200 + JSON body (even {}) makes the official
-                     MCP client try to deserialize it as a JSONRPCMessage and fail
-                     ("Cannot deserialize JSONRPCMessage: {}"), aborting client initialization. -->
-                <ee:transform doc:name="ack notification (202, empty)">
-                    <ee:message>
-                        <ee:set-payload><![CDATA[%dw 2.0
-output text/plain
----
-""]]></ee:set-payload>
-                    </ee:message>
-                    <ee:variables>
-                        <ee:set-variable variableName="httpStatus">202</ee:set-variable>
-                    </ee:variables>
-                </ee:transform>
-            </when>
-
-            <when expression='#[vars.rpcMethod == "tools/list"]'>
-                <flow-ref name="build-tools-list-mcp"/>
-                <ee:transform doc:name="wrap tools/list result">
-                    <ee:message>
-                        <ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{
-  jsonrpc: "2.0",
-  id:      vars.rpcId,
-  result:  payload
-}]]></ee:set-payload>
-                    </ee:message>
-                </ee:transform>
-            </when>
-
-            <when expression='#[vars.rpcMethod == "tools/call"]'>
-                <ee:transform doc:name="extract tool name + arguments">
-                    <ee:variables>
-                        <ee:set-variable variableName="toolName"><![CDATA[%dw 2.0
-output application/java
----
-(vars.rpcParams.name default "") as String]]></ee:set-variable>
-                        <ee:set-variable variableName="toolInput"><![CDATA[%dw 2.0
-output application/java
----
-vars.rpcParams.arguments default {}]]></ee:set-variable>
-                    </ee:variables>
-                </ee:transform>
-                <flow-ref name="dispatch-tool"/>
-                <!-- payload here is { status, tool, result } from wrap-system-response -->
-                <ee:transform doc:name="wrap tools/call result (MCP content format)">
-                    <ee:message>
-                        <ee:set-payload><![CDATA[%dw 2.0
-output application/json
-var resultBody = payload.result default {}
-var isError = (payload.status default "") == "error"
----
-{
-  jsonrpc: "2.0",
-  id:      vars.rpcId,
-  result: {
-    content: [
-      {
-        "type": "text",
-        text:   write(resultBody, "application/json")
-      }
-    ],
-    isError: isError
-  }
-}]]></ee:set-payload>
-                    </ee:message>
-                </ee:transform>
-            </when>
-
-            <otherwise>
-                <ee:transform doc:name="method not found">
-                    <ee:message>
-                        <ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{
-  jsonrpc: "2.0",
-  id:      vars.rpcId,
-  error: {
-    code:    -32601,
-    message: "Method not found: " ++ (vars.rpcMethod default "")
-  }
-}]]></ee:set-payload>
-                    </ee:message>
-                </ee:transform>
-            </otherwise>
-        </choice>
-    </flow>
-
-    <!-- GET /mcp — Streamable HTTP server-initiated stream channel.
-         No server-initiated notifications today, so respond 405. -->
-    <flow name="get:\mcp:atelier-mcp-mdm-config">
-        <ee:transform>
-            <ee:message>
-                <ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{ code: "METHOD_NOT_ALLOWED", message: "server-initiated stream not supported" }]]></ee:set-payload>
-            </ee:message>
-            <ee:variables>
-                <ee:set-variable variableName="httpStatus">405</ee:set-variable>
-            </ee:variables>
-        </ee:transform>
-    </flow>
-
-    <!-- ============================================================
-         Legacy: GET /mcp/tools (custom HTTP-RPC, snake_case input_schema)
-         ============================================================ -->
-    <flow name="get:\mcp\tools:atelier-mcp-mdm-config">
-        <flow-ref name="build-tools-list-legacy"/>
-    </flow>
-
-    <!-- ============================================================
-         Legacy: POST /mcp/execute (custom HTTP-RPC)
-         ============================================================ -->
-    <flow name="post:\mcp\execute:application\json:atelier-mcp-mdm-config">
-        <ee:transform doc:name="capture toolName + input">
+        <ee:transform doc:name="extract toolName / input">
             <ee:variables>
                 <ee:set-variable variableName="toolName"><![CDATA[%dw 2.0
 output application/java
@@ -268,7 +397,7 @@ payload."input" default {}]]></ee:set-variable>
     </flow>
 
     <!-- ============================================================
-         Tool dispatcher (shared by /mcp/execute and /mcp tools/call).
+         Tool dispatcher (shared by /mcp/execute).
          Reads vars.toolName + vars.toolInput, leaves
          { status, tool, result } in payload via wrap-system-response.
          ============================================================ -->
@@ -322,324 +451,6 @@ output application/json
                 </ee:transform>
             </otherwise>
         </choice>
-    </flow>
-
-    <!-- ============================================================
-         Tool catalogue (definitions). Two variants:
-         - build-tools-list-mcp: official MCP shape, key "inputSchema" (camelCase),
-           top-level wrapper is { tools: [...] } (already MCP shape)
-         - build-tools-list-legacy: legacy custom shape, key "input_schema" (snake_case)
-         ============================================================ -->
-    <flow name="build-tools-list-mcp">
-        <ee:transform doc:name="MCP-shape tool definitions">
-            <ee:message>
-                <ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{
-  tools: [
-    {
-      name: "resolve_supplier",
-      description: "サプライヤー名/ヒントから ゴールデン ID を解決する。matched=false でも success で返す。",
-      inputSchema: {
-        "type": "object",
-        properties: {
-          supplierName: { "type": "string", description: "サプライヤー名(例: 関西部品)" },
-          hint:         { "type": "string", description: "追加文脈 [地域名、業種など]" }
-        },
-        required: ["supplierName"]
-      }
-    },
-    {
-      name: "get_supplier_relations",
-      description: "ゴールデン ID から親会社・子会社・過去インシデント・代替部品候補を取得する。",
-      inputSchema: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string", description: "ゴールデン ID(例: G-KANSAI-PARTS-001)" },
-          depth:            { "type": "integer", description: "関係の深さ(任意・既定 1、最大 2)" }
-        },
-        required: ["supplierGoldenId"]
-      }
-    },
-    {
-      name: "update_supplier_risk_score",
-      description: "サプライヤーのリスクスコア(0..1)を更新する。previousRiskScore を返す。",
-      inputSchema: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string" },
-          riskScore:        { "type": "number", description: "新しいスコア [0..1]" },
-          reason:           { "type": "string", description: "更新理由(任意)" },
-          incidentId:       { "type": "string", description: "紐付ける Incident__c.Name(任意)" }
-        },
-        required: ["supplierGoldenId", "riskScore"]
-      }
-    },
-    {
-      name: "update_ontology",
-      description: "Knowledge Graph に subject/predicate/object のトリプルを記録する。tripleId を返す。",
-      inputSchema: {
-        "type": "object",
-        properties: {
-          subject:    { "type": "string", description: "主語(例: ゴールデン ID)" },
-          predicate:  { "type": "string", description: "述語(例: hasRiskFactor)" },
-          "object":   { "type": "string", description: "目的語" },
-          incidentId: { "type": "string", description: "紐付ける Incident__c.Name(任意)" }
-        },
-        required: ["subject", "predicate", "object"]
-      }
-    },
-    {
-      name: "list_suppliers",
-      description: "条件指定 (region / status / リスクスコア範囲 / limit) でアクティブな取引先一覧を返す。region 未指定なら全 region。",
-      inputSchema: {
-        "type": "object",
-        properties: {
-          region:       { "type": "string", description: "Region__c の値 (例: 関西、 中部、 兵庫)。 完全一致。" },
-          status:       { "type": "string", description: "ACTIVE / INACTIVE / BLOCKED / ALL (既定 ACTIVE)" },
-          riskScoreMin: { "type": "number", description: "0..1 の下限。 省略時は無制限。" },
-          riskScoreMax: { "type": "number", description: "0..1 の上限。 省略時は無制限。" },
-          limit:        { "type": "integer", description: "1..200 (既定 50)" }
-        },
-        required: []
-      }
-    },
-    {
-      name: "list_regions",
-      description: "Supplier__c.Region__c に登録されているユニーク値と、各 region の ACTIVE 取引先件数を返す。",
-      inputSchema: {
-        "type": "object",
-        properties: {},
-        required: []
-      }
-    },
-    {
-      name: "list_parts",
-      description: "条件指定 (supplierGoldenId / category / location / nameLike / limit) で部品一覧を返す (READ-ONLY)。 既定 limit=10、 上限 50。 truncated=true なら絞り込み推奨。",
-      inputSchema: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string", description: "PrimarySupplier__c の GoldenId__c (例: G-TOHOKU-MET-001)。 完全一致。" },
-          category:         { "type": "string", description: "電力設備 / 機械部品 / 電子部品 / 素材 のいずれか。" },
-          location:         { "type": "string", description: "倉庫拠点コード (例: KOBE-W1)。 完全一致。" },
-          nameLike:         { "type": "string", description: "部品番号の部分一致 (例: TOH-500)。" },
-          limit:            { "type": "integer", description: "1..50 (既定 10)" }
-        },
-        required: []
-      }
-    },
-    {
-      name: "resolve_part",
-      description: "部品番号 (Part__c.Name) から部品詳細を 1 件解決 (READ-ONLY)。 在庫 / リードタイム / 主たるサプライヤー / 代替候補数を返す。",
-      inputSchema: {
-        "type": "object",
-        properties: {
-          partNumber: { "type": "string", description: "部品番号 (例: P-2024-TOH-500)。 完全一致。" }
-        },
-        required: ["partNumber"]
-      }
-    },
-    {
-      name: "list_part_alternatives",
-      description: "部品の代替品一覧を取得 (READ-ONLY)。 CompatibilityScore DESC で並ぶ。",
-      inputSchema: {
-        "type": "object",
-        properties: {
-          partNumber: { "type": "string", description: "オリジナル部品番号 (例: P-2024-TOH-500)。" },
-          limit:      { "type": "integer", description: "1..50 (既定 10)" }
-        },
-        required: ["partNumber"]
-      }
-    },
-    {
-      name: "find_suppliers_for_part",
-      description: "部品を供給可能なサプライヤー一覧 (主+代替経由) を返す (READ-ONLY)。 RiskScore ASC (低リスク優先) で並ぶ。 source='PRIMARY' or 'ALTERNATIVE'。",
-      inputSchema: {
-        "type": "object",
-        properties: {
-          partNumber: { "type": "string", description: "部品番号 (例: P-2024-TOH-500)。" },
-          limit:      { "type": "integer", description: "1..50 (既定 10)" }
-        },
-        required: ["partNumber"]
-      }
-    },
-    {
-      name: "list_incidents",
-      description: "インシデント一覧を取得 (READ-ONLY)。 ORDER BY CreatedDate DESC。 既定 limit=10、 上限 50。 truncated=true なら絞り込み推奨。",
-      inputSchema: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string", description: "Supplier__c.GoldenId__c で絞り込み。" },
-          partNumber:       { "type": "string", description: "Part__c.Name で絞り込み。" },
-          status:           { "type": "string", description: "OPEN / IN_PROGRESS / RESOLVED / ALL。" },
-          severity:         { "type": "string", description: "CRITICAL / HIGH / MEDIUM / LOW。" },
-          since:            { "type": "string", description: "ISO8601 日付 (例: 2026-05-01)。 これ以降の CreatedDate のみ。" },
-          limit:            { "type": "integer", description: "1..50 (既定 10)" }
-        },
-        required: []
-      }
-    }
-  ]
-}]]></ee:set-payload>
-            </ee:message>
-        </ee:transform>
-    </flow>
-
-    <flow name="build-tools-list-legacy">
-        <ee:transform doc:name="legacy-shape tool definitions">
-            <ee:message>
-                <ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{
-  tools: [
-    {
-      name: "resolve_supplier",
-      description: "サプライヤー名/ヒントから ゴールデン ID を解決する。matched=false でも success で返す。",
-      input_schema: {
-        "type": "object",
-        properties: {
-          supplierName: { "type": "string", description: "サプライヤー名(例: 関西部品)" },
-          hint:         { "type": "string", description: "追加文脈 [地域名、業種など]" }
-        },
-        required: ["supplierName"]
-      }
-    },
-    {
-      name: "get_supplier_relations",
-      description: "ゴールデン ID から親会社・子会社・過去インシデント・代替部品候補を取得する。",
-      input_schema: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string", description: "ゴールデン ID(例: G-KANSAI-PARTS-001)" },
-          depth:            { "type": "integer", description: "関係の深さ(任意・既定 1、最大 2)" }
-        },
-        required: ["supplierGoldenId"]
-      }
-    },
-    {
-      name: "update_supplier_risk_score",
-      description: "サプライヤーのリスクスコア(0..1)を更新する。previousRiskScore を返す。",
-      input_schema: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string" },
-          riskScore:        { "type": "number", description: "新しいスコア [0..1]" },
-          reason:           { "type": "string", description: "更新理由(任意)" },
-          incidentId:       { "type": "string", description: "紐付ける Incident__c.Name(任意)" }
-        },
-        required: ["supplierGoldenId", "riskScore"]
-      }
-    },
-    {
-      name: "update_ontology",
-      description: "Knowledge Graph に subject/predicate/object のトリプルを記録する。tripleId を返す。",
-      input_schema: {
-        "type": "object",
-        properties: {
-          subject:    { "type": "string", description: "主語(例: ゴールデン ID)" },
-          predicate:  { "type": "string", description: "述語(例: hasRiskFactor)" },
-          "object":   { "type": "string", description: "目的語" },
-          incidentId: { "type": "string", description: "紐付ける Incident__c.Name(任意)" }
-        },
-        required: ["subject", "predicate", "object"]
-      }
-    },
-    {
-      name: "list_suppliers",
-      description: "条件指定 (region / status / リスクスコア範囲 / limit) でアクティブな取引先一覧を返す。region 未指定なら全 region。",
-      input_schema: {
-        "type": "object",
-        properties: {
-          region:       { "type": "string", description: "Region__c の値 (例: 関西、 中部、 兵庫)。 完全一致。" },
-          status:       { "type": "string", description: "ACTIVE / INACTIVE / BLOCKED / ALL (既定 ACTIVE)" },
-          riskScoreMin: { "type": "number", description: "0..1 の下限。 省略時は無制限。" },
-          riskScoreMax: { "type": "number", description: "0..1 の上限。 省略時は無制限。" },
-          limit:        { "type": "integer", description: "1..200 (既定 50)" }
-        },
-        required: []
-      }
-    },
-    {
-      name: "list_regions",
-      description: "Supplier__c.Region__c に登録されているユニーク値と、各 region の ACTIVE 取引先件数を返す。",
-      input_schema: {
-        "type": "object",
-        properties: {},
-        required: []
-      }
-    },
-    {
-      name: "list_parts",
-      description: "条件指定 (supplierGoldenId / category / location / nameLike / limit) で部品一覧を返す (READ-ONLY)。 既定 limit=10、 上限 50。 truncated=true なら絞り込み推奨。",
-      input_schema: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string", description: "PrimarySupplier__c の GoldenId__c (例: G-TOHOKU-MET-001)。 完全一致。" },
-          category:         { "type": "string", description: "電力設備 / 機械部品 / 電子部品 / 素材 のいずれか。" },
-          location:         { "type": "string", description: "倉庫拠点コード (例: KOBE-W1)。 完全一致。" },
-          nameLike:         { "type": "string", description: "部品番号の部分一致 (例: TOH-500)。" },
-          limit:            { "type": "integer", description: "1..50 (既定 10)" }
-        },
-        required: []
-      }
-    },
-    {
-      name: "resolve_part",
-      description: "部品番号 (Part__c.Name) から部品詳細を 1 件解決 (READ-ONLY)。 在庫 / リードタイム / 主たるサプライヤー / 代替候補数を返す。",
-      input_schema: {
-        "type": "object",
-        properties: {
-          partNumber: { "type": "string", description: "部品番号 (例: P-2024-TOH-500)。 完全一致。" }
-        },
-        required: ["partNumber"]
-      }
-    },
-    {
-      name: "list_part_alternatives",
-      description: "部品の代替品一覧を取得 (READ-ONLY)。 CompatibilityScore DESC で並ぶ。",
-      input_schema: {
-        "type": "object",
-        properties: {
-          partNumber: { "type": "string", description: "オリジナル部品番号 (例: P-2024-TOH-500)。" },
-          limit:      { "type": "integer", description: "1..50 (既定 10)" }
-        },
-        required: ["partNumber"]
-      }
-    },
-    {
-      name: "find_suppliers_for_part",
-      description: "部品を供給可能なサプライヤー一覧 (主+代替経由) を返す (READ-ONLY)。 RiskScore ASC (低リスク優先) で並ぶ。 source='PRIMARY' or 'ALTERNATIVE'。",
-      input_schema: {
-        "type": "object",
-        properties: {
-          partNumber: { "type": "string", description: "部品番号 (例: P-2024-TOH-500)。" },
-          limit:      { "type": "integer", description: "1..50 (既定 10)" }
-        },
-        required: ["partNumber"]
-      }
-    },
-    {
-      name: "list_incidents",
-      description: "インシデント一覧を取得 (READ-ONLY)。 ORDER BY CreatedDate DESC。 既定 limit=10、 上限 50。 truncated=true なら絞り込み推奨。",
-      input_schema: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string", description: "Supplier__c.GoldenId__c で絞り込み。" },
-          partNumber:       { "type": "string", description: "Part__c.Name で絞り込み。" },
-          status:           { "type": "string", description: "OPEN / IN_PROGRESS / RESOLVED / ALL。" },
-          severity:         { "type": "string", description: "CRITICAL / HIGH / MEDIUM / LOW。" },
-          since:            { "type": "string", description: "ISO8601 日付 (例: 2026-05-01)。 これ以降の CreatedDate のみ。" },
-          limit:            { "type": "integer", description: "1..50 (既定 10)" }
-        },
-        required: []
-      }
-    }
-  ]
-}]]></ee:set-payload>
-            </ee:message>
-        </ee:transform>
     </flow>
 
     <!-- ============================================================
@@ -935,14 +746,16 @@ var status = attributes.statusCode default 0
         </ee:transform>
     </flow>
 
-    <flow name="get:\health:atelier-mcp-mdm-config">
+    <!-- GET /health -->
+    <flow name="health">
+        <http:listener config-ref="HTTP_Listener_config" path="/health">
+            <http:response statusCode="200"/>
+        </http:listener>
         <ee:transform>
-            <ee:message>
-                <ee:set-payload><![CDATA[%dw 2.0
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
 output application/json
 ---
-{ status: "UP", app: "atelier-mcp-mdm" }]]></ee:set-payload>
-            </ee:message>
+{ status: "UP", app: "atelier-mcp-mdm", transport: "streamable-http", mcpPath: "/mcp" }]]></ee:set-payload></ee:message>
         </ee:transform>
     </flow>
 

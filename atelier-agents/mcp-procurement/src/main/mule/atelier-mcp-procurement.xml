@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mule xmlns="http://www.mulesoft.org/schema/mule/core"
       xmlns:http="http://www.mulesoft.org/schema/mule/http"
-      xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+      xmlns:mcp="http://www.mulesoft.org/schema/mule/mcp"
       xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
       xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
       xsi:schemaLocation="
           http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
           http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
-          http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd
+          http://www.mulesoft.org/schema/mule/mcp http://www.mulesoft.org/schema/mule/mcp/current/mule-mcp.xsd
           http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
 
     <configuration-properties file="config.properties"/>
@@ -23,136 +23,134 @@
                                  protocol="${backend.procurement.protocol}"/>
     </http:request-config>
 
-    <apikit:config name="atelier-mcp-procurement-config"
-                   api="api/atelier-mcp-procurement.yaml"
-                   outboundHeadersMapName="outboundHeaders"
-                   httpStatusVarName="httpStatus"/>
+    <!-- ============================================================
+         MCP Server (Streamable HTTP transport)。 mule-mcp-connector が
+         /mcp で initialize / tools/list / tools/call / SSE / session 管理 /
+         notifications/initialized の 202 応答 を全部処理する。
+         ツールは <mcp:tool-listener> で宣言。 ビジネスロジック (backend 呼出) は
+         既存 sub-flow を流用する。
+         ============================================================ -->
+    <mcp:server-config name="MCP_Server_config"
+                       serverName="atelier-mcp-procurement"
+                       serverVersion="1.1.0">
+        <mcp:streamable-http-server-connection listenerConfig="HTTP_Listener_config"
+                                               mcpEndpointPath="/mcp"/>
+    </mcp:server-config>
 
-    <flow name="atelier-mcp-procurement-main">
-        <http:listener config-ref="HTTP_Listener_config" path="/*">
-            <http:response statusCode="#[vars.httpStatus default 200]">
-                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
-            </http:response>
-            <http:error-response statusCode="#[vars.httpStatus default 500]">
-                <http:body>#[payload]</http:body>
-                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
-            </http:error-response>
-        </http:listener>
-        <apikit:router config-ref="atelier-mcp-procurement-config"/>
-        <error-handler>
-            <on-error-propagate type="APIKIT:BAD_REQUEST">
-                <ee:transform>
-                    <ee:message><ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{ code: "BAD_REQUEST", message: error.description default (error.message default "bad request") }]]></ee:set-payload></ee:message>
-                    <ee:variables><ee:set-variable variableName="httpStatus">400</ee:set-variable></ee:variables>
-                </ee:transform>
-            </on-error-propagate>
-            <on-error-propagate type="APIKIT:NOT_FOUND">
-                <ee:transform>
-                    <ee:message><ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{ code: "NOT_FOUND", message: error.description default "resource not found" }]]></ee:set-payload></ee:message>
-                    <ee:variables><ee:set-variable variableName="httpStatus">404</ee:set-variable></ee:variables>
-                </ee:transform>
-            </on-error-propagate>
-            <on-error-propagate type="APIKIT:METHOD_NOT_ALLOWED">
-                <ee:transform>
-                    <ee:message><ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{ code: "METHOD_NOT_ALLOWED", message: error.description default "method not allowed" }]]></ee:set-payload></ee:message>
-                    <ee:variables><ee:set-variable variableName="httpStatus">405</ee:set-variable></ee:variables>
-                </ee:transform>
-            </on-error-propagate>
-        </error-handler>
+    <!-- ============================================================
+         MCP tool: get_alternative_parts
+         ============================================================ -->
+    <flow name="tool-get-alternative-parts-listener">
+        <mcp:tool-listener config-ref="MCP_Server_config" name="get_alternative_parts">
+            <mcp:description>代替部品候補を IDMC KG から取得する。互換スコア降順で返す。</mcp:description>
+            <mcp:parameters-schema><![CDATA[{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": { "partNumber": { "type": "string" } },
+  "required": ["partNumber"]
+}]]></mcp:parameters-schema>
+            <mcp:responses>
+                <mcp:text-tool-response-content text="#[write(vars.toolResult.result default vars.toolResult default {}, 'application/json') as String]"/>
+            </mcp:responses>
+            <mcp:on-error-responses>
+                <mcp:text-tool-response-content text="#['{&quot;code&quot;:&quot;TOOL_ERROR&quot;,&quot;message&quot;:&quot;' ++ (error.description default 'unknown') ++ '&quot;}']"/>
+            </mcp:on-error-responses>
+        </mcp:tool-listener>
+        <set-variable variableName="toolName" value="#['get_alternative_parts']"/>
+        <flow-ref name="normalize-tool-input"/>
+        <flow-ref name="tool-get-alternative-parts"/>
+        <set-variable variableName="toolResult" value="#[payload]"/>
     </flow>
 
-    <flow name="post:\mcp:application\json:atelier-mcp-procurement-config">
-        <ee:transform>
+    <!-- ============================================================
+         MCP tool: create_purchase_order_draft
+         ============================================================ -->
+    <flow name="tool-create-purchase-order-draft-listener">
+        <mcp:tool-listener config-ref="MCP_Server_config" name="create_purchase_order_draft">
+            <mcp:description>代替発注書ドラフトを生成する。Status=DRAFT で挿入し autonumber を draftId として返す。</mcp:description>
+            <mcp:parameters-schema><![CDATA[{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "partNumber":       { "type": "string" },
+    "quantity":         { "type": "integer" },
+    "supplierGoldenId": { "type": "string" },
+    "incidentId":       { "type": "string" },
+    "unitPrice":        { "type": "number" },
+    "notes":            { "type": "string" }
+  },
+  "required": ["partNumber", "quantity", "supplierGoldenId"]
+}]]></mcp:parameters-schema>
+            <mcp:responses>
+                <mcp:text-tool-response-content text="#[write(vars.toolResult.result default vars.toolResult default {}, 'application/json') as String]"/>
+            </mcp:responses>
+            <mcp:on-error-responses>
+                <mcp:text-tool-response-content text="#['{&quot;code&quot;:&quot;TOOL_ERROR&quot;,&quot;message&quot;:&quot;' ++ (error.description default 'unknown') ++ '&quot;}']"/>
+            </mcp:on-error-responses>
+        </mcp:tool-listener>
+        <set-variable variableName="toolName" value="#['create_purchase_order_draft']"/>
+        <flow-ref name="normalize-tool-input"/>
+        <flow-ref name="tool-create-purchase-order-draft"/>
+        <set-variable variableName="toolResult" value="#[payload]"/>
+    </flow>
+
+    <!-- ============================================================
+         MCP tool: notify_supplier
+         ============================================================ -->
+    <flow name="tool-notify-supplier-listener">
+        <mcp:tool-listener config-ref="MCP_Server_config" name="notify_supplier">
+            <mcp:description>サプライヤーへの連絡をキューする。発注・キャンセル・情報の 3 種別。</mcp:description>
+            <mcp:parameters-schema><![CDATA[{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "supplierGoldenId": { "type": "string" },
+    "type":             { "type": "string", "enum": ["ORDER", "CANCEL", "INFO"] },
+    "message":          { "type": "string" },
+    "incidentId":       { "type": "string" }
+  },
+  "required": ["supplierGoldenId", "type", "message"]
+}]]></mcp:parameters-schema>
+            <mcp:responses>
+                <mcp:text-tool-response-content text="#[write(vars.toolResult.result default vars.toolResult default {}, 'application/json') as String]"/>
+            </mcp:responses>
+            <mcp:on-error-responses>
+                <mcp:text-tool-response-content text="#['{&quot;code&quot;:&quot;TOOL_ERROR&quot;,&quot;message&quot;:&quot;' ++ (error.description default 'unknown') ++ '&quot;}']"/>
+            </mcp:on-error-responses>
+        </mcp:tool-listener>
+        <set-variable variableName="toolName" value="#['notify_supplier']"/>
+        <flow-ref name="normalize-tool-input"/>
+        <flow-ref name="tool-notify-supplier"/>
+        <set-variable variableName="toolResult" value="#[payload]"/>
+    </flow>
+
+    <!-- ============================================================
+         normalize-tool-input — MCP tool 引数 payload は特殊型なので、
+         write→read で純粋な JSON Map に正規化して vars.toolInput に入れる。
+         (output application/java で payload を直接書くと "No read/write handler"
+          の writer 罠を踏むため。 値は reader で読む。)
+         ============================================================ -->
+    <sub-flow name="normalize-tool-input">
+        <ee:transform doc:name="payload(MCP args) → vars.toolInput (clean Map)">
             <ee:variables>
-                <ee:set-variable variableName="rpcId"><![CDATA[%dw 2.0
+                <ee:set-variable variableName="toolInput"><![CDATA[%dw 2.0
 output application/java
 ---
-payload.id default null]]></ee:set-variable>
-                <ee:set-variable variableName="rpcMethod"><![CDATA[%dw 2.0
-output application/java
----
-(payload.method default "") as String]]></ee:set-variable>
-                <ee:set-variable variableName="rpcParams"><![CDATA[%dw 2.0
-output application/java
----
-payload.params default {}]]></ee:set-variable>
+read(write(payload default {}, "application/json"), "application/json")]]></ee:set-variable>
             </ee:variables>
         </ee:transform>
-        <choice>
-            <when expression='#[vars.rpcMethod == "initialize"]'>
-                <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{ jsonrpc: "2.0", id: vars.rpcId, result: { protocolVersion: "2025-03-26", serverInfo: { name: "atelier-mcp-procurement", version: "1.0.0" }, capabilities: { tools: { listChanged: false } } } }]]></ee:set-payload></ee:message></ee:transform>
-            </when>
-            <when expression='#[vars.rpcMethod == "notifications/initialized"]'>
-                <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{}]]></ee:set-payload></ee:message></ee:transform>
-            </when>
-            <when expression='#[vars.rpcMethod == "tools/list"]'>
-                <flow-ref name="build-tools-list-mcp"/>
-                <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{ jsonrpc: "2.0", id: vars.rpcId, result: payload }]]></ee:set-payload></ee:message></ee:transform>
-            </when>
-            <when expression='#[vars.rpcMethod == "tools/call"]'>
-                <ee:transform>
-                    <ee:variables>
-                        <ee:set-variable variableName="toolName"><![CDATA[%dw 2.0
-output application/java
----
-(vars.rpcParams.name default "") as String]]></ee:set-variable>
-                        <ee:set-variable variableName="toolInput"><![CDATA[%dw 2.0
-output application/java
----
-vars.rpcParams.arguments default {}]]></ee:set-variable>
-                    </ee:variables>
-                </ee:transform>
-                <flow-ref name="dispatch-tool"/>
-                <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
-output application/json
-var resultBody = payload.result default {}
-var isError = (payload.status default "") == "error"
----
-{ jsonrpc: "2.0", id: vars.rpcId, result: { content: [{ "type": "text", text: write(resultBody, "application/json") }], isError: isError } }]]></ee:set-payload></ee:message></ee:transform>
-            </when>
-            <otherwise>
-                <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{ jsonrpc: "2.0", id: vars.rpcId, error: { code: -32601, message: "Method not found: " ++ (vars.rpcMethod default "") } }]]></ee:set-payload></ee:message></ee:transform>
-            </otherwise>
-        </choice>
-    </flow>
+    </sub-flow>
 
-    <flow name="get:\mcp:atelier-mcp-procurement-config">
-        <ee:transform>
-            <ee:message><ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{ code: "METHOD_NOT_ALLOWED", message: "server-initiated stream not supported" }]]></ee:set-payload></ee:message>
-            <ee:variables><ee:set-variable variableName="httpStatus">405</ee:set-variable></ee:variables>
-        </ee:transform>
-    </flow>
-
-    <flow name="get:\mcp\tools:atelier-mcp-procurement-config">
-        <flow-ref name="build-tools-list-legacy"/>
-    </flow>
-
-    <flow name="post:\mcp\execute:application\json:atelier-mcp-procurement-config">
-        <ee:transform>
+    <!-- ============================================================
+         互換経路: agent が叩く簡易 REST。
+         POST /mcp/execute { toolName, input } → { status, tool, result }
+         MCP Connector 化後も agent は無改修でこの経路を使える。
+         ============================================================ -->
+    <flow name="mcp-execute-compat">
+        <http:listener config-ref="HTTP_Listener_config" path="/mcp/execute">
+            <http:response statusCode="200"/>
+        </http:listener>
+        <ee:transform doc:name="extract toolName / input">
             <ee:variables>
                 <ee:set-variable variableName="toolName"><![CDATA[%dw 2.0
 output application/java
@@ -167,104 +165,7 @@ payload."input" default {}]]></ee:set-variable>
         <flow-ref name="dispatch-tool"/>
     </flow>
 
-    <flow name="build-tools-list-mcp">
-        <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{
-  tools: [
-    {
-      name: "get_alternative_parts",
-      description: "代替部品候補を IDMC KG から取得する。互換スコア降順で返す。",
-      inputSchema: {
-        "type": "object",
-        properties: { partNumber: { "type": "string" } },
-        required: ["partNumber"]
-      }
-    },
-    {
-      name: "create_purchase_order_draft",
-      description: "代替発注書ドラフトを生成する。Status=DRAFT で挿入し autonumber を draftId として返す。",
-      inputSchema: {
-        "type": "object",
-        properties: {
-          partNumber:       { "type": "string" },
-          quantity:         { "type": "integer" },
-          supplierGoldenId: { "type": "string" },
-          incidentId:       { "type": "string" },
-          unitPrice:        { "type": "number" },
-          notes:            { "type": "string" }
-        },
-        required: ["partNumber", "quantity", "supplierGoldenId"]
-      }
-    },
-    {
-      name: "notify_supplier",
-      description: "サプライヤーへの連絡をキューする。発注・キャンセル・情報の 3 種別。",
-      inputSchema: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string" },
-          "type":           { "type": "string", "enum": ["ORDER", "CANCEL", "INFO"] },
-          message:          { "type": "string" },
-          incidentId:       { "type": "string" }
-        },
-        required: ["supplierGoldenId", "type", "message"]
-      }
-    }
-  ]
-}]]></ee:set-payload></ee:message></ee:transform>
-    </flow>
-
-    <flow name="build-tools-list-legacy">
-        <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{
-  tools: [
-    {
-      name: "get_alternative_parts",
-      description: "代替部品候補を IDMC KG から取得する。互換スコア降順で返す。",
-      input_schema: {
-        "type": "object",
-        properties: { partNumber: { "type": "string" } },
-        required: ["partNumber"]
-      }
-    },
-    {
-      name: "create_purchase_order_draft",
-      description: "代替発注書ドラフトを生成する。Status=DRAFT で挿入し autonumber を draftId として返す。",
-      input_schema: {
-        "type": "object",
-        properties: {
-          partNumber:       { "type": "string" },
-          quantity:         { "type": "integer" },
-          supplierGoldenId: { "type": "string" },
-          incidentId:       { "type": "string" },
-          unitPrice:        { "type": "number" },
-          notes:            { "type": "string" }
-        },
-        required: ["partNumber", "quantity", "supplierGoldenId"]
-      }
-    },
-    {
-      name: "notify_supplier",
-      description: "サプライヤーへの連絡をキューする。発注・キャンセル・情報の 3 種別。",
-      input_schema: {
-        "type": "object",
-        properties: {
-          supplierGoldenId: { "type": "string" },
-          "type":           { "type": "string", "enum": ["ORDER", "CANCEL", "INFO"] },
-          message:          { "type": "string" },
-          incidentId:       { "type": "string" }
-        },
-        required: ["supplierGoldenId", "type", "message"]
-      }
-    }
-  ]
-}]]></ee:set-payload></ee:message></ee:transform>
-    </flow>
-
+    <!-- dispatch-tool — toolName で各ツール sub-flow へ。 /mcp/execute から使う。 -->
     <flow name="dispatch-tool">
         <choice>
             <when expression='#[vars.toolName == "get_alternative_parts"]'>
@@ -285,7 +186,12 @@ output application/json
         </choice>
     </flow>
 
-    <flow name="tool-get-alternative-parts">
+    <!-- ============================================================
+         ツールのビジネスロジック (procurement-system backend 呼出 + 整形)。
+         APIKit 版からそのまま流用。 vars.toolName / vars.toolInput を読む。
+         結果は payload = { status, tool, result }。
+         ============================================================ -->
+    <sub-flow name="tool-get-alternative-parts">
         <ee:transform>
             <ee:variables>
                 <ee:set-variable variableName="qp"><![CDATA[%dw 2.0
@@ -301,9 +207,9 @@ output application/java
             </http:response-validator>
         </http:request>
         <flow-ref name="wrap-system-response"/>
-    </flow>
+    </sub-flow>
 
-    <flow name="tool-create-purchase-order-draft">
+    <sub-flow name="tool-create-purchase-order-draft">
         <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
 output application/json
 ---
@@ -315,9 +221,9 @@ vars.toolInput]]></ee:set-payload></ee:message></ee:transform>
             </http:response-validator>
         </http:request>
         <flow-ref name="wrap-system-response"/>
-    </flow>
+    </sub-flow>
 
-    <flow name="tool-notify-supplier">
+    <sub-flow name="tool-notify-supplier">
         <ee:transform><ee:message><ee:set-payload><![CDATA[%dw 2.0
 output application/json
 ---
@@ -329,24 +235,43 @@ vars.toolInput]]></ee:set-payload></ee:message></ee:transform>
             </http:response-validator>
         </http:request>
         <flow-ref name="wrap-system-response"/>
-    </flow>
+    </sub-flow>
 
-    <flow name="wrap-system-response">
+    <sub-flow name="wrap-system-response">
         <ee:transform>
-            <ee:message><ee:set-payload><![CDATA[%dw 2.0
-output application/json
-var status = attributes.statusCode default 0
+            <ee:variables>
+                <ee:set-variable variableName="status"><![CDATA[%dw 2.0
+output application/java
 ---
-{ status: (if (status >= 200 and status < 300) "success" else "error"), tool: vars.toolName, result: (payload default {}) }]]></ee:set-payload></ee:message>
+(attributes.statusCode default 0) as Number]]></ee:set-variable>
+                <ee:set-variable variableName="bodyObj"><![CDATA[%dw 2.0
+output application/java
+fun safeReadJson(s) = if (s == null or trim(s) == "") {} else read(s, "application/json")
+---
+if (payload == null) {}
+else if (payload is Binary) safeReadJson(payload as String { encoding: "UTF-8" })
+else if (payload is String) safeReadJson(payload)
+else payload]]></ee:set-variable>
+            </ee:variables>
         </ee:transform>
-    </flow>
-
-    <flow name="get:\health:atelier-mcp-procurement-config">
         <ee:transform>
             <ee:message><ee:set-payload><![CDATA[%dw 2.0
 output application/json
 ---
-{ status: "UP", app: "atelier-mcp-procurement" }]]></ee:set-payload></ee:message>
+{ status: (if ((vars.status default 0) >= 200 and (vars.status default 0) < 300) "success" else "error"), tool: vars.toolName, result: vars.bodyObj default {} }]]></ee:set-payload></ee:message>
+        </ee:transform>
+    </sub-flow>
+
+    <!-- GET /health -->
+    <flow name="health">
+        <http:listener config-ref="HTTP_Listener_config" path="/health">
+            <http:response statusCode="200"/>
+        </http:listener>
+        <ee:transform>
+            <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ status: "UP", app: "atelier-mcp-procurement", transport: "streamable-http", mcpPath: "/mcp" }]]></ee:set-payload></ee:message>
         </ee:transform>
     </flow>
 

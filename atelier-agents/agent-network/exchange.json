@@ -1,7 +1,7 @@
 {
   "groupId": "4283bf7b-276e-44bc-8c6b-bd9b622d42b4",
   "assetId": "atelier-agent-network",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "name": "Atelier SCRS Agent Network (StepB)",
   "description": "Atelier SCRS demo: atelier-broker (LLM, gpt-5-mini) -> 5 A2A worker agents (incident/legal/procurement/logistics/org on StepA shard d7gr5m, no-LLM) + MDM MCP tool. Broker-ful counterpart to scenario A1.",
   "classifier": "agent-network",

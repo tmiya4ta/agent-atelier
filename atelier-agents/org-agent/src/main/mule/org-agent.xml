@@ -2,6 +2,7 @@
 <mule xmlns="http://www.mulesoft.org/schema/mule/core"
       xmlns:http="http://www.mulesoft.org/schema/mule/http"
       xmlns:a2a="http://www.mulesoft.org/schema/mule/a2a"
+      xmlns:mcp="http://www.mulesoft.org/schema/mule/mcp"
       xmlns:os="http://www.mulesoft.org/schema/mule/os"
       xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
       xmlns:jmx="http://www.mulesoft.org/schema/mule/jmx"
@@ -11,6 +12,7 @@
           http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
           http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
           http://www.mulesoft.org/schema/mule/a2a http://www.mulesoft.org/schema/mule/a2a/current/mule-a2a.xsd
+          http://www.mulesoft.org/schema/mule/mcp http://www.mulesoft.org/schema/mule/mcp/current/mule-mcp.xsd
           http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
           http://www.mulesoft.org/schema/mule/jmx http://www.mulesoft.org/schema/mule/jmx/current/mule-jmx.xsd
           http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
@@ -68,6 +70,21 @@
     <http:request-config name="MDM_MCP_Request_config" basePath="/">
         <http:request-connection host="${mcp.mdm.host}" port="${mcp.mdm.port}" protocol="${mcp.mdm.protocol}"/>
     </http:request-config>
+
+    <!-- ============================================================
+         MCP client (Streamable HTTP, mule-mcp-connector)。送信専用。
+         A2A の HTTP listener とは独立 (probe-a2a-mcp で共存実証済)。
+         mcp:call-tool が initialize→session→tools/call を自動処理する。
+         ============================================================ -->
+    <mcp:client-config name="HR_MCP_Client" clientName="atelier-org-agent" clientVersion="1.0.0">
+        <mcp:streamable-http-client-connection serverUrl="${mcp.hr.url}"
+                                               mcpEndpointPath="${mcp.endpoint.path}"/>
+    </mcp:client-config>
+
+    <mcp:client-config name="MDM_MCP_Client" clientName="atelier-org-agent" clientVersion="1.0.0">
+        <mcp:streamable-http-client-connection serverUrl="${mcp.mdm.url}"
+                                               mcpEndpointPath="${mcp.endpoint.path}"/>
+    </mcp:client-config>
 
     <jmx:config name="JMX_Config" logBufferSize="5000"/>
 
@@ -836,76 +853,60 @@ write({ status: "ok", agent: "atelier-org-agent", mode: "direct", tool: (vars.to
         </choice>
     </sub-flow>
 
+    <!-- ============================================================
+         MCP 呼び出し (Streamable HTTP, mcp:call-tool)。
+         旧: http:request POST /mcp/execute (plain REST) を connector 化。
+         mcp:call-tool の戻り (payload) は MCP tool response の text content を
+         connector が JSON parse した Object = MCP server 側 tool-listener が返す
+         「result 部分」そのもの (atelier-mcp-* の text は write(toolResult.result...))。
+         下流は vars.toolResult.result / .status を参照するので {status,tool,result}
+         形に再ラップして互換を保つ。
+         ============================================================ -->
     <sub-flow name="callMcpExecuteFlow">
-        <ee:transform>
-            <ee:message>
-                <ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{
-  toolName: (vars.toolName default "") as String,
-  "input":  (vars.toolArgs default {})
-}]]></ee:set-payload>
-            </ee:message>
-        </ee:transform>
         <try>
             <choice>
                 <when expression="#[(vars.mcpKind default '') == 'mdm']">
-                    <http:request method="POST" path="/mcp/execute" config-ref="MDM_MCP_Request_config">
-                        <http:body>#[payload]</http:body>
-                        <http:response-validator>
-                            <http:success-status-code-validator values="0..599"/>
-                        </http:response-validator>
-                    </http:request>
+                    <mcp:call-tool config-ref="MDM_MCP_Client" toolName="#[vars.toolName]" target="mcpRaw">
+                        <mcp:arguments>#[vars.toolArgs default {}]</mcp:arguments>
+                    </mcp:call-tool>
                 </when>
                 <when expression="#[(vars.mcpKind default '') == 'hr']">
-                    <http:request method="POST" path="/mcp/execute" config-ref="HR_MCP_Request_config">
-                        <http:body>#[payload]</http:body>
-                        <http:response-validator>
-                            <http:success-status-code-validator values="0..599"/>
-                        </http:response-validator>
-                    </http:request>
+                    <mcp:call-tool config-ref="HR_MCP_Client" toolName="#[vars.toolName]" target="mcpRaw">
+                        <mcp:arguments>#[vars.toolArgs default {}]</mcp:arguments>
+                    </mcp:call-tool>
                 </when>
                 <otherwise>
-                    <ee:transform>
-                        <ee:message>
-                            <ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{ status: "error", tool: (vars.toolName default "") as String, result: { code: "UNKNOWN_TOOL", message: "no MCP for tool: " ++ (vars.toolName default "") } }]]></ee:set-payload>
-                        </ee:message>
-                    </ee:transform>
+                    <set-variable variableName="mcpRaw" value='#[{ code: "UNKNOWN_TOOL", message: "no MCP for tool: " ++ (vars.toolName default "") }]'/>
                 </otherwise>
             </choice>
+            <ee:transform doc:name="wrap call-tool result → {status,tool,result}">
+                <ee:variables>
+                    <ee:set-variable variableName="toolResult"><![CDATA[%dw 2.0
+output application/java
+fun normalize(p) =
+  if (p == null) {}
+  else if (p is Binary) read(p as String { encoding: "UTF-8" }, "application/json")
+  else if (p is String) (if (trim(p as String) == "") {} else read(p as String, "application/json"))
+  else p
+---
+{ status: "ok", tool: (vars.toolName default "") as String, result: normalize(vars.mcpRaw) }]]></ee:set-variable>
+                </ee:variables>
+            </ee:transform>
             <error-handler>
                 <on-error-continue type="ANY">
-                    <ee:transform>
-                        <ee:message>
-                            <ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{ status: "error", tool: (vars.toolName default "") as String, result: { code: "MCP_CALL_FAILED", message: (error.description default error.message default "unknown") as String } }]]></ee:set-payload>
-                        </ee:message>
-                    </ee:transform>
                     <logger level="WARN"
-                            message="#['MCP call failed kind=' ++ (vars.mcpKind default '') ++ ' tool=' ++ (vars.toolName default '') ++ ' err=' ++ (error.description default error.message default 'unknown')]"/>
+                            message="#['MCP call-tool failed kind=' ++ (vars.mcpKind default '') ++ ' tool=' ++ (vars.toolName default '') ++ ' err=' ++ (error.description default error.message default 'unknown')]"/>
+                    <ee:transform>
+                        <ee:variables>
+                            <ee:set-variable variableName="toolResult"><![CDATA[%dw 2.0
+output application/java
+---
+{ status: "error", tool: (vars.toolName default "") as String, result: { code: "MCP_CALL_FAILED", message: (error.description default error.message default "unknown") as String } }]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
                 </on-error-continue>
             </error-handler>
         </try>
-        <ee:transform>
-            <ee:variables>
-                <ee:set-variable variableName="toolResult"><![CDATA[%dw 2.0
-output application/java
-fun safeReadJson(s: String) =
-  if (s == null or trim(s) == "") {}
-  else read(s, "application/json")
----
-if (payload == null) {}
-else if (payload is Binary) safeReadJson(payload as String { encoding: "UTF-8" })
-else if (payload is String) safeReadJson(payload as String)
-else payload]]></ee:set-variable>
-            </ee:variables>
-        </ee:transform>
     </sub-flow>
 
     <sub-flow name="loadMemoryFlow">

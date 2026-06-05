@@ -1,4 +1,5 @@
 {
   "minMuleVersion": "4.9.8",
+  "requiredProduct": "MULE_EE",
   "javaSpecificationVersions": ["17"]
 }

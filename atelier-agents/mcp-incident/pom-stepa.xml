@@ -6,7 +6,7 @@
 
     <groupId>4283bf7b-276e-44bc-8c6b-bd9b622d42b4</groupId>
     <artifactId>atelier-mcp-incident</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.1</version>
     <packaging>mule-application</packaging>
 
     <name>atelier-mcp-incident</name>
@@ -66,9 +66,9 @@
             <classifier>mule-plugin</classifier>
         </dependency>
         <dependency>
-            <groupId>org.mule.modules</groupId>
-            <artifactId>mule-apikit-module</artifactId>
-            <version>1.11.17</version>
+            <groupId>com.mulesoft.connectors</groupId>
+            <artifactId>mule-mcp-connector</artifactId>
+            <version>1.5.0</version>
             <classifier>mule-plugin</classifier>
         </dependency>
     </dependencies>

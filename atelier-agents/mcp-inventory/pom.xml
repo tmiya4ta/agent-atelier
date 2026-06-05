@@ -4,9 +4,9 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>fe1db8fb-8261-4b5c-a591-06fea582f980</groupId>
+    <groupId>4283bf7b-276e-44bc-8c6b-bd9b622d42b4</groupId>
     <artifactId>atelier-mcp-inventory</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <packaging>mule-application</packaging>
 
     <name>atelier-mcp-inventory</name>
@@ -17,9 +17,9 @@
         <app.runtime>4.9.8</app.runtime>
         <mule.maven.plugin.version>4.9.1</mule.maven.plugin.version>
 
-        <anypoint.businessGroup>MuleSoft\T1</anypoint.businessGroup>
-        <anypoint.environment>Sandbox</anypoint.environment>
-        <anypoint.targetSpace>rootps</anypoint.targetSpace>
+        <anypoint.businessGroup>Salesforce</anypoint.businessGroup>
+        <anypoint.environment>StepA</anypoint.environment>
+        <anypoint.targetSpace>BetterTogetherDemo</anypoint.targetSpace>
     </properties>
 
     <build>
@@ -33,8 +33,9 @@
                     <classifier>mule-application</classifier>
                     <cloudhub2Deployment>
                         <muleVersion>${app.runtime}</muleVersion>
-                        <username>${anypoint.username}</username>
-                        <password>${anypoint.password}</password>
+                        <connectedAppClientId>${anypoint.connectedApp.clientId}</connectedAppClientId>
+                        <connectedAppClientSecret>${anypoint.connectedApp.clientSecret}</connectedAppClientSecret>
+                        <connectedAppGrantType>client_credentials</connectedAppGrantType>
                         <businessGroup>${anypoint.businessGroup}</businessGroup>
                         <environment>${anypoint.environment}</environment>
                         <target>${anypoint.targetSpace}</target>
@@ -65,9 +66,9 @@
             <classifier>mule-plugin</classifier>
         </dependency>
         <dependency>
-            <groupId>org.mule.modules</groupId>
-            <artifactId>mule-apikit-module</artifactId>
-            <version>1.11.17</version>
+            <groupId>com.mulesoft.connectors</groupId>
+            <artifactId>mule-mcp-connector</artifactId>
+            <version>1.5.0</version>
             <classifier>mule-plugin</classifier>
         </dependency>
     </dependencies>
@@ -76,7 +77,7 @@
         <repository>
             <id>anypoint-exchange-v3</id>
             <name>Anypoint Exchange v3</name>
-            <url>https://maven.anypoint.mulesoft.com/api/v3/organizations/fe1db8fb-8261-4b5c-a591-06fea582f980/maven</url>
+            <url>https://maven.anypoint.mulesoft.com/api/v3/organizations/4283bf7b-276e-44bc-8c6b-bd9b622d42b4/maven</url>
             <layout>default</layout>
         </repository>
     </distributionManagement>

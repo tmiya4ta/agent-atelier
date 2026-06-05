@@ -1,15 +1,1 @@
-{
-  "minMuleVersion": "4.9.8",
-  "name": "atelier-mcp-contract",
-  "requiredProduct": "MULE",
-  "classLoaderModelLoaderDescriptor": {
-    "id": "mule",
-    "attributes": {
-      "exportedResources": []
-    }
-  },
-  "bundleDescriptorLoader": {
-    "id": "mule",
-    "attributes": {}
-  }
-}
+{"minMuleVersion":"4.9.8","name":"atelier-mcp-contract","requiredProduct":"MULE_EE","javaSpecificationVersions":["17"]}
