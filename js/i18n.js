@@ -70,6 +70,7 @@ export const STRINGS = {
     "side.protocols":       "PROTOCOLS",
     "side.bookmarks.empty": "Bookmark via the ☆ on each window header",
     "side.catalogs.empty":  "+ to add a catalog (Anypoint Platform)",
+    "side.identities.empty": "+ to add an identity (IdP credential)",
     "side.scripts.empty":   "+ to create a scenario (manage multiple)",
     "side.localTime":       "local time",
     "side.kbd.newConn":     "new connection",

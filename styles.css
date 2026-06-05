@@ -46,7 +46,9 @@
   /* ─── Geometry ─── */
   --rail-h:     54px;
   --tabs-h:     38px;
-  --side-w:    288px;
+  --side-rail-w:  48px;
+  --side-panel-w: 240px;
+  --side-w:    calc(var(--side-rail-w) + var(--side-panel-w));   /* 288px — drawer/grid 互換のため合計幅は不変 */
   --radius:      6px;
   --radius-lg:  10px;
   --radius-xl:  14px;
@@ -505,18 +507,66 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .sidebar {
   grid-area: side;
   display: flex; flex-direction: column;
-  padding: 18px 0 0;
+  padding: 0;
   border-right: 1px solid var(--line);
   background: var(--panel-soft);
   overflow: hidden;
   position: relative;
   z-index: 20;
 }
+/* rail + panel を横並びにする内側コンテナ (footer はこの下に独立) */
+.side-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+}
+
+/* ─── 左端アイコンレール (Activity Bar) ─── */
+.side-rail {
+  flex: 0 0 var(--side-rail-w);
+  width: var(--side-rail-w);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 0;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+}
+.rail-ico {
+  position: relative;
+  display: grid; place-items: center;
+  width: 34px; height: 34px;
+  color: var(--ink-3);
+  border-radius: 7px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.rail-ico:hover { color: var(--ink); background: var(--panel-soft); }
+.rail-ico.is-active { color: var(--ink-navy-2); background: var(--panel-soft); }
+/* アクティブ時の左端アクセントバー */
+.rail-ico.is-active::before {
+  content: "";
+  position: absolute; left: -7px; top: 7px; bottom: 7px;
+  width: 2.5px; border-radius: 2px;
+  background: var(--ink-navy-2);
+}
+
+/* ─── 右パネル ─── */
+.side-panel {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding-top: 18px;
+}
 .side-scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
 }
+/* カテゴリ切替: hidden は [hidden] グローバルルールで display:none */
+.side-cat { display: block; }
 
 .side-sec { padding: 0 14px 14px; }
 .side-sec + .side-sec {
@@ -1385,6 +1435,7 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 
 /* ─── Catalog list ─── */
 .catalog-list { display: flex; flex-direction: column; gap: 3px; }
+.identity-list { display: flex; flex-direction: column; gap: 3px; }
 .catalog-item {
   display: grid;
   grid-template-columns: 1fr auto auto auto;
@@ -1565,9 +1616,8 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 /* ─── Agent list ─── */
 .agent-list { display: flex; flex-direction: column; gap: 2px; }
 .agent-item {
-  display: grid;
-  /* chevron / proto-badge / agent-name / bm-count / new-btn / remove-btn */
-  grid-template-columns: 16px auto 1fr auto auto auto;
+  display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 6px;
   padding: 6px 8px 6px 6px;
@@ -1577,6 +1627,13 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   position: relative;
   cursor: grab;
 }
+/* 名前だけ伸縮、 他 (chevron/badge/count/buttons) は固定幅で折り返さない */
+.agent-item .agent-name { flex: 1 1 auto; min-width: 0; }
+.agent-item .conn-toggle,
+.agent-item .conn-proto-badge,
+.agent-item .bm-count,
+.agent-item .bookmark-new,
+.agent-item .row-kebab { flex: 0 0 auto; }
 .agent-item:active { cursor: grabbing; }
 /* DnD: 移動中のアイテムは半透明 */
 .agent-item.is-dragging {
@@ -1706,8 +1763,8 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   opacity: 0;
 }
 .bookmark-child {
-  display: grid;
-  grid-template-columns: 14px 1fr auto;
+  display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 6px;
   padding: 3px 8px 3px 4px;
@@ -1739,7 +1796,11 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   color: var(--accent-ink);
   border-color: var(--accent);
 }
-.bc-branch { color: var(--ink-4); }
+.bc-branch { color: var(--ink-4); flex: 0 0 auto; }
+.bookmark-child .bc-name { flex: 1 1 auto; min-width: 0; }
+.bookmark-child .bc-ws,
+.bookmark-child .bc-id,
+.bookmark-child .bc-remove { flex: 0 0 auto; }
 .bookmark-child:hover .bc-branch { color: var(--accent); }
 .bc-id     { color: var(--accent-ink); font-weight: 600; letter-spacing: 0.02em; }
 .bc-name   { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -0.005em; }
@@ -1843,6 +1904,47 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .agent-item:hover   .agent-remove,
 .catalog-item:hover .agent-remove { opacity: 0.55; }
 .agent-remove:hover { background: var(--warn-soft); color: var(--warn) !important; opacity: 1 !important; }
+
+/* 行末の常時表示ケバブ (⋮) ボタン — 全リスト共通。1 個だけなので行高が安定する。 */
+.row-kebab {
+  display: grid; place-items: center;
+  width: 20px; height: 20px;
+  color: var(--ink-4);
+  border-radius: 3px;
+  opacity: 0.45;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+  flex-shrink: 0;
+}
+.agent-item:hover   .row-kebab,
+.catalog-item:hover .row-kebab,
+.script-item:hover  .row-kebab { opacity: 0.7; }
+.row-kebab:hover { background: var(--panel); color: var(--ink) !important; opacity: 1 !important; }
+
+/* 行メニュー popover (Edit / Delete 等) */
+.row-menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 148px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  display: flex; flex-direction: column; gap: 1px;
+  animation: dlg-fade 0.12s ease;
+}
+.row-menu-item {
+  text-align: left;
+  padding: 7px 10px;
+  font-size: calc(12px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink);
+  border-radius: 5px;
+  white-space: nowrap;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+.row-menu-item:hover { background: var(--panel-soft); }
+.row-menu-item.is-danger { color: var(--warn); }
+.row-menu-item.is-danger:hover { background: var(--warn-soft); }
 
 /* ─── Proto list ─── */
 .proto-list { display: flex; flex-direction: column; gap: 3px; }
@@ -3876,6 +3978,18 @@ body.is-dark .tk-mock-text { color: #C8A85A; }
 @keyframes dlg-fade { from { opacity: 0; } to { opacity: 1; } }
 .dialog-backdrop[hidden] { display: none; }
 
+/* identity ダイアログは method / advanced でフィールド数が変わる。
+   上端を固定して「下方向にだけ伸びる」よう上寄せにする (中央寄せだと
+   高さ変化で上端も動いてガタつくため)。 はみ出したらスクロール。 */
+#identityDialog {
+  display: flex;
+  flex-direction: column;
+  align-items: center;       /* 横は中央 */
+  justify-content: flex-start;/* 縦は上寄せ → 下方向に伸びる */
+  overflow-y: auto;
+}
+#identityDialog .dialog { margin-top: 14vh; flex: 0 0 auto; }
+
 .dialog {
   width: min(560px, 92vw);
   background: var(--panel);
@@ -3926,7 +4040,9 @@ body.is-dark .tk-mock-text { color: #C8A85A; }
 .field-hint { color: var(--ink-4); letter-spacing: 0.04em; text-transform: none; font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1)); font-family: var(--f-ui); }
 
 .field input[type="text"],
-.field input[type="password"] {
+.field input[type="password"],
+.field select,
+.field textarea {
   padding: 9px 11px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -3936,10 +4052,27 @@ body.is-dark .tk-mock-text { color: #C8A85A; }
   color: var(--ink);
   transition: border-color 0.15s ease;
 }
+.field textarea {
+  resize: vertical;
+  line-height: 1.5;
+  min-height: 80px;
+}
+.field select {
+  cursor: pointer;
+}
+/* provider プリセット適用中の url 欄 (readonly): 編集不可を示す薄表示 */
+.field input.is-readonly {
+  color: var(--ink-3);
+  background: var(--panel-soft);
+  cursor: default;
+}
 .field input[type="text"]:focus,
-.field input[type="password"]:focus { border-color: var(--ink); }
+.field input[type="password"]:focus,
+.field select:focus,
+.field textarea:focus { border-color: var(--ink); }
 .field input[type="text"]::placeholder,
-.field input[type="password"]::placeholder { color: var(--ink-4); }
+.field input[type="password"]::placeholder,
+.field textarea::placeholder { color: var(--ink-4); }
 
 .input-with-toggle {
   position: relative;

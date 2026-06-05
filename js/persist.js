@@ -15,7 +15,7 @@ const SECRETS_KEY = "atelier:secrets:v1";
 const VERSION = 1;
 
 // 機微フィールドのキー名 (catalogs / window config / bookmarks / oauth state 共通)
-const SENSITIVE_FIELDS = ["auth", "clientSecret", "accessToken", "refreshToken", "tokenExpiresAt"];
+const SENSITIVE_FIELDS = ["auth", "token", "assertion", "clientSecret", "accessToken", "refreshToken", "tokenExpiresAt"];
 
 // オブジェクトから secrets を分離して { sanitized, secrets } を返す。
 // secrets は元 obj を識別するキー (cat-id / bookmark-key / window-key) で索引する。
@@ -81,6 +81,7 @@ function snapshotWindow(win) {
       name:    cfg.name,
       // auth は sessionStorage 行き — localStorage には空文字で残す (load 側で再合流)
       auth:    "",
+      authRef: cfg.authRef,   // identity 参照 (非 secret)
       persona: cfg.persona,
       channel: cfg.channel
     },
@@ -105,6 +106,12 @@ export function save(state) {
       if (sec) setSecretEntry("catalogs", idKey, sec.secrets);
       return stripSecrets(c);
     });
+    const sanitizedIdentities = (state.identities || []).map(idn => {
+      const idKey = idn.id;
+      const sec = extractSecrets(idn, idKey);
+      if (sec) setSecretEntry("identities", idKey, sec.secrets);
+      return stripSecrets(idn);
+    });
     const sanitizedBookmarks = (state.bookmarks || []).map(b => {
       const idKey = b.key || `${b.protoId}::${b.url || ""}`;
       const sec = extractSecrets(b, idKey);
@@ -117,6 +124,8 @@ export function save(state) {
       zoom: state.zoom ?? 1.0,
       sidebarCollapsed: !!state.sidebarCollapsed,
       theme: state.theme === "dark" ? "dark" : "light",
+      activeSideCat: state.activeSideCat || "connections",
+      identities: sanitizedIdentities,
       catalogs:  sanitizedCatalogs,
       scripts:   state.scripts   || [],
       selectedScriptId: state.selectedScriptId || null,
@@ -137,10 +146,14 @@ export function save(state) {
 
 // 機微情報 hydration: load 時に sessionStorage から secrets を取り出して state に再合流する。
 // app.js の restore フローから明示呼び出し。
-export function hydrateSecrets(catalogs, bookmarks) {
+export function hydrateSecrets(catalogs, bookmarks, identities) {
   for (const c of (catalogs || [])) {
     const sec = getSecretEntry("catalogs", c.id);
     if (sec) Object.assign(c, sec);
+  }
+  for (const idn of (identities || [])) {
+    const sec = getSecretEntry("identities", idn.id);
+    if (sec) Object.assign(idn, sec);
   }
   for (const b of (bookmarks || [])) {
     const idKey = b.key || `${b.protoId}::${b.url || ""}`;
@@ -189,8 +202,9 @@ export function exportJson() {
   const raw = localStorage.getItem(KEY);
   const state = raw ? JSON.parse(raw) : { v: VERSION };
   // localStorage 上の state は既に save() で secrets 抜きだが、 念のため再度 strip。
-  if (Array.isArray(state.catalogs))  state.catalogs  = state.catalogs.map(stripSecrets);
-  if (Array.isArray(state.bookmarks)) state.bookmarks = state.bookmarks.map(stripSecrets);
+  if (Array.isArray(state.catalogs))   state.catalogs   = state.catalogs.map(stripSecrets);
+  if (Array.isArray(state.identities)) state.identities = state.identities.map(stripSecrets);
+  if (Array.isArray(state.bookmarks))  state.bookmarks  = state.bookmarks.map(stripSecrets);
   if (Array.isArray(state.workspaces)) {
     state.workspaces.forEach(ws => (ws.windows || []).forEach(w => {
       if (w.config) w.config = stripSecrets(w.config);
@@ -271,8 +285,9 @@ export function importJson(str, opts = {}) {
   } catch {}
 
   // import 時は secrets を必ず除去 (snapshot 由来の token を流し込ませない)
-  if (Array.isArray(state.catalogs))  state.catalogs  = state.catalogs.map(stripSecrets);
-  if (Array.isArray(state.bookmarks)) state.bookmarks = state.bookmarks.map(stripSecrets);
+  if (Array.isArray(state.catalogs))   state.catalogs   = state.catalogs.map(stripSecrets);
+  if (Array.isArray(state.identities)) state.identities = state.identities.map(stripSecrets);
+  if (Array.isArray(state.bookmarks))  state.bookmarks  = state.bookmarks.map(stripSecrets);
   if (Array.isArray(state.workspaces)) {
     state.workspaces.forEach(ws => (ws.windows || []).forEach(w => {
       if (w.config) w.config = stripSecrets(w.config);

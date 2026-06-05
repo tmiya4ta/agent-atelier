@@ -70,6 +70,7 @@ export class A2AAdapter extends ProtocolAdapter {
       try {
         const headers = { Accept: "application/json" };
         if (this.config.auth) headers["Authorization"] = `Bearer ${this.config.auth}`;
+        if (this.config.authHeaders) Object.assign(headers, this.config.authHeaders);
         const res = await fetch(proxify(cu), { headers });
         if (res.status === 404) {
           this._emit("rpc", { dir: "err", method: "404 not found", raw: cu });
@@ -151,6 +152,7 @@ export class A2AAdapter extends ProtocolAdapter {
       Accept: useStream ? "text/event-stream" : "application/json"
     };
     if (this.config.auth) headers["Authorization"] = `Bearer ${this.config.auth}`;
+    if (this.config.authHeaders) Object.assign(headers, this.config.authHeaders);
 
     // 停止ボタン用: この送信を中断できるよう AbortController を立てる
     const ac = new AbortController();

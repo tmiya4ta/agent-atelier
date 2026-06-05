@@ -21,6 +21,7 @@ let wsCounter     = 0;
 let catCounter    = 0;
 let bgCounter     = 0;
 let scriptCounter = 0;
+let idnCounter    = 0;
 
 // 旧 catalog (cat.businessGroup / cat.assets が直下) を businessGroups[] 配列に変換 (防御的)
 function migrateCatalog(c) {
@@ -75,10 +76,15 @@ const state = {
   activeWs: null,
   selectedProto: "a2a",
   selectedCatalogFlow: "cc",
+  selectedIdentityKind: "bearer",
+  activeSideCat: "connections",   // サイドバー Activity Bar の選択カテゴリ
   zoom: 1.0,
   sidebarCollapsed: false,
   theme: "light",     // "light" | "dark"
   catalogs: [],       // [{ id, name, flow, baseUrl, orgId, envId, clientId, clientSecret?, scopes, status, createdAt }]
+  // 認証プロファイル (IdP credential)。 connection が authRef で参照して使い回す。
+  // entry = { id, name, kind, ...kind固有, accessToken?, tokenExpiresAt?, createdAt, updatedAt }
+  identities: [],
   // 「コネクション登録」一覧。 ウインドウが 0 個になっても残り、 明示的な DELETE のみで消える。
   // entry = { key, protoId, url, name, auth?, persona?, channel? }
   bookmarks: [],
@@ -103,6 +109,52 @@ function normalizeScriptPanelHeight(saved) {
 
 function bookmarkKey(protoId, url) { return `${protoId}::${url || ""}`; }
 
+// 行末の常時表示ケバブ (⋮) ボタン — 全リスト共通。クリックで openRowMenu。
+const KEBAB_BTN_HTML = `<button class="row-kebab" title="More" aria-label="more actions"><svg viewBox="0 0 14 14" width="12" height="12"><circle cx="7" cy="3" r="1.2" fill="currentColor"/><circle cx="7" cy="7" r="1.2" fill="currentColor"/><circle cx="7" cy="11" r="1.2" fill="currentColor"/></svg></button>`;
+
+// アンカー要素の近くに小さなメニューを出す。items = [{label, danger?, onClick}]。
+// 外側クリック / Esc / スクロールで閉じる。
+function openRowMenu(anchorEl, items) {
+  closeRowMenu();
+  const menu = document.createElement("div");
+  menu.className = "row-menu";
+  menu.id = "rowMenu";
+  items.forEach(it => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "row-menu-item" + (it.danger ? " is-danger" : "");
+    b.textContent = it.label;
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeRowMenu();
+      it.onClick && it.onClick();
+    });
+    menu.appendChild(b);
+  });
+  document.body.appendChild(menu);
+  // 位置決め: アンカーの右下に出し、画面外なら上 / 左に補正
+  const r = anchorEl.getBoundingClientRect();
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  let left = r.right - mw;
+  let top  = r.bottom + 4;
+  if (left < 6) left = 6;
+  if (top + mh > window.innerHeight - 6) top = r.top - mh - 4;
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top  = `${Math.round(top)}px`;
+  // 閉じる配線 (次フレームで登録し、開いた click 自身で閉じないように)
+  setTimeout(() => {
+    document.addEventListener("click", closeRowMenu, { once: true });
+    document.addEventListener("keydown", _rowMenuEsc);
+    window.addEventListener("scroll", closeRowMenu, { once: true, capture: true });
+  }, 0);
+}
+function _rowMenuEsc(e) { if (e.key === "Escape") closeRowMenu(); }
+function closeRowMenu() {
+  const m = document.getElementById("rowMenu");
+  if (m) m.remove();
+  document.removeEventListener("keydown", _rowMenuEsc);
+}
+
 const ZOOM_MIN = 0.8;
 const ZOOM_MAX = 2.0;
 const ZOOM_STEP = 0.1;
@@ -125,9 +177,11 @@ function init() {
     state.sidebarCollapsed = !!saved.sidebarCollapsed;
     state.theme            = saved.theme === "dark" ? "dark" : "light";
     state.catalogs         = (saved.catalogs || []).map(migrateCatalog);
+    state.identities       = saved.identities || [];
     state.bookmarks        = saved.bookmarks || [];
     // sessionStorage から secrets を引き戻す (持続中のタブのみ)
-    persist.hydrateSecrets(state.catalogs, state.bookmarks);
+    persist.hydrateSecrets(state.catalogs, state.bookmarks, state.identities);
+    idnCounter    = state.identities.reduce((m, i) => Math.max(m, parseInt(i.id?.split("-")[1] || 0)), 0);
     state.scripts          = saved.scripts   || [];
     state.selectedScriptId = saved.selectedScriptId || null;
     state.openScriptIds    = (saved.openScriptIds || []).filter(id => state.scripts.find(s => s.id === id));
@@ -140,8 +194,10 @@ function init() {
     state.sidebarCollapsed = !!saved?.sidebarCollapsed;
     state.theme            = saved?.theme === "dark" ? "dark" : "light";
     state.catalogs  = (saved?.catalogs || []).map(migrateCatalog);
+    state.identities = saved?.identities || [];
     state.bookmarks = saved?.bookmarks || [];
-    persist.hydrateSecrets(state.catalogs, state.bookmarks);
+    persist.hydrateSecrets(state.catalogs, state.bookmarks, state.identities);
+    idnCounter    = state.identities.reduce((m, i) => Math.max(m, parseInt(i.id?.split("-")[1] || 0)), 0);
     state.scripts   = saved?.scripts   || [];
     state.selectedScriptId = saved?.selectedScriptId || null;
     state.openScriptIds    = (saved?.openScriptIds || []).filter(id => state.scripts.find(s => s.id === id));
@@ -151,12 +207,22 @@ function init() {
     createWorkspace("default", { focus: true, silent: true });
   }
 
+  const savedCat = saved?.activeSideCat;
+  if (["connections","catalogs","authentication","scenarios"].includes(savedCat)) {
+    state.activeSideCat = savedCat;
+  }
+
+  migrateAuthToIdentities();
+
   renderBookmarks();
   renderCatalogs();
+  renderIdentities();
   renderScripts();
   renderProtoGrid();
   renderTabs();
   wireRail();
+  wireSideRail();
+  wireIdentityDialog();
   wireDialog();
   wireCatalogDialog();
   wireDrawer();
@@ -249,6 +315,28 @@ function wireSidebarToggle() {
 }
 
 // ═══════════════════════════════════════════════════════
+// SIDEBAR ACTIVITY BAR (rail + panel)
+// ═══════════════════════════════════════════════════════
+function selectSideCat(cat) {
+  state.activeSideCat = cat;
+  $$("#sideRail .rail-ico").forEach(b => {
+    const on = b.dataset.cat === cat;
+    b.classList.toggle("is-active", on);
+    b.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  $$(".side-panel .side-cat").forEach(p => {
+    p.hidden = p.dataset.cat !== cat;
+  });
+  dirty();
+}
+function wireSideRail() {
+  $$("#sideRail .rail-ico").forEach(b => {
+    b.addEventListener("click", () => selectSideCat(b.dataset.cat));
+  });
+  selectSideCat(state.activeSideCat || "connections");
+}
+
+// ═══════════════════════════════════════════════════════
 // THEME (light / dark)
 // ═══════════════════════════════════════════════════════
 function applyTheme() {
@@ -317,6 +405,7 @@ function restoreFromSaved(saved) {
         url:     hydrated.config?.url,
         name:    hydrated.config?.name,
         auth:    hydrated.config?.auth,
+        authRef: hydrated.config?.authRef,
         persona: hydrated.config?.persona,
         channel: hydrated.config?.channel
       }, { restore: { pos: hydrated.pos, activeTab: hydrated.activeTab }, skipDirty: true });
@@ -459,12 +548,12 @@ function wireWsTabs() {
 }
 
 // 「コネクション登録」エントリの追加 / 上書き。 ウインドウの open/close と独立。
-function upsertBookmark({ protoId, url, name, auth, persona, channel }) {
+function upsertBookmark({ protoId, url, name, auth, authRef, persona, channel }) {
   if (!protoId || !url) return;
   const key = bookmarkKey(protoId, url);
   state.bookmarks = state.bookmarks || [];
   const idx = state.bookmarks.findIndex(b => b.key === key);
-  const entry = { key, protoId, url, name, auth, persona, channel };
+  const entry = { key, protoId, url, name, auth, authRef, persona, channel };
   if (idx >= 0) {
     // 既存はユーザーが付けた display name 等を尊重しつつ最新値で更新
     const prev = state.bookmarks[idx];
@@ -593,29 +682,30 @@ function renderBookmarks() {
       <button class="bookmark-new" title="${wins.length ? 'Open another window to the same agent' : 'Open a window'}" aria-label="new window">
         <svg viewBox="0 0 14 14" width="10" height="10"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
-      <button class="agent-remove" title="Delete this connection (and disconnect all open windows)" aria-label="delete connection">
-        <svg viewBox="0 0 14 14" width="9" height="9">
-          <line x1="3" y1="3" x2="11" y2="11" stroke="currentColor" stroke-width="1.4"/>
-          <line x1="11" y1="3" x2="3" y2="11" stroke="currentColor" stroke-width="1.4"/>
-        </svg>
-      </button>
+      ${KEBAB_BTN_HTML}
     `;
+    const doDelete = async () => {
+      if (wins.length > 0) {
+        const ok = await modalConfirm({
+          title: `Delete "${displayName}"?`,
+          message: `${wins.length} open window(s) will be disconnected and the connection will be removed from the sidebar.`,
+          confirmLabel: "Delete",
+          danger: true
+        });
+        if (!ok) return;
+        wins.forEach(({ win }) => win.close());
+      }
+      removeBookmark(b.key);
+      renderBookmarks();
+    };
     li.addEventListener("click", async (e) => {
-      if (e.target.closest(".agent-remove")) {
+      if (e.target.closest(".row-kebab")) {
         e.stopPropagation();
-        // 開いているウインドウがあれば確認してから削除
-        if (wins.length > 0) {
-          const ok = await modalConfirm({
-            title: `Delete "${displayName}"?`,
-            message: `${wins.length} open window(s) will be disconnected and the connection will be removed from the sidebar.`,
-            confirmLabel: "Delete",
-            danger: true
-          });
-          if (!ok) return;
-          wins.forEach(({ win }) => win.close());
-        }
-        removeBookmark(b.key);
-        renderBookmarks();
+        openRowMenu(e.target.closest(".row-kebab"), [
+          { label: "Edit",        onClick: () => openDialog({ editBookmark: b }) },
+          { label: "New window",  onClick: () => connect({ protoId: b.protoId, url: b.url, name: displayName, auth: b.auth, authRef: b.authRef, persona: b.persona, channel: b.channel }, { lockName: true }) },
+          { label: "Delete", danger: true, onClick: doDelete }
+        ]);
         return;
       }
       if (e.target.closest(".bookmark-new")) {
@@ -625,6 +715,7 @@ function renderBookmarks() {
           url:     b.url,
           name:    displayName,
           auth:    b.auth,
+          authRef: b.authRef,
           persona: b.persona,
           channel: b.channel
         }, { lockName: true });
@@ -635,7 +726,7 @@ function renderBookmarks() {
       if (wins.length === 0) {
         connect({
           protoId: b.protoId, url: b.url, name: displayName,
-          auth: b.auth, persona: b.persona, channel: b.channel
+          auth: b.auth, authRef: b.authRef, persona: b.persona, channel: b.channel
         }, { lockName: true });
         return;
       }
@@ -754,6 +845,28 @@ function animateConnExpand(connKey, expanded) {
 // CATALOG OAuth + Exchange assets
 // ═══════════════════════════════════════════════════════
 async function authenticateCatalog(cat) {
+  // identity 一本化: catalog は authRef で AUTHENTICATION の identity を参照する。
+  // identity 側で token を取り (CC/authcode 共通)、 cat.accessToken にミラーして
+  // 既存の Exchange fetch (Bearer ${cat.accessToken}) をそのまま動かす。
+  if (cat.authRef) {
+    const idn = identityById(cat.authRef);
+    if (!idn) {
+      cat.status = "error";
+      cat.lastError = "linked identity not found (re-select an identity)";
+      return;
+    }
+    const tok = await ensureIdentityToken(idn);
+    if (!tok) {
+      cat.status = "error";
+      cat.lastError = "identity token fetch failed";
+      return;
+    }
+    cat.accessToken    = idn.accessToken;
+    cat.tokenExpiresAt = idn.tokenExpiresAt;
+    cat.status    = "connected";
+    cat.lastError = null;
+    return;
+  }
   if (cat.flow === "authcode") {
     try {
       const data = await runAuthCodeFlow(cat);
@@ -798,6 +911,136 @@ async function authenticateCatalog(cat) {
   cat.tokenExpiresAt = Date.now() + Math.max(60, (data.expires_in || 3600) - 60) * 1000;
   cat.status         = "connected";
   cat.lastError      = null;
+}
+
+// ═══════════════════════════════════════════════════════
+// IDENTITY ↔ CONNECTION (authRef 解決 / 自動マイグレーション)
+// ═══════════════════════════════════════════════════════
+
+// 旧 auth (bookmark.auth 文字列 / catalog OAuth) を identities[] に移行する。
+// init で 1 回。authRef が既にあるものは skip するので冪等。
+function migrateAuthToIdentities() {
+  state.identities = state.identities || [];
+  const byBearerToken = new Map();   // token -> id
+  const byCcKey       = new Map();   // `${tokenUrl}::${clientId}` -> id
+  for (const idn of state.identities) {
+    if (idn.kind === "bearer" && idn.token) byBearerToken.set(idn.token, idn.id);
+    if (idn.kind === "oauth2_cc") byCcKey.set(`${idn.tokenUrl}::${idn.clientId}`, idn.id);
+  }
+
+  // 1) bookmark.auth (bearer 文字列) → bearer identity
+  for (const b of (state.bookmarks || [])) {
+    if (b.authRef || !b.auth) continue;
+    let id = byBearerToken.get(b.auth);
+    if (!id) {
+      id = `idn-${++idnCounter}`;
+      let label; try { label = `${new URL(b.url).host} · token`; } catch { label = (b.name || "token"); }
+      state.identities.push({
+        id, name: label, kind: "bearer", scheme: "Bearer", headerName: "Authorization",
+        token: b.auth, createdAt: Date.now(), updatedAt: Date.now()
+      });
+      byBearerToken.set(b.auth, id);
+    }
+    b.authRef = id;
+    // b.auth は後方互換のため残す (resolve は authRef 優先)
+  }
+
+  // 2) catalog OAuth → oauth2_cc / oauth2_authcode identity (catalog は複製のみ、破壊しない)
+  for (const c of (state.catalogs || [])) {
+    if (c.authRef || !c.clientId) continue;
+    const key = `${c.tokenUrl}::${c.clientId}`;
+    let id = (c.flow === "cc") ? byCcKey.get(key) : null;
+    if (!id) {
+      id = `idn-${++idnCounter}`;
+      const base = {
+        id, name: `${c.name} (OAuth)`, clientId: c.clientId, clientSecret: c.clientSecret,
+        scopes: c.scopes, tokenUrl: c.tokenUrl,
+        accessToken: c.accessToken, tokenExpiresAt: c.tokenExpiresAt,
+        createdAt: Date.now(), updatedAt: Date.now()
+      };
+      if (c.flow === "authcode") {
+        state.identities.push({ ...base, kind: "oauth2_authcode", authUrl: c.authUrl,
+          refreshToken: c.refreshToken, redirectUri: redirectUri() });
+      } else {
+        state.identities.push({ ...base, kind: "oauth2_cc" });
+        byCcKey.set(key, id);
+      }
+    }
+    c.authRef = id;
+  }
+}
+
+function identityById(id) { return (state.identities || []).find(i => i.id === id); }
+
+// identity の token を (必要なら取得して) 返す。oauth/jwt は期限切れなら再取得。
+async function ensureIdentityToken(idn) {
+  if (idn.accessToken && Date.now() < (idn.tokenExpiresAt || 0)) return idn.accessToken;
+  try {
+    if (idn.kind === "oauth2_cc")        await fetchCcTokenForIdentity(idn);
+    else if (idn.kind === "jwt_bearer")  await fetchJwtBearerToken(idn);
+    else if (idn.kind === "oauth2_authcode") {
+      const data = await runAuthCodeFlow(idn);
+      idn.accessToken    = data.access_token;
+      idn.tokenExpiresAt = Date.now() + Math.max(60, (data.expires_in || 3600) - 60) * 1000;
+      if (data.refresh_token) idn.refreshToken = data.refresh_token;
+    }
+  } catch (e) {
+    console.warn("[identity] token fetch failed:", idn.id, e?.message || e);
+    return null;
+  }
+  dirty();
+  return idn.accessToken || null;
+}
+
+async function fetchCcTokenForIdentity(idn) {
+  const params = new URLSearchParams({
+    grant_type: "client_credentials",
+    client_id: idn.clientId, client_secret: idn.clientSecret || ""
+  });
+  if (idn.scopes) params.set("scope", idn.scopes);
+  const res  = await fetch(`/proxy?url=${encodeURIComponent(idn.tokenUrl)}`, {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString()
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error_description || data.error || `HTTP ${res.status}`);
+  idn.accessToken    = data.access_token;
+  idn.tokenExpiresAt = Date.now() + Math.max(60, (data.expires_in || 3600) - 60) * 1000;
+}
+
+async function fetchJwtBearerToken(idn) {
+  const params = new URLSearchParams({
+    grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    assertion:  idn.assertion || ""
+  });
+  if (idn.scopes) params.set("scope", idn.scopes);
+  const res  = await fetch(`/proxy?url=${encodeURIComponent(idn.tokenUrl)}`, {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString()
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error_description || data.error || `HTTP ${res.status}`);
+  idn.accessToken    = data.access_token;
+  idn.tokenExpiresAt = Date.now() + Math.max(60, (data.expires_in || 3600) - 60) * 1000;
+}
+
+// connection ({authRef, auth}) → adapter に渡す { auth, authHeaders }。
+// authRef 優先、無ければ旧 auth 文字列 (後方互換)。
+async function resolveAuthForConnection(conn) {
+  if (!conn.authRef) {
+    return conn.auth ? { auth: conn.auth } : {};
+  }
+  const idn = identityById(conn.authRef);
+  if (!idn) return {};
+  if (idn.kind === "bearer") {
+    const headerName = idn.headerName || "Authorization";
+    if (headerName.toLowerCase() === "authorization" && (idn.scheme === "Bearer" || !idn.scheme)) {
+      return { auth: idn.token };   // 既存 adapter の Bearer 経路をそのまま使う
+    }
+    const val = idn.scheme === "raw" ? idn.token : `${idn.scheme || "Bearer"} ${idn.token}`;
+    return { authHeaders: { [headerName]: val } };
+  }
+  // oauth2_cc / oauth2_authcode / jwt_bearer → bearer token を取得
+  const tok = await ensureIdentityToken(idn);
+  return tok ? { auth: tok } : {};
 }
 
 async function fetchBgAssets(cat, bg) {
@@ -1348,6 +1591,420 @@ function wireDrawer() {
   });
 }
 
+// ═══════════════════════════════════════════════════════
+// IDENTITY (Authentication profiles)
+// ═══════════════════════════════════════════════════════
+const IDENTITY_KINDS = [
+  { id:"bearer",          label:"Bearer / API Key", sub:"static token",       icon:"●" },
+  { id:"oauth2_cc",       label:"OAuth2 CC",        sub:"client credentials", icon:"⚙" },
+  { id:"oauth2_authcode", label:"OAuth2 Code",      sub:"browser login",      icon:"↳" },
+  { id:"jwt_bearer",      label:"JWT Bearer",       sub:"signed assertion",   icon:"⚷" },
+];
+
+// OAuth/JWT 用の endpoint プリセット。 id=custom は手入力 (url 欄編集可)。
+// 増やすときはここに 1 行足すだけ。
+const IDENTITY_PROVIDERS = [
+  {
+    id: "anypoint", label: "Anypoint Platform",
+    authUrl:  "https://anypoint.mulesoft.com/accounts/api/v2/oauth2/authorize",
+    tokenUrl: "https://anypoint.mulesoft.com/accounts/api/v2/oauth2/token",
+    scopes:   "full"
+  },
+  { id: "custom", label: "Custom (manual)", authUrl: "", tokenUrl: "", scopes: "" }
+];
+function providerById(id) { return IDENTITY_PROVIDERS.find(p => p.id === id) || IDENTITY_PROVIDERS.find(p => p.id === "custom"); }
+
+function kindBadge(kind) {
+  const m = { bearer:"bearer", oauth2_cc:"cc", oauth2_authcode:"code", jwt_bearer:"jwt" };
+  return m[kind] || kind;
+}
+
+function countAuthRefs(idnId) {
+  return (state.bookmarks || []).filter(b => b.authRef === idnId).length;
+}
+
+function renderIdentities() {
+  const root  = $("#identityList");
+  const empty = $("#identitiesEmpty");
+  if (!root) return;
+  root.innerHTML = "";
+
+  state.identities.forEach(idn => {
+    const li = document.createElement("li");
+    li.className = "catalog-item";
+    li.dataset.idnId = idn.id;
+    li.title = `${idn.name} · ${kindBadge(idn.kind)}`;
+    li.innerHTML = `
+      <span class="catalog-name">${escapeHtml(idn.name)}</span>
+      <span class="catalog-meta">
+        <span class="catalog-status-dot"></span>
+        <span style="font-family:var(--f-mono);font-size:calc(9px * var(--fs,1));color:var(--ink-3);background:var(--paper);border:1px solid var(--line);padding:1px 5px;border-radius:3px;letter-spacing:0.04em;">${escapeHtml(kindBadge(idn.kind))}</span>
+      </span>
+      ${KEBAB_BTN_HTML}
+    `;
+    const doDelete = async () => {
+      const refs = countAuthRefs(idn.id);
+      if (refs > 0) {
+        const ok = await modalConfirm({
+          title: `Delete "${idn.name}"?`,
+          message: `${refs} connection(s) are using this identity. They will lose authentication.`,
+          confirmLabel: "Delete",
+          danger: true
+        });
+        if (!ok) return;
+      }
+      state.identities = state.identities.filter(x => x.id !== idn.id);
+      renderIdentities();
+      dirty();
+    };
+    li.addEventListener("click", (e) => {
+      if (e.target.closest(".row-kebab")) {
+        e.stopPropagation();
+        openRowMenu(e.target.closest(".row-kebab"), [
+          { label: "Edit",   onClick: () => openIdentityDialog(idn) },
+          { label: "Delete", danger: true, onClick: doDelete }
+        ]);
+        return;
+      }
+    });
+    li.addEventListener("dblclick", (e) => {
+      e.stopPropagation();
+      openIdentityDialog(idn);
+    });
+    root.appendChild(li);
+  });
+
+  empty.classList.toggle("is-hidden", state.identities.length > 0);
+}
+
+function renderIdentityKindSeg() {
+  const root = $("#idnKindSeg");
+  if (!root) return;
+  root.innerHTML = "";
+  IDENTITY_KINDS.forEach(k => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "seg-btn";
+    btn.dataset.kind = k.id;
+    if (k.id === state.selectedIdentityKind) btn.classList.add("is-active");
+    btn.innerHTML = `
+      <span class="seg-icon">${escapeHtml(k.icon)}</span>
+      <span class="seg-body">
+        <span class="seg-label">${escapeHtml(k.label)}</span>
+        <span class="seg-sub">${escapeHtml(k.sub)}</span>
+      </span>
+    `;
+    btn.addEventListener("click", () => {
+      state.selectedIdentityKind = k.id;
+      clearIdentityTest();
+      refreshIdentityDialog();
+    });
+    root.appendChild(btn);
+  });
+}
+
+function renderIdentityProviderSelect() {
+  const sel = $("#idnProvider");
+  if (!sel) return;
+  const cur = state.selectedIdentityProvider || "custom";
+  sel.innerHTML = "";
+  IDENTITY_PROVIDERS.forEach(p => {
+    const o = document.createElement("option");
+    o.value = p.id; o.textContent = p.label;
+    sel.appendChild(o);
+  });
+  sel.value = cur;
+}
+
+// provider プリセットを url 欄に流し込み、custom 以外は readonly にする。
+// clearOnCustom=true (ユーザーが手で Custom に切り替えた時) は前 provider の url を消す。
+function applyProviderPreset(clearOnCustom) {
+  const kind = state.selectedIdentityKind;
+  const p = providerById(state.selectedIdentityProvider || "custom");
+  const locked = p.id !== "custom";
+  // kind ごとの token/auth url 入力欄
+  const tokenInputs = {
+    oauth2_cc: $("#idnTokenUrlCc"), oauth2_authcode: $("#idnTokenUrlCode"), jwt_bearer: $("#idnTokenUrlJwt")
+  };
+  const tIn = tokenInputs[kind];
+  const aIn = (kind === "oauth2_authcode") ? $("#idnAuthUrl") : null;
+  if (locked) {
+    if (tIn) tIn.value = p.tokenUrl;
+    if (aIn) aIn.value = p.authUrl;
+    // scope はプリセットがあり、かつ空のときだけ補完 (既存値は尊重)
+    const sc = $("#idnScopes");
+    if (sc && p.scopes && !sc.value.trim()) sc.value = p.scopes;
+  } else if (clearOnCustom) {
+    // Custom に切り替え → 前 provider のプリセット値を消して手入力させる
+    if (tIn) tIn.value = "";
+    if (aIn) aIn.value = "";
+  }
+  [tIn, aIn].forEach(inp => {
+    if (!inp) return;
+    inp.readOnly = locked;
+    inp.classList.toggle("is-readonly", locked);
+  });
+}
+
+function refreshIdentityDialog() {
+  renderIdentityKindSeg();
+  const kind = state.selectedIdentityKind;
+
+  // data-only フィールドを kind ごとに表示切替
+  document.querySelectorAll("#identityDialog [data-only]").forEach(el => {
+    el.style.display = (el.dataset.only === kind) ? "" : "none";
+  });
+
+  // provider セレクトは OAuth/JWT のときだけ表示 (bearer は不要)
+  const provField = $("#idnProviderField");
+  const showProvider = (kind === "oauth2_cc" || kind === "oauth2_authcode" || kind === "jwt_bearer");
+  if (provField) provField.style.display = showProvider ? "" : "none";
+  if (showProvider) { renderIdentityProviderSelect(); applyProviderPreset(); }
+
+  // redirectUri を authcode 用フィールドにセット
+  const redirectInput = $("#idnRedirect");
+  if (redirectInput) redirectInput.value = redirectUri();
+}
+
+function detectProvider(editing) {
+  if (!editing) return "anypoint";   // 新規は Anypoint を既定 (最頻ユースケース)
+  if (editing.provider && providerById(editing.provider)) return editing.provider;
+  const match = IDENTITY_PROVIDERS.find(p => p.id !== "custom" &&
+    (p.tokenUrl === editing.tokenUrl) && (!editing.authUrl || p.authUrl === editing.authUrl));
+  return match ? match.id : "custom";
+}
+
+function openIdentityDialog(editing) {
+  $("#identityDialog").hidden = false;
+  clearIdentityTest();
+  state.selectedIdentityKind = editing?.kind || "bearer";
+  state.selectedIdentityProvider = detectProvider(editing);
+  state._editingIdentityId   = editing?.id   || null;
+
+  $("#idnName").value = editing?.name || "";
+
+  // bearer
+  $("#idnToken").value     = editing?.token ? "•".repeat(12) : "";
+  $("#idnScheme").value    = editing?.scheme || "Bearer";
+  $("#idnHeaderName").value = editing?.headerName || "";
+
+  // oauth2_cc
+  $("#idnTokenUrlCc").value       = editing?.tokenUrl || "";
+  $("#idnClientIdCc").value       = editing?.clientId || "";
+  $("#idnClientSecretCc").value   = editing?.clientSecret ? "•".repeat(12) : "";
+
+  // oauth2_authcode
+  $("#idnAuthUrl").value          = editing?.authUrl || "";
+  $("#idnTokenUrlCode").value     = editing?.tokenUrl || "";
+  $("#idnClientIdCode").value     = editing?.clientId || "";
+  $("#idnClientSecretCode").value = editing?.clientSecret ? "•".repeat(12) : "";
+
+  // jwt_bearer
+  $("#idnAssertion").value  = editing?.assertion ? "•".repeat(12) : "";
+  $("#idnTokenUrlJwt").value = editing?.tokenUrl || "";
+
+  // scopes (共通 advanced)
+  $("#idnScopes").value = editing?.scopes || "";
+
+  refreshIdentityDialog();
+  setTimeout(() => $("#idnName").focus(), 50);
+}
+
+function closeIdentityDialog() {
+  $("#identityDialog").hidden = true;
+  state._editingIdentityId = null;
+  clearIdentityTest();
+}
+
+function clearIdentityTest() {
+  const row = $("#idnTestRow"), st = $("#idnTestStatus");
+  if (row) row.hidden = true;
+  if (st) { st.textContent = ""; st.className = "dialog-test-status"; }
+}
+function setIdentityTest(kind, html) {
+  const row = $("#idnTestRow"), st = $("#idnTestStatus");
+  if (!row || !st) return;
+  row.hidden = false;
+  st.className = `dialog-test-status is-${kind}`;
+  st.innerHTML = html;
+}
+
+// 入力中の値で「一時 identity」を組み立てる (保存しない)。masked secret は編集中の既存値で補完。
+function buildTempIdentityFromForm() {
+  const kind = state.selectedIdentityKind;
+  const scopes = $("#idnScopes").value.trim() || undefined;
+  const isMask = (v) => v && /^•+$/.test(v);
+  const existing = state._editingIdentityId ? identityById(state._editingIdentityId) : null;
+  const idn = { id: "idn-test", name: "test", kind, scopes };
+  if (kind === "oauth2_cc") {
+    idn.clientId = $("#idnClientIdCc").value.trim();
+    idn.tokenUrl = $("#idnTokenUrlCc").value.trim();
+    const s = $("#idnClientSecretCc").value;
+    idn.clientSecret = isMask(s) ? existing?.clientSecret : (s || undefined);
+  } else if (kind === "oauth2_authcode") {
+    idn.clientId = $("#idnClientIdCode").value.trim();
+    idn.authUrl  = $("#idnAuthUrl").value.trim();
+    idn.tokenUrl = $("#idnTokenUrlCode").value.trim();
+    idn.redirectUri = redirectUri();
+    const s = $("#idnClientSecretCode").value;
+    idn.clientSecret = isMask(s) ? existing?.clientSecret : (s || undefined);
+  } else if (kind === "jwt_bearer") {
+    idn.tokenUrl = $("#idnTokenUrlJwt").value.trim();
+    const a = $("#idnAssertion").value.trim();
+    idn.assertion = isMask(a) ? existing?.assertion : a;
+  }
+  return idn;
+}
+
+async function testIdentityDialog() {
+  const kind = state.selectedIdentityKind;
+  if (kind === "bearer") {
+    setIdentityTest("info", "Bearer / API Key は静的トークンのため取得テストは不要です。");
+    return;
+  }
+  const idn = buildTempIdentityFromForm();
+  // 必須チェック
+  if (!idn.tokenUrl) { setIdentityTest("err", "token url を入力してください。"); return; }
+  if (kind === "oauth2_cc" && !idn.clientId) { setIdentityTest("err", "client id を入力してください。"); return; }
+  if (kind === "oauth2_authcode" && (!idn.clientId || !idn.authUrl)) { setIdentityTest("err", "client id と auth url を入力してください。"); return; }
+  if (kind === "jwt_bearer" && !idn.assertion) { setIdentityTest("err", "assertion (署名済み JWT) を入力してください。"); return; }
+
+  const btn = $("#idnTest");
+  btn.disabled = true;
+  setIdentityTest("info", "<span class='dts-dot'></span> Requesting token…");
+  const t0 = performance.now();
+  try {
+    // 強制取得 (キャッシュ無視): tokenExpiresAt をクリアしてから ensureIdentityToken
+    idn.accessToken = undefined; idn.tokenExpiresAt = 0;
+    const tok = await ensureIdentityToken(idn);
+    const ms = Math.round(performance.now() - t0);
+    if (!tok) throw new Error("no access_token returned");
+    const exp = idn.tokenExpiresAt ? Math.max(0, Math.round((idn.tokenExpiresAt - Date.now()) / 1000)) : null;
+    const preview = `${String(tok).slice(0, 6)}…${String(tok).slice(-4)}`;
+    setIdentityTest("ok",
+      `<span class='dts-dot'></span> token OK · <code>${escapeHtml(preview)}</code>` +
+      (exp != null ? ` · expires in ~${exp}s` : "") + ` · ${ms}ms`);
+  } catch (e) {
+    setIdentityTest("err", `<span class='dts-dot'></span> ${escapeHtml(e?.message || String(e))}`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function submitIdentityDialog() {
+  const name = $("#idnName").value.trim();
+  const kind = state.selectedIdentityKind;
+  const scopes = $("#idnScopes").value.trim();
+
+  if (!name) { $("#idnName").focus(); return; }
+
+  const editingId = state._editingIdentityId;
+  const existing  = editingId ? state.identities.find(i => i.id === editingId) : null;
+
+  // isMask helper
+  const isMask = (val) => val && /^•+$/.test(val);
+
+  let idn = existing || {};
+  idn.id   = existing?.id || `idn-${++idnCounter}`;
+  idn.name = name;
+  idn.kind = kind;
+  idn.createdAt = existing?.createdAt || Date.now();
+  idn.updatedAt = Date.now();
+
+  if (kind === "bearer") {
+    const tokenInput = $("#idnToken").value;
+    if (!tokenInput) { $("#idnToken").focus(); return; }
+    idn.token = isMask(tokenInput) ? existing?.token : tokenInput;
+    idn.scheme = $("#idnScheme").value || "Bearer";
+    idn.headerName = $("#idnHeaderName").value.trim() || undefined;
+  } else if (kind === "oauth2_cc") {
+    const clientIdInput = $("#idnClientIdCc").value.trim();
+    const tokenUrlInput = $("#idnTokenUrlCc").value.trim();
+    if (!clientIdInput) { $("#idnClientIdCc").focus(); return; }
+    if (!tokenUrlInput) { $("#idnTokenUrlCc").focus(); return; }
+    idn.clientId = clientIdInput;
+    idn.tokenUrl = tokenUrlInput;
+    idn.provider = state.selectedIdentityProvider || "custom";
+    const secretInput = $("#idnClientSecretCc").value;
+    idn.clientSecret = isMask(secretInput) ? existing?.clientSecret : (secretInput || undefined);
+    idn.scopes = scopes || undefined;
+  } else if (kind === "oauth2_authcode") {
+    const clientIdInput = $("#idnClientIdCode").value.trim();
+    const authUrlInput  = $("#idnAuthUrl").value.trim();
+    const tokenUrlInput = $("#idnTokenUrlCode").value.trim();
+    if (!clientIdInput) { $("#idnClientIdCode").focus(); return; }
+    if (!authUrlInput)  { $("#idnAuthUrl").focus(); return; }
+    if (!tokenUrlInput) { $("#idnTokenUrlCode").focus(); return; }
+    idn.clientId = clientIdInput;
+    idn.authUrl  = authUrlInput;
+    idn.tokenUrl = tokenUrlInput;
+    idn.provider = state.selectedIdentityProvider || "custom";
+    const secretInput = $("#idnClientSecretCode").value;
+    idn.clientSecret = isMask(secretInput) ? existing?.clientSecret : (secretInput || undefined);
+    idn.scopes = scopes || undefined;
+    idn.redirectUri = redirectUri();
+  } else if (kind === "jwt_bearer") {
+    const assertionInput = $("#idnAssertion").value.trim();
+    const tokenUrlInput  = $("#idnTokenUrlJwt").value.trim();
+    if (!assertionInput) { $("#idnAssertion").focus(); return; }
+    if (!tokenUrlInput)  { $("#idnTokenUrlJwt").focus(); return; }
+    idn.assertion = isMask(assertionInput) ? existing?.assertion : assertionInput;
+    idn.tokenUrl  = tokenUrlInput;
+    idn.provider = state.selectedIdentityProvider || "custom";
+    idn.scopes = scopes || undefined;
+  }
+
+  if (!existing) {
+    state.identities.push(idn);
+  } else {
+    Object.assign(existing, idn);
+  }
+
+  renderIdentities();
+  dirty();
+  closeIdentityDialog();
+
+  // connect ダイアログから「+ new identity…」で開かれていた場合、新 identity を選択状態に戻す
+  const ret = state._authRefReturn;
+  state._authRefReturn = null;
+  if (ret) ret(idn.id);
+}
+
+function wireIdentityDialog() {
+  $("#identityAdd").addEventListener("click", () => openIdentityDialog());
+  $("#idnClose").addEventListener("click", closeIdentityDialog);
+  $("#idnCancel").addEventListener("click", closeIdentityDialog);
+  $("#idnSubmit").addEventListener("click", submitIdentityDialog);
+  $("#idnTest").addEventListener("click", testIdentityDialog);
+
+  const provSel = $("#idnProvider");
+  if (provSel) {
+    provSel.addEventListener("change", () => {
+      state.selectedIdentityProvider = provSel.value;
+      applyProviderPreset(true);   // 手動切替: Custom にしたら前プリセット url をクリア
+    });
+  }
+
+  // toggle buttons for token/secret fields
+  const togglePairs = [
+    { input: "#idnToken",           toggle: "#idnTokenToggle" },
+    { input: "#idnClientSecretCc",  toggle: "#idnSecretToggleCc" },
+    { input: "#idnClientSecretCode", toggle: "#idnSecretToggleCode" }
+  ];
+  togglePairs.forEach(({ input, toggle }) => {
+    const inp = $(input);
+    const btn = $(toggle);
+    if (btn && inp) {
+      btn.addEventListener("click", () => {
+        const showing = inp.type === "text";
+        inp.type = showing ? "password" : "text";
+        btn.setAttribute("aria-pressed", showing ? "false" : "true");
+        btn.classList.toggle("is-revealed", !showing);
+      });
+    }
+  });
+}
+
 // ─── Sidebar: catalogs ─────────────────────────────────
 function renderCatalogs() {
   const root  = $("#catalogList");
@@ -1368,8 +2025,10 @@ function renderCatalogs() {
                     : c.status === "error"     ? "is-error"
                     : c.status === "connecting"? "is-connecting"
                     : "";
-    const sourceUrl = c.authUrl || c.tokenUrl;
+    const linkedIdn = c.authRef ? identityById(c.authRef) : null;
+    const sourceUrl = linkedIdn?.authUrl || linkedIdn?.tokenUrl || c.authUrl || c.tokenUrl;
     const host = hostFromUrl(sourceUrl) || (c.type === "anypoint" ? "anypoint.mulesoft.com" : "");
+    const authLabel = linkedIdn ? `${linkedIdn.name} · ${kindBadge(linkedIdn.kind)}` : "no identity";
 
     // 親 (catalog) — bookmark item と同形式: name + count + + + ×
     const li = document.createElement("li");
@@ -1377,7 +2036,7 @@ function renderCatalogs() {
       + (hasChildren ? " is-expandable" : "")
       + (hasChildren && expanded ? " is-expanded" : "");
     li.dataset.catId = c.id;
-    li.title = `${host}  ·  ${c.flow === "cc" ? "Client Credentials" : "Authorization Code"}  ·  ${c.status || "idle"}`;
+    li.title = `${host}  ·  ${authLabel}  ·  ${c.status || "idle"}`;
     li.innerHTML = `
       <span class="catalog-name" title="Click to toggle">${escapeHtml(c.name)}</span>
       <span class="catalog-meta">
@@ -1387,27 +2046,29 @@ function renderCatalogs() {
       <button class="bookmark-new" title="Add business group" aria-label="add bg">
         <svg viewBox="0 0 14 14" width="10" height="10"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
-      <button class="agent-remove" title="Delete catalog" aria-label="remove">
-        <svg viewBox="0 0 14 14" width="9" height="9">
-          <line x1="3" y1="3" x2="11" y2="11" stroke="currentColor" stroke-width="1.4"/>
-          <line x1="11" y1="3" x2="3" y2="11" stroke="currentColor" stroke-width="1.4"/>
-        </svg>
-      </button>
+      ${KEBAB_BTN_HTML}
     `;
+    const doDelete = async () => {
+      const ok = await modalConfirm({
+        title:        `Delete "${c.name}"? (${c.businessGroups.length} business groups will also be deleted)`,
+        confirmLabel: "Delete",
+        danger:       true
+      });
+      if (!ok) return;
+      state.catalogs = state.catalogs.filter(x => x.id !== c.id);
+      delete state._catalogExpanded[c.id];
+      if (state._drawerCatalogId === c.id) closeCatalogDrawer();
+      renderCatalogs();
+      dirty();
+    };
     li.addEventListener("click", async (e) => {
-      if (e.target.closest(".agent-remove")) {
+      if (e.target.closest(".row-kebab")) {
         e.stopPropagation();
-        const ok = await modalConfirm({
-          title:        `Delete "${c.name}"? (${c.businessGroups.length} business groups will also be deleted)`,
-          confirmLabel: "Delete",
-          danger:       true
-        });
-        if (!ok) return;
-        state.catalogs = state.catalogs.filter(x => x.id !== c.id);
-        delete state._catalogExpanded[c.id];
-        if (state._drawerCatalogId === c.id) closeCatalogDrawer();
-        renderCatalogs();
-        dirty();
+        openRowMenu(e.target.closest(".row-kebab"), [
+          { label: "Edit",   onClick: () => openCatalogDialog(c) },
+          { label: "Add business group", onClick: () => addBusinessGroupToCatalog(c) },
+          { label: "Delete", danger: true, onClick: doDelete }
+        ]);
         return;
       }
       if (e.target.closest(".bookmark-new")) {
@@ -1512,84 +2173,38 @@ async function addBusinessGroupToCatalog(cat) {
 }
 
 // ─── Auth flow セグメント ───
-function renderCatalogFlowSeg() {
-  const root = $("#catFlowSeg");
-  if (!root) return;
-  root.innerHTML = "";
-  const segs = [
-    { id: "authcode", label: "Interactive", sub: "auth code · browser", icon: "↳" },
-    { id: "cc",       label: "Service",     sub: "client credentials",  icon: "⚙" }
-  ];
-  segs.forEach(s => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "seg-btn";
-    btn.dataset.flow = s.id;
-    if (s.id === state.selectedCatalogFlow) btn.classList.add("is-active");
-    btn.innerHTML = `
-      <span class="seg-icon">${escapeHtml(s.icon)}</span>
-      <span class="seg-body">
-        <span class="seg-label">${escapeHtml(s.label)}</span>
-        <span class="seg-sub">${escapeHtml(s.sub)}</span>
-      </span>
-    `;
-    btn.addEventListener("click", () => {
-      state.selectedCatalogFlow = s.id;
-      refreshCatalogDialog();
+// catalog ダイアログの identity セレクトを埋める (oauth2_cc / oauth2_authcode のみ;
+// catalog の Exchange API は OAuth トークンを要求するため bearer/jwt は対象外)。
+function renderCatAuthRefSelect(selectedId) {
+  const sel = $("#catAuthRef");
+  if (!sel) return;
+  const cur = selectedId !== undefined ? selectedId : sel.value;
+  sel.innerHTML = "";
+  const head = document.createElement("option");
+  head.value = ""; head.textContent = "— select identity —";
+  sel.appendChild(head);
+  (state.identities || [])
+    .filter(idn => idn.kind === "oauth2_cc" || idn.kind === "oauth2_authcode")
+    .forEach(idn => {
+      const o = document.createElement("option");
+      o.value = idn.id;
+      o.textContent = `${idn.name} · ${kindBadge(idn.kind)}`;
+      sel.appendChild(o);
     });
-    root.appendChild(btn);
-  });
-}
-
-// ─── 表示切替 + read-only値 + CTA を一括更新 ───
-function refreshCatalogDialog() {
-  renderCatalogFlowSeg();
-
-  // data-only でフロー依存フィールドを切替
-  document.querySelectorAll("#catalogDialog [data-only]").forEach(el => {
-    el.style.display = (el.dataset.only === state.selectedCatalogFlow) ? "" : "none";
-  });
-
-  // Anypoint URL表示 (read-only)
-  $("#catAuthUrlRo").textContent  = ANYPOINT.authUrl;
-  $("#catTokenUrlRo").textContent = ANYPOINT.tokenUrl;
-
-  // client_secret の hint をフローごとに切替
-  const secretHint = $("#catSecretHint");
-  if (secretHint) {
-    secretHint.textContent = state.selectedCatalogFlow === "authcode"
-      ? "Web app type only · leave empty for SPA"
-      : "Required for service authentication";
-  }
-
-  // CTA動的化
-  const btn   = $("#catSubmit");
-  const glyph = btn.querySelector(".cat-cta-glyph");
-  const label = btn.querySelector(".cat-cta-label");
-  if (state.selectedCatalogFlow === "authcode") {
-    btn.classList.add("is-oauth");
-    glyph.textContent = "A";
-    label.textContent = "Continue with Anypoint";
-  } else {
-    btn.classList.remove("is-oauth");
-    glyph.textContent = "+";
-    label.textContent = "Save catalog";
-  }
+  const neu = document.createElement("option");
+  neu.value = "__new__"; neu.textContent = "+ new identity…";
+  sel.appendChild(neu);
+  sel.value = (cur && identityById(cur)) ? cur : "";
 }
 
 function openCatalogDialog(editing) {
   $("#catalogDialog").hidden = false;
-  state.selectedCatalogFlow = editing?.flow || "cc";
-  state._editingCatalogId   = editing?.id   || null;
+  state._editingCatalogId = editing?.id || null;
 
-  $("#catName").value         = editing?.name        || "";
-  $("#catClientId").value     = editing?.clientId    || "";
-  $("#catClientSecret").value = editing?.clientSecret ? "•".repeat(12) : "";
-  $("#catScopes").value       = editing?.scopes      || "";
+  $("#catName").value          = editing?.name || "";
   $("#catBusinessGroup").value = "";   // 編集時は既存 BGs に追加する形なので空 (初回のみ使用)
-  $("#catRedirect").value     = redirectUri();
+  renderCatAuthRefSelect(editing?.authRef || "");
 
-  refreshCatalogDialog();
   setTimeout(() => $("#catName").focus(), 50);
 }
 
@@ -1600,31 +2215,24 @@ function closeCatalogDialog() {
 
 async function submitCatalogDialog() {
   const name     = $("#catName").value.trim();
-  const flow     = state.selectedCatalogFlow;
-  const clientId = $("#catClientId").value.trim();
-  const secretInput = $("#catClientSecret").value;
-  const scopes   = $("#catScopes").value.trim();
+  const authRef  = $("#catAuthRef")?.value || "";
   const bgInput  = $("#catBusinessGroup").value.trim();
 
-  if (!name)     { $("#catName").focus(); return; }
-  if (!clientId) { $("#catClientId").focus(); return; }
+  if (!name)    { $("#catName").focus(); return; }
+  if (!authRef || authRef === "__new__") {
+    await modalAlert({ title: "Identity required", message: "AUTHENTICATION の identity を選択してください (OAuth2 CC か Authorization Code)。" });
+    return;
+  }
 
   const editingId = state._editingCatalogId;
   const existing  = editingId ? state.catalogs.find(c => c.id === editingId) : null;
-  const isMask = secretInput && /^•+$/.test(secretInput);
-  const clientSecret = isMask
-    ? existing?.clientSecret
-    : (secretInput || undefined);
 
   const cat = existing || { businessGroups: [] };
   Object.assign(cat, {
     id:        existing?.id || `cat-${++catCounter}`,
     name,
     type:      "anypoint",
-    flow,
-    authUrl:   ANYPOINT.authUrl,
-    tokenUrl:  ANYPOINT.tokenUrl,
-    clientId, clientSecret, scopes,
+    authRef,
     status:    existing?.status || "idle",
     createdAt: existing?.createdAt || Date.now()
   });
@@ -1683,14 +2291,16 @@ function wireCatalogDialog() {
   $("#catCancel").addEventListener("click", closeCatalogDialog);
   $("#catSubmit").addEventListener("click", submitCatalogDialog);
 
-  const secretInput  = $("#catClientSecret");
-  const secretToggle = $("#catSecretToggle");
-  if (secretToggle && secretInput) {
-    secretToggle.addEventListener("click", () => {
-      const showing = secretInput.type === "text";
-      secretInput.type = showing ? "password" : "text";
-      secretToggle.setAttribute("aria-pressed", showing ? "false" : "true");
-      secretToggle.classList.toggle("is-revealed", !showing);
+  const authSel = $("#catAuthRef");
+  if (authSel) {
+    authSel.addEventListener("change", () => {
+      if (authSel.value !== "__new__") return;
+      authSel.value = "";
+      // catalog は OAuth2 CC を既定にして identity ダイアログを開く。保存後この select に反映。
+      state._authRefReturn = (newId) => { renderCatAuthRefSelect(newId); };
+      openIdentityDialog();
+      state.selectedIdentityKind = "oauth2_cc";
+      refreshIdentityDialog();
     });
   }
 }
@@ -1825,17 +2435,39 @@ function renderScripts() {
               aria-label="toggle auto loop">
         <svg viewBox="0 0 16 16" width="11" height="11"><path d="M3 7 a5 5 0 0 1 9 -2.5 M13 9 a5 5 0 0 1 -9 2.5 M3 2 v3 h3 M13 14 v-3 h-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
-      <button class="agent-remove" title="Delete" aria-label="remove">
-        <svg viewBox="0 0 14 14" width="9" height="9">
-          <line x1="3" y1="3" x2="11" y2="11" stroke="currentColor" stroke-width="1.4"/>
-          <line x1="11" y1="3" x2="3" y2="11" stroke="currentColor" stroke-width="1.4"/>
-        </svg>
-      </button>
+      ${KEBAB_BTN_HTML}
     `;
+    // inline rename (dblclick / 鉛筆ボタン 共通)
+    const beginRename = () => {
+      const nameEl = li.querySelector(".script-name");
+      nameEl.contentEditable = "true";
+      nameEl.focus();
+      const range = document.createRange();
+      range.selectNodeContents(nameEl);
+      const sel = window.getSelection();
+      sel.removeAllRanges(); sel.addRange(range);
+      const commit = () => {
+        nameEl.contentEditable = "false";
+        const v = nameEl.textContent.trim();
+        if (v && v !== s.name) renameScript(s.id, v);
+        else nameEl.textContent = s.name;
+        nameEl.removeEventListener("blur", commit);
+        nameEl.removeEventListener("keydown", onKey);
+      };
+      const onKey = (ke) => {
+        if (ke.key === "Enter")  { ke.preventDefault(); commit(); }
+        if (ke.key === "Escape") { nameEl.textContent = s.name; commit(); }
+      };
+      nameEl.addEventListener("blur", commit);
+      nameEl.addEventListener("keydown", onKey);
+    };
     li.addEventListener("click", (e) => {
-      if (e.target.closest(".agent-remove")) {
+      if (e.target.closest(".row-kebab")) {
         e.stopPropagation();
-        deleteScript(s.id);
+        openRowMenu(e.target.closest(".row-kebab"), [
+          { label: "Rename", onClick: () => beginRename() },
+          { label: "Delete", danger: true, onClick: () => deleteScript(s.id) }
+        ]);
         return;
       }
       if (e.target.closest(".script-run")) {
@@ -1866,29 +2498,9 @@ function renderScripts() {
       }
     });
     li.addEventListener("dblclick", (e) => {
-      if (e.target.closest(".agent-remove")) return;
+      if (e.target.closest(".row-kebab")) return;
       e.stopPropagation();
-      const nameEl = li.querySelector(".script-name");
-      nameEl.contentEditable = "true";
-      nameEl.focus();
-      const range = document.createRange();
-      range.selectNodeContents(nameEl);
-      const sel = window.getSelection();
-      sel.removeAllRanges(); sel.addRange(range);
-      const commit = () => {
-        nameEl.contentEditable = "false";
-        const v = nameEl.textContent.trim();
-        if (v && v !== s.name) renameScript(s.id, v);
-        else nameEl.textContent = s.name;
-        nameEl.removeEventListener("blur", commit);
-        nameEl.removeEventListener("keydown", onKey);
-      };
-      const onKey = (ke) => {
-        if (ke.key === "Enter")  { ke.preventDefault(); commit(); }
-        if (ke.key === "Escape") { nameEl.textContent = s.name; commit(); }
-      };
-      nameEl.addEventListener("blur", commit);
-      nameEl.addEventListener("keydown", onKey);
+      beginRename();
     });
     root.appendChild(li);
   });
@@ -1945,7 +2557,6 @@ function applyProtoSpecificFields() {
   if (channelField) channelField.hidden = !isSlack;
   // placeholder の切替
   const urlInput  = $("#dlgUrl");
-  const authInput = $("#dlgAuth");
   if (urlInput) {
     if (isSlack) {
       urlInput.placeholder = "https://slack.com   ·   https://slack.example.com   (compatible server)";
@@ -1958,11 +2569,27 @@ function applyProtoSpecificFields() {
       urlInput.title = "Base URL is fine — Atelier appends /.well-known/agent-card.json automatically (falls back to /.well-known/agent.json for the legacy spec).";
     }
   }
-  if (authInput) {
-    authInput.placeholder = isSlack
-      ? "xoxb-...  (bot token)  ·  xoxp-...  (user token)"
-      : "optional";
-  }
+}
+
+// connect ダイアログの auth セレクトを identities で埋める。
+function renderAuthRefSelect(selectedId) {
+  const sel = $("#dlgAuthRef");
+  if (!sel) return;
+  const cur = selectedId !== undefined ? selectedId : sel.value;
+  sel.innerHTML = "";
+  const none = document.createElement("option");
+  none.value = ""; none.textContent = "none";
+  sel.appendChild(none);
+  (state.identities || []).forEach(idn => {
+    const o = document.createElement("option");
+    o.value = idn.id;
+    o.textContent = `${idn.name} · ${kindBadge(idn.kind)}`;
+    sel.appendChild(o);
+  });
+  const neu = document.createElement("option");
+  neu.value = "__new__"; neu.textContent = "+ new identity…";
+  sel.appendChild(neu);
+  sel.value = (cur && (cur === "" || identityById(cur))) ? cur : "";
 }
 
 // ─── Rail ─────────────────────────────────────────────
@@ -1973,7 +2600,22 @@ function wireRail() {
   $("#btnLayout").addEventListener("click", cycleTileMode);
   const btnSnap = $("#btnSnap");
   if (btnSnap) btnSnap.addEventListener("click", () => tileWindows("fit"));
+  const btnCloseAll = $("#btnCloseAll");
+  if (btnCloseAll) btnCloseAll.addEventListener("click", closeAllWindows);
   $("#scriptAdd").addEventListener("click", () => createScript({}));
+}
+
+// 現ワークスペースの全ウインドウを閉じる (接続も切断)。確認あり。
+async function closeAllWindows() {
+  const ws = activeWorkspace();
+  if (!ws || ws.windows.length === 0) return;
+  const ok = await modalConfirm({
+    title:        `Close all windows? (${ws.windows.length} connection${ws.windows.length === 1 ? "" : "s"} will be disconnected)`,
+    confirmLabel: "Close all",
+    danger:       true
+  });
+  if (!ok) return;
+  [...ws.windows].forEach(w => w.close());
 }
 
 // ═══════════════════════════════════════════════════════
@@ -3498,16 +4140,58 @@ function wireDialog() {
     if (e.key === "Enter") submitDialog();
   });
   $("#dlgUrl").addEventListener("input", clearDialogTest);
+
+  const authSel = $("#dlgAuthRef");
+  if (authSel) {
+    authSel.addEventListener("change", () => {
+      if (authSel.value !== "__new__") return;
+      // 「+ new identity…」→ identity ダイアログを開く。保存後この select に反映。
+      authSel.value = "";
+      state._authRefReturn = (newId) => { renderAuthRefSelect(newId); };
+      openIdentityDialog();
+    });
+  }
 }
 
-function openDialog() {
+function openDialog(opts = {}) {
+  const editB = opts.editBookmark || null;
+  state._editingBookmarkKey = editB ? editB.key : null;
+
   $("#connectDialog").hidden = false;
+  if (editB) state.selectedProto = editB.protoId;
   renderProtoGrid();
+  renderAuthRefSelect(editB ? (editB.authRef || "") : "");
   clearDialogTest();
-  setTimeout(() => $("#dlgUrl").focus(), 50);
+
+  // 値のプリフィル
+  $("#dlgUrl").value  = editB ? (editB.url || "") : "";
+  $("#dlgName").value = editB ? (editB.name || "") : "";
+  if ($("#dlgChannel")) $("#dlgChannel").value = editB ? (editB.channel || "") : "";
+
+  // 編集モードの見た目: title / CTA / proto と url をロック
+  const eyebrow = document.querySelector("#connectDialog .dialog-eyebrow");
+  const title   = $("#dlgTitle");
+  const submitLabel = $("#dlgSubmit")?.querySelector("span");
+  if (editB) {
+    if (eyebrow) eyebrow.textContent = "edit connection";
+    if (title)   title.innerHTML = "Edit <em>connection</em>";
+    if (submitLabel) submitLabel.textContent = "save";
+    $("#dlgUrl").readOnly = true;
+    $("#dlgUrl").classList.add("is-readonly");
+    document.querySelectorAll("#dlgProtoGrid .proto-card").forEach(el => el.disabled = true);
+  } else {
+    if (eyebrow) eyebrow.textContent = "new connection";
+    if (title)   title.innerHTML = "Connect to an <em>agent</em>";
+    if (submitLabel) submitLabel.textContent = "connect";
+    $("#dlgUrl").readOnly = false;
+    $("#dlgUrl").classList.remove("is-readonly");
+  }
+
+  setTimeout(() => $(editB ? "#dlgName" : "#dlgUrl").focus(), 50);
 }
 function closeDialog() {
   $("#connectDialog").hidden = true;
+  state._editingBookmarkKey = null;
   clearDialogTest();
 }
 
@@ -3533,21 +4217,24 @@ async function testDialog() {
   if (!raw) { $("#dlgUrl").focus(); return; }
   const url = /^https?:\/\//i.test(raw) ? raw : "https://" + raw;
   const protoId = state.selectedProto;
-  const auth = $("#dlgAuth").value.trim();
+  const authRef = $("#dlgAuthRef")?.value || "";
+  const resolved = await resolveAuthForConnection({ authRef: (authRef && authRef !== "__new__") ? authRef : undefined });
+  const auth = resolved.auth || "";
+  const authHeaders = resolved.authHeaders || null;
   const btn = $("#dlgTest");
   btn.disabled = true;
   setDialogTestStatus("info", "<span class='dts-dot'></span> Testing…");
   const t0 = performance.now();
   try {
     if (protoId === "mcp") {
-      const result = await testMcp(url, auth);
+      const result = await testMcp(url, auth, authHeaders);
       const ms = Math.round(performance.now() - t0);
       setDialogTestStatus("ok",
         `<span class='dts-dot'></span> initialize OK · <code>${escapeHtml(result.serverName || "(no name)")}</code>` +
         (result.protocolVersion ? ` · proto <code>${escapeHtml(result.protocolVersion)}</code>` : "") +
         ` · ${ms}ms`);
     } else if (protoId === "a2a") {
-      const result = await testA2a(url, auth);
+      const result = await testA2a(url, auth, authHeaders);
       const ms = Math.round(performance.now() - t0);
       const cardUrl = result.card?.url;
       const mismatch = cardUrl && !sameOrigin(cardUrl, url);
@@ -3581,9 +4268,10 @@ function proxifyForTest(target) {
   return `/proxy?url=${encodeURIComponent(target)}`;
 }
 
-async function testMcp(endpoint, auth) {
+async function testMcp(endpoint, auth, authHeaders) {
   const headers = { "Content-Type": "application/json", "Accept": "application/json" };
   if (auth) headers["Authorization"] = `Bearer ${auth}`;
+  if (authHeaders) Object.assign(headers, authHeaders);
   const body = JSON.stringify({
     jsonrpc: "2.0", id: 1, method: "initialize",
     params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "atelier-test", version: "1.0" } }
@@ -3599,9 +4287,10 @@ async function testMcp(endpoint, auth) {
   };
 }
 
-async function testA2a(baseUrl, auth) {
+async function testA2a(baseUrl, auth, authHeaders) {
   const headers = { "Accept": "application/json" };
   if (auth) headers["Authorization"] = `Bearer ${auth}`;
+  if (authHeaders) Object.assign(headers, authHeaders);
   const candidates = [];
   if (/\/\.well-known\/agent-card\.json\b/.test(baseUrl)) candidates.push(baseUrl);
   else if (/\/\.well-known\/agent\.json\b/.test(baseUrl)) candidates.push(baseUrl);
@@ -3628,13 +4317,42 @@ async function testA2a(baseUrl, auth) {
 async function submitDialog() {
   const raw  = $("#dlgUrl").value.trim();
   const name = $("#dlgName").value.trim();
-  const auth = $("#dlgAuth").value.trim();
+  const authRef = $("#dlgAuthRef")?.value || "";
   const channel = $("#dlgChannel")?.value.trim().replace(/^#/, "") || "";
   if (!raw) {
     $("#dlgUrl").focus();
     return;
   }
   const url = raw ? (/^https?:\/\//i.test(raw) ? raw : "https://" + raw) : "";
+  const cleanAuthRef = (authRef && authRef !== "__new__") ? authRef : undefined;
+
+  // ── 編集モード: 既存 bookmark を更新し、開いているウインドウを新設定で再接続 ──
+  const editKey = state._editingBookmarkKey;
+  if (editKey) {
+    const b = (state.bookmarks || []).find(x => x.key === editKey);
+    if (b) {
+      const newName = name || b.name;
+      b.name = newName;
+      b.authRef = cleanAuthRef;
+      if (state.selectedProto === "slack") b.channel = channel || "general";
+      // 開いているウインドウを新しい auth/name で再接続
+      const wins = state.workspaces.flatMap(w => w.windows)
+        .filter(w => w.protoId === b.protoId && w.adapter.config.url === b.url);
+      const resolved = await resolveAuthForConnection({ authRef: cleanAuthRef, auth: b.auth });
+      for (const win of wins) {
+        win.adapter.config.name = newName;
+        win.adapter.config.authRef = cleanAuthRef;
+        win.adapter.config.auth = resolved.auth;
+        win.adapter.config.authHeaders = resolved.authHeaders;
+        try { await win.adapter.connect(); } catch (e) { console.warn("reconnect after edit failed:", e); }
+      }
+    }
+    state._editingBookmarkKey = null;
+    renderBookmarks();
+    dirty();
+    closeDialog();
+    return;
+  }
 
   // submit ボタンを連打防止 + 進行表示
   const btn = $("#dlgSubmit");
@@ -3643,7 +4361,7 @@ async function submitDialog() {
     protoId: state.selectedProto,
     url,
     name: name || hostFromUrl(url) || "Untitled",
-    auth: auth || undefined,
+    authRef: cleanAuthRef,
     channel: state.selectedProto === "slack" ? (channel || "general") : undefined
   });
   btn.disabled = false;
@@ -3654,7 +4372,7 @@ async function submitDialog() {
 }
 
 // ─── Connect ────────────────────────────────────────
-async function connect({ protoId, url, name, auth, persona, channel }, opts = {}) {
+async function connect({ protoId, url, name, auth, authRef, persona, channel }, opts = {}) {
   const proto = getProtocol(protoId);
   if (!proto || !proto.AdapterClass) {
     await modalAlert({
@@ -3678,7 +4396,14 @@ async function connect({ protoId, url, name, auth, persona, channel }, opts = {}
   while (usedNums.has(n)) n++;
   const instanceSuffix = n === 1 ? "" : ` #${n}`;
 
-  const adapter = new proto.AdapterClass({ url, name, auth, persona, channel });
+  // authRef があれば identity から実トークン/ヘッダを解決 (無ければ旧 auth 文字列を後方互換で使用)
+  const resolved = await resolveAuthForConnection({ authRef, auth });
+  const adapter = new proto.AdapterClass({
+    url, name, persona, channel,
+    auth: resolved.auth,
+    authHeaders: resolved.authHeaders,
+    authRef
+  });
 
   // ── 接続を先に試す: 失敗時はウインドウを作らず modal で通知 ──
   // (復元時は元々開いてた接続なので、 失敗しても ウインドウだけは作って後で再接続できるようにする)
@@ -3708,9 +4433,9 @@ async function connect({ protoId, url, name, auth, persona, channel }, opts = {}
   win._wsId = ws.id;
   ws.windows.push(win);
 
-  // bookmark 登録: 同じ proto+url が無ければ追加、 あれば最新の name/auth/etc に更新
+  // bookmark 登録: 同じ proto+url が無ければ追加、 あれば最新の name/authRef/etc に更新
   upsertBookmark({
-    protoId, url, name, auth, persona, channel
+    protoId, url, name, auth, authRef, persona, channel
   });
 
   renderTabs();

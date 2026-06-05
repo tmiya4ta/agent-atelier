@@ -111,65 +111,121 @@
         </svg>
         <span>snap</span>
       </button>
+      <button class="ghost-btn" id="btnCloseAll" title="Close all open windows in this workspace">
+        <svg viewBox="0 0 16 16" width="14" height="14">
+          <rect x="2" y="2" width="9" height="9" rx="1" fill="none" stroke="currentColor"/>
+          <line x1="4.5" y1="4.5" x2="8.5" y2="8.5" stroke="currentColor" stroke-width="1.3"/>
+          <line x1="8.5" y1="4.5" x2="4.5" y2="8.5" stroke="currentColor" stroke-width="1.3"/>
+        </svg>
+        <span>close all</span>
+      </button>
     </div>
   </header>
 
   <!-- ───────────────  LEFT SIDEBAR  ─────────────── -->
   <aside class="sidebar" id="sidebar">
-   <div class="side-scroll">
-    <section class="side-sec side-cta-sec">
-      <button class="side-cta" id="btnConnect" title="New connection">
-        <span class="side-cta-glyph">+</span>
-        <span class="side-cta-label">new connection</span>
+   <div class="side-body">
+    <!-- 左端アイコンレール (Activity Bar) -->
+    <nav class="side-rail" id="sideRail" role="tablist" aria-label="sidebar categories">
+      <button class="rail-ico is-active" data-cat="connections" role="tab" aria-selected="true" title="Connections" aria-label="Connections">
+        <svg viewBox="0 0 18 18" width="18" height="18"><circle cx="4.5" cy="4.5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="13.5" cy="13.5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.4 6.4 L11.6 11.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
       </button>
-    </section>
+      <button class="rail-ico" data-cat="catalogs" role="tab" aria-selected="false" title="Catalogs" aria-label="Catalogs">
+        <svg viewBox="0 0 18 18" width="18" height="18"><rect x="2.5" y="3" width="13" height="3" rx="1" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="2.5" y="7.5" width="13" height="3" rx="1" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="2.5" y="12" width="13" height="3" rx="1" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+      </button>
+      <button class="rail-ico" data-cat="authentication" role="tab" aria-selected="false" title="Authentication" aria-label="Authentication">
+        <svg viewBox="0 0 18 18" width="18" height="18"><rect x="3.5" y="8" width="11" height="7.5" rx="1.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6 8 V5.5 a3 3 0 0 1 6 0 V8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="9" cy="11.5" r="1.1" fill="currentColor"/></svg>
+      </button>
+      <button class="rail-ico" data-cat="scenarios" role="tab" aria-selected="false" title="Scenarios" aria-label="Scenarios">
+        <svg viewBox="0 0 18 18" width="18" height="18"><path d="M5.5 3.5 L13 9 L5.5 14.5 Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+      </button>
+    </nav>
 
-    <section class="side-sec">
-      <h4 class="side-title">
-        <span>CONNECTIONS</span>
-        <span class="side-count" id="savedCount">0</span>
-        <button class="side-add" id="connToggleAll" title="Expand / collapse all" aria-label="toggle all connections" hidden>
-          <svg class="ico-collapse-all" viewBox="0 0 14 14" width="10" height="10"><polyline points="3,5 7,2 11,5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><polyline points="3,9 7,12 11,9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <svg class="ico-expand-all" viewBox="0 0 14 14" width="10" height="10"><polyline points="3,3 7,6 11,3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><polyline points="3,8 7,11 11,8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
-      </h4>
-      <ul class="agent-list" id="savedAgents">
-        <!-- dynamic — live window list -->
-      </ul>
-      <p class="agent-empty" id="bookmarksEmpty">
-        No active connections
-      </p>
-    </section>
+    <!-- 右パネル: 選択中カテゴリのみ表示 -->
+    <div class="side-panel">
+     <div class="side-scroll">
+      <!-- ─── CONNECTIONS ─── -->
+      <div class="side-cat" data-cat="connections">
+        <section class="side-sec side-cta-sec">
+          <button class="side-cta" id="btnConnect" title="New connection">
+            <span class="side-cta-glyph">+</span>
+            <span class="side-cta-label">new connection</span>
+          </button>
+        </section>
 
-    <section class="side-sec">
-      <h4 class="side-title">
-        <span>CATALOGS</span>
-        <button class="side-add" id="catalogAdd" title="New catalog" aria-label="add catalog">
-          <svg viewBox="0 0 14 14" width="10" height="10"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-        </button>
-      </h4>
-      <ul class="catalog-list" id="catalogList">
-        <!-- dynamic -->
-      </ul>
-      <p class="agent-empty" id="catalogsEmpty" data-i18n-html="side.catalogs.empty">
-        <span class="agent-empty-glyph">+</span> to add a catalog (Anypoint Platform)
-      </p>
-    </section>
+        <section class="side-sec">
+          <h4 class="side-title">
+            <span>CONNECTIONS</span>
+            <span class="side-count" id="savedCount">0</span>
+            <button class="side-add" id="connToggleAll" title="Expand / collapse all" aria-label="toggle all connections" hidden>
+              <svg class="ico-collapse-all" viewBox="0 0 14 14" width="10" height="10"><polyline points="3,5 7,2 11,5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><polyline points="3,9 7,12 11,9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <svg class="ico-expand-all" viewBox="0 0 14 14" width="10" height="10"><polyline points="3,3 7,6 11,3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><polyline points="3,8 7,11 11,8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </h4>
+          <ul class="agent-list" id="savedAgents">
+            <!-- dynamic — live window list -->
+          </ul>
+          <p class="agent-empty" id="bookmarksEmpty">
+            No active connections
+          </p>
+        </section>
+      </div>
 
-    <section class="side-sec">
-      <h4 class="side-title">
-        <span>SCENARIOS</span>
-        <button class="side-add" id="scriptAdd" title="New script" aria-label="add script">
-          <svg viewBox="0 0 14 14" width="10" height="10"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-        </button>
-      </h4>
-      <ul class="script-list" id="scriptList">
-        <!-- dynamic -->
-      </ul>
-      <p class="agent-empty" id="scriptsEmpty" data-i18n-html="side.scripts.empty">
-        <span class="agent-empty-glyph">+</span> to create a script (manage multiple)
-      </p>
-    </section>
+      <!-- ─── CATALOGS ─── -->
+      <div class="side-cat" data-cat="catalogs" hidden>
+        <section class="side-sec">
+          <h4 class="side-title">
+            <span>CATALOGS</span>
+            <button class="side-add" id="catalogAdd" title="New catalog" aria-label="add catalog">
+              <svg viewBox="0 0 14 14" width="10" height="10"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            </button>
+          </h4>
+          <ul class="catalog-list" id="catalogList">
+            <!-- dynamic -->
+          </ul>
+          <p class="agent-empty" id="catalogsEmpty" data-i18n-html="side.catalogs.empty">
+            <span class="agent-empty-glyph">+</span> to add a catalog (Anypoint Platform)
+          </p>
+        </section>
+      </div>
+
+      <!-- ─── AUTHENTICATION ─── -->
+      <div class="side-cat" data-cat="authentication" hidden>
+        <section class="side-sec">
+          <h4 class="side-title">
+            <span>AUTHENTICATION</span>
+            <button class="side-add" id="identityAdd" title="New identity" aria-label="add identity">
+              <svg viewBox="0 0 14 14" width="10" height="10"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            </button>
+          </h4>
+          <ul class="identity-list" id="identityList">
+            <!-- dynamic -->
+          </ul>
+          <p class="agent-empty" id="identitiesEmpty" data-i18n-html="side.identities.empty">
+            <span class="agent-empty-glyph">+</span> to add an identity (IdP credential)
+          </p>
+        </section>
+      </div>
+
+      <!-- ─── SCENARIOS ─── -->
+      <div class="side-cat" data-cat="scenarios" hidden>
+        <section class="side-sec">
+          <h4 class="side-title">
+            <span>SCENARIOS</span>
+            <button class="side-add" id="scriptAdd" title="New script" aria-label="add script">
+              <svg viewBox="0 0 14 14" width="10" height="10"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            </button>
+          </h4>
+          <ul class="script-list" id="scriptList">
+            <!-- dynamic -->
+          </ul>
+          <p class="agent-empty" id="scriptsEmpty" data-i18n-html="side.scripts.empty">
+            <span class="agent-empty-glyph">+</span> to create a script (manage multiple)
+          </p>
+        </section>
+      </div>
+     </div>
+    </div>
    </div>
 
     <section class="side-sec side-footer">
@@ -361,8 +417,11 @@
             <input id="dlgName" type="text" placeholder="e.g. Research Agent" autocomplete="off" />
           </div>
           <div class="field">
-            <label class="field-label" for="dlgAuth"><span>auth</span><span class="field-hint">bearer token / none</span></label>
-            <input id="dlgAuth" type="text" placeholder="optional" autocomplete="off" />
+            <label class="field-label" for="dlgAuthRef"><span>auth</span><span class="field-hint">identity / none</span></label>
+            <select id="dlgAuthRef" class="dlg-authref">
+              <option value="">none</option>
+              <option value="__new__">+ new identity…</option>
+            </select>
           </div>
         </div>
 
@@ -426,13 +485,6 @@
       </header>
 
       <div class="dialog-body">
-        <!-- 1. auth flow segment -->
-        <div class="cat-section">
-          <div class="cat-section-label">authentication</div>
-          <div class="seg-ctrl" id="catFlowSeg"></div>
-        </div>
-
-        <!-- 2. always-on required fields -->
         <div class="cat-section cat-section-form">
           <div class="field">
             <label class="field-label" for="catName">
@@ -443,25 +495,14 @@
           </div>
 
           <div class="field">
-            <label class="field-label" for="catClientId">
-              <span>client id</span>
-              <span class="field-hint">Connected App's client_id</span>
+            <label class="field-label" for="catAuthRef">
+              <span>authentication</span>
+              <span class="field-hint">AUTHENTICATION の identity を選択</span>
             </label>
-            <input id="catClientId" type="text" placeholder="abcdef…" autocomplete="off" />
-          </div>
-
-          <div class="field">
-            <label class="field-label" for="catClientSecret">
-              <span>client secret</span>
-              <span class="field-hint" id="catSecretHint">Required for service authentication</span>
-            </label>
-            <div class="input-with-toggle">
-              <input id="catClientSecret" type="password" placeholder="••••••••" autocomplete="off" />
-              <button type="button" class="input-toggle" id="catSecretToggle" aria-label="Show client secret" aria-pressed="false" title="Show / hide">
-                <svg class="ico-eye" viewBox="0 0 16 16" width="14" height="14"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
-                <svg class="ico-eye-off" viewBox="0 0 16 16" width="14" height="14"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" fill="none" stroke="currentColor" stroke-width="1.3"/><line x1="2" y1="14" x2="14" y2="2" stroke="currentColor" stroke-width="1.4"/></svg>
-              </button>
-            </div>
+            <select id="catAuthRef" class="dlg-authref">
+              <option value="">— select identity —</option>
+              <option value="__new__">+ new identity…</option>
+            </select>
           </div>
 
           <div class="field">
@@ -471,35 +512,7 @@
             </label>
             <input id="catBusinessGroup" type="text" placeholder="e.g. btd  or  0fc4eaf1-5697-4cef-9c1b-3b96e3a52ee2" autocomplete="off" />
           </div>
-
         </div>
-
-        <!-- 3. advanced (URL preview, scope, redirect) -->
-        <details class="advanced cat-advanced">
-          <summary><span class="caret">▸</span> advanced</summary>
-          <div class="advanced-body">
-            <div class="cat-ro-block">
-              <div class="cat-ro-row">
-                <span class="cat-ro-label">auth url</span>
-                <span class="cat-ro-value" id="catAuthUrlRo"></span>
-              </div>
-              <div class="cat-ro-row">
-                <span class="cat-ro-label">token url</span>
-                <span class="cat-ro-value" id="catTokenUrlRo"></span>
-              </div>
-            </div>
-
-            <div class="field">
-              <label class="field-label"><span>scopes</span><span class="field-hint">space-separated</span></label>
-              <input id="catScopes" type="text" placeholder="full openid profile" />
-            </div>
-
-            <div class="field" data-only="authcode">
-              <label class="field-label" for="catRedirect"><span>redirect uri</span><span class="field-hint">Register this URL in the Connected App</span></label>
-              <input id="catRedirect" type="text" readonly />
-            </div>
-          </div>
-        </details>
       </div>
 
       <footer class="dialog-foot">
@@ -511,6 +524,203 @@
           <button class="primary-btn" id="catSubmit">
             <span class="primary-btn-glyph cat-cta-glyph">+</span>
             <span class="cat-cta-label">Save catalog</span>
+            <span class="arrow">→</span>
+          </button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ───────────────  IDENTITY DIALOG  ─────────────── -->
+  <div class="dialog-backdrop" id="identityDialog" hidden>
+    <div class="dialog dialog-catalog" role="dialog" aria-modal="true" aria-labelledby="idnTitle">
+      <header class="dialog-head">
+        <div>
+          <span class="dialog-eyebrow">identity</span>
+          <h2 class="dialog-title" id="idnTitle">Authentication <em>profile</em></h2>
+        </div>
+        <button class="icon-btn" id="idnClose" aria-label="close">
+          <svg viewBox="0 0 16 16" width="14" height="14"><line x1="2" y1="2" x2="14" y2="14" stroke="currentColor" stroke-width="1.4"/><line x1="14" y1="2" x2="2" y2="14" stroke="currentColor" stroke-width="1.4"/></svg>
+        </button>
+      </header>
+
+      <div class="dialog-body">
+        <!-- 1. kind segment -->
+        <div class="cat-section">
+          <div class="cat-section-label">method</div>
+          <div class="seg-ctrl" id="idnKindSeg"></div>
+        </div>
+
+        <!-- 2. always-on required fields -->
+        <div class="cat-section cat-section-form">
+          <div class="field">
+            <label class="field-label" for="idnName">
+              <span>display name</span>
+              <span class="field-hint">Identity label</span>
+            </label>
+            <input id="idnName" type="text" placeholder="e.g. My API Key" autocomplete="off" />
+          </div>
+
+          <!-- provider preset (OAuth/JWT のみ。 Anypoint 等を選ぶと url を自動入力) -->
+          <div class="field" id="idnProviderField">
+            <label class="field-label" for="idnProvider">
+              <span>provider</span>
+              <span class="field-hint">preset endpoints — or Custom</span>
+            </label>
+            <select id="idnProvider"></select>
+          </div>
+
+          <!-- bearer fields -->
+          <div class="field" data-only="bearer">
+            <label class="field-label" for="idnToken">
+              <span>token</span>
+              <span class="field-hint">API key or bearer token</span>
+            </label>
+            <div class="input-with-toggle">
+              <input id="idnToken" type="password" placeholder="••••••••" autocomplete="off" />
+              <button type="button" class="input-toggle" id="idnTokenToggle" aria-label="Show token" aria-pressed="false" title="Show / hide">
+                <svg class="ico-eye" viewBox="0 0 16 16" width="14" height="14"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+                <svg class="ico-eye-off" viewBox="0 0 16 16" width="14" height="14"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" fill="none" stroke="currentColor" stroke-width="1.3"/><line x1="2" y1="14" x2="14" y2="2" stroke="currentColor" stroke-width="1.4"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="field" data-only="bearer">
+            <label class="field-label" for="idnScheme">
+              <span>scheme</span>
+              <span class="field-hint">Authorization header format</span>
+            </label>
+            <select id="idnScheme">
+              <option value="Bearer">Bearer</option>
+              <option value="ApiKey">ApiKey</option>
+              <option value="raw">raw (no prefix)</option>
+            </select>
+          </div>
+
+          <!-- oauth2_cc fields -->
+          <div class="field" data-only="oauth2_cc">
+            <label class="field-label" for="idnTokenUrlCc">
+              <span>token url</span>
+              <span class="field-hint">OAuth token endpoint</span>
+            </label>
+            <input id="idnTokenUrlCc" type="text" placeholder="https://auth.example.com/oauth/token" autocomplete="off" />
+          </div>
+
+          <div class="field" data-only="oauth2_cc">
+            <label class="field-label" for="idnClientIdCc">
+              <span>client id</span>
+              <span class="field-hint">OAuth client_id</span>
+            </label>
+            <input id="idnClientIdCc" type="text" placeholder="client_id" autocomplete="off" />
+          </div>
+
+          <div class="field" data-only="oauth2_cc">
+            <label class="field-label" for="idnClientSecretCc">
+              <span>client secret</span>
+              <span class="field-hint">OAuth client_secret</span>
+            </label>
+            <div class="input-with-toggle">
+              <input id="idnClientSecretCc" type="password" placeholder="••••••••" autocomplete="off" />
+              <button type="button" class="input-toggle" id="idnSecretToggleCc" aria-label="Show client secret" aria-pressed="false" title="Show / hide">
+                <svg class="ico-eye" viewBox="0 0 16 16" width="14" height="14"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+                <svg class="ico-eye-off" viewBox="0 0 16 16" width="14" height="14"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" fill="none" stroke="currentColor" stroke-width="1.3"/><line x1="2" y1="14" x2="14" y2="2" stroke="currentColor" stroke-width="1.4"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- oauth2_authcode fields -->
+          <div class="field" data-only="oauth2_authcode">
+            <label class="field-label" for="idnAuthUrl">
+              <span>auth url</span>
+              <span class="field-hint">Authorization endpoint</span>
+            </label>
+            <input id="idnAuthUrl" type="text" placeholder="https://auth.example.com/oauth/authorize" autocomplete="off" />
+          </div>
+
+          <div class="field" data-only="oauth2_authcode">
+            <label class="field-label" for="idnTokenUrlCode">
+              <span>token url</span>
+              <span class="field-hint">OAuth token endpoint</span>
+            </label>
+            <input id="idnTokenUrlCode" type="text" placeholder="https://auth.example.com/oauth/token" autocomplete="off" />
+          </div>
+
+          <div class="field" data-only="oauth2_authcode">
+            <label class="field-label" for="idnClientIdCode">
+              <span>client id</span>
+              <span class="field-hint">OAuth client_id</span>
+            </label>
+            <input id="idnClientIdCode" type="text" placeholder="client_id" autocomplete="off" />
+          </div>
+
+          <div class="field" data-only="oauth2_authcode">
+            <label class="field-label" for="idnClientSecretCode">
+              <span>client secret</span>
+              <span class="field-hint">OAuth client_secret (optional for SPA)</span>
+            </label>
+            <div class="input-with-toggle">
+              <input id="idnClientSecretCode" type="password" placeholder="••••••••" autocomplete="off" />
+              <button type="button" class="input-toggle" id="idnSecretToggleCode" aria-label="Show client secret" aria-pressed="false" title="Show / hide">
+                <svg class="ico-eye" viewBox="0 0 16 16" width="14" height="14"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+                <svg class="ico-eye-off" viewBox="0 0 16 16" width="14" height="14"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" fill="none" stroke="currentColor" stroke-width="1.3"/><line x1="2" y1="14" x2="14" y2="2" stroke="currentColor" stroke-width="1.4"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- jwt_bearer fields -->
+          <div class="field" data-only="jwt_bearer">
+            <label class="field-label" for="idnAssertion">
+              <span>assertion</span>
+              <span class="field-hint">Signed JWT</span>
+            </label>
+            <textarea id="idnAssertion" rows="4" placeholder="eyJ..." autocomplete="off"></textarea>
+          </div>
+
+          <div class="field" data-only="jwt_bearer">
+            <label class="field-label" for="idnTokenUrlJwt">
+              <span>token url</span>
+              <span class="field-hint">Token endpoint</span>
+            </label>
+            <input id="idnTokenUrlJwt" type="text" placeholder="https://auth.example.com/oauth/token" autocomplete="off" />
+          </div>
+
+        </div>
+
+        <!-- 3. advanced -->
+        <details class="advanced cat-advanced">
+          <summary><span class="caret">▸</span> advanced</summary>
+          <div class="advanced-body">
+            <div class="field">
+              <label class="field-label" for="idnScopes"><span>scopes</span><span class="field-hint">space-separated (oauth2 only)</span></label>
+              <input id="idnScopes" type="text" placeholder="openid profile" autocomplete="off" />
+            </div>
+
+            <div class="field" data-only="bearer">
+              <label class="field-label" for="idnHeaderName"><span>header name</span><span class="field-hint">custom header (default: Authorization)</span></label>
+              <input id="idnHeaderName" type="text" placeholder="Authorization" autocomplete="off" />
+            </div>
+
+            <div class="field" data-only="oauth2_authcode">
+              <label class="field-label" for="idnRedirect"><span>redirect uri</span><span class="field-hint">Register this URL in the OAuth app</span></label>
+              <input id="idnRedirect" type="text" readonly />
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <div class="dialog-test" id="idnTestRow" hidden>
+        <div class="dialog-test-status" id="idnTestStatus" aria-live="polite"></div>
+      </div>
+
+      <footer class="dialog-foot">
+        <span class="dialog-foot-meta">
+          Identity values are stored locally
+        </span>
+        <div class="dialog-foot-actions">
+          <button class="ghost-btn" id="idnCancel">cancel</button>
+          <button class="ghost-btn" id="idnTest" title="入力値でトークン取得を試す (保存せず)">test</button>
+          <button class="primary-btn" id="idnSubmit">
+            <span>Save identity</span>
             <span class="arrow">→</span>
           </button>
         </div>

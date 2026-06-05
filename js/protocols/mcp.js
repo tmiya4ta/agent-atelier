@@ -104,6 +104,7 @@ export class MCPAdapter extends ProtocolAdapter {
       "Accept":       "application/json, text/event-stream"
     };
     if (this.config.auth) headers["Authorization"] = `Bearer ${this.config.auth}`;
+    if (this.config.authHeaders) Object.assign(headers, this.config.authHeaders);
     // initialize で得た session id を以降の全リクエストに付ける (無いと session 不正で弾かれる)
     if (this.sessionId) headers["Mcp-Session-Id"] = this.sessionId;
 
