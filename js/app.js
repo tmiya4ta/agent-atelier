@@ -2427,7 +2427,7 @@ function renderScripts() {
               title="${isRunningThis ? "Stop this script" : isBusyOther ? "別のシナリオを実行中です" : "Run this script (no panel open)"}"
               aria-label="${isRunningThis ? "stop script" : "run script"}">
         ${isRunningThis
-          ? `<svg viewBox="0 0 12 12" width="8" height="8"><rect x="2.5" y="2.5" width="7" height="7" rx="1" fill="currentColor"/></svg>`
+          ? `<svg viewBox="0 0 12 12" width="8" height="8"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg>`
           : `<svg viewBox="0 0 12 12" width="9" height="9"><path d="M3 2 L10 6 L3 10 Z" fill="currentColor"/></svg>`}
       </button>
       <button class="script-loop ${s.autoLoop ? "is-on" : ""} ${(state._script && state.selectedScriptId === s.id && s.autoLoop) ? "is-running" : ""}"
@@ -2642,6 +2642,22 @@ function findWindowByQuery(q) {
   // display name 部分一致
   w = all.find(x => dn(x).includes(query));
   return w || null;
+}
+
+// script の window 参照 (名前) に一致する bookmark (= 登録済み connection) を探す。
+// findWindowByQuery と同じ「完全一致 → 前方一致 → 部分一致」の優先順位。
+// 未オープンの window を Run 時に自動で開くために使う。
+function findBookmarkByQuery(q) {
+  const query = String(q || "").trim().toLowerCase();
+  if (!query) return null;
+  const bms = state.bookmarks || [];
+  const nameOf = b => String(b.name || hostFromUrl(b.url) || b.url || "").toLowerCase();
+  let b = bms.find(x => nameOf(x) === query);
+  if (b) return b;
+  b = bms.find(x => nameOf(x).startsWith(query));
+  if (b) return b;
+  b = bms.find(x => nameOf(x).includes(query));
+  return b || null;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -3126,6 +3142,58 @@ function runCurrentLine() {
   runScript({ text: line, scriptId: null, _ephemeral: true });
 }
 
+// 台本 ops が参照する window 名を集め、 未オープンのものは bookmark から開く。
+// 開いた window は AgentCard 取得 (adapter "open") まで待ってから返るので、
+// 直後の send/wait が「接続前」で空振りしない。
+async function ensureScriptWindowsOpen(ops) {
+  // ops から参照される window 名 (send / wait / operator / clear<win>) を重複なく集める
+  const names = [];
+  const seen = new Set();
+  for (const op of ops) {
+    if (!op.win) continue;
+    if (!["send", "wait", "operator", "clear", "mock"].includes(op.kind)) continue;
+    const key = op.win.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    names.push(op.win);
+  }
+
+  // まだ開いていない & bookmark がある名前だけを対象に connect
+  // (複数の名前が同じ bookmark に解決される場合は key で重複排除)
+  const toOpen = [];
+  const missing = [];
+  const openedKeys = new Set();
+  for (const name of names) {
+    if (findWindowByQuery(name)) continue;     // 既に開いている
+    const bm = findBookmarkByQuery(name);
+    if (bm) {
+      if (openedKeys.has(bm.key)) continue;
+      openedKeys.add(bm.key);
+      toOpen.push({ name, bm });
+    } else {
+      missing.push(name);
+    }
+  }
+
+  if (missing.length) {
+    appendScriptLog({ level: "dim", text: `· "${missing.join('", "')}" は未オープンで登録 connection も無し — 該当 op はスキップされます` });
+  }
+  if (!toOpen.length) return;
+
+  appendScriptLog({ level: "info", text: `· ${toOpen.length} window を自動オープン: ${toOpen.map(t => t.bm.name || t.name).join(", ")}` });
+  for (const { bm } of toOpen) {
+    try {
+      // lockName: bookmark の display name を維持 (AgentCard.name で上書きしない)
+      await connect({
+        protoId: bm.protoId, url: bm.url, name: bm.name,
+        auth: bm.auth, authRef: bm.authRef, persona: bm.persona, channel: bm.channel
+      }, { lockName: true });
+    } catch (e) {
+      appendScriptLog({ level: "err", text: `auto-open "${bm.name || bm.url}" failed: ${e?.message || e}` });
+    }
+  }
+}
+
 async function runScript(opts = {}) {
   // 既に別の script が実行中なら多重実行しない (サイドバー run / Ctrl+Enter / line 実行
   // など複数の入口があるため、 ここで一括ガード)。 停止は stop ボタン経由で。
@@ -3142,6 +3210,13 @@ async function runScript(opts = {}) {
   // run したらエディタ (script panel) を閉じて、 ウインドウ側の実行が見えるようにする。
   // script の実行は panel と独立なので、 閉じても走り続ける。
   if (state.scriptPanelOpen) closeScriptPanel();
+
+  // ─── 未オープン window の自動オープン ───
+  // 台本が参照する window 名で、 まだ開いていないが bookmark (登録済み connection) が
+  // あるものは、 実行前にここで開いておく。 mock モード時は実通信しないので skip。
+  if (!state.scriptMock) {
+    await ensureScriptWindowsOpen(ops);
+  }
 
   // ─── モックモード: ON なら対象 window の adapter を mock に乗っ取る ───
   // 台本インラインの `$> 応答` を { "<window名>": ["応答1", ...] } に畳んでローカル応答に。 実通信なし。

@@ -6,7 +6,7 @@
 // 返答: 同期 reply (mock 用) — レスポンスに { bot_reply | reply | message.text } があれば agent message として emit
 //       実 Slack の場合は別途 Events API / Socket Mode が必要 (今は未実装)
 
-import { ProtocolAdapter } from "./base.js";
+import { ProtocolAdapter, headersToObj } from "./base.js";
 
 const proxify = (url) => `/proxy?url=${encodeURIComponent(url)}`;
 
@@ -74,12 +74,12 @@ export class SlackAdapter extends ProtocolAdapter {
 
   async _call(method, body) {
     const url = `${this.baseUrl}/api/${method}`;
-    this._emit("rpc", { dir: "out", method, payload: body, raw: JSON.stringify(body, null, 2) });
     const headers = {
       "Content-Type": "application/json; charset=utf-8",
       "Accept":       "application/json"
     };
     if (this.token) headers.Authorization = `Bearer ${this.token}`;
+    this._emit("rpc", { dir: "out", method, headers, payload: body, raw: JSON.stringify(body, null, 2) });
     try {
       const res = await fetch(proxify(url), {
         method:  "POST",
@@ -90,6 +90,7 @@ export class SlackAdapter extends ProtocolAdapter {
       this._emit("rpc", {
         dir: "in",
         method: `${res.status} · ${method}`,
+        headers: headersToObj(res.headers),
         payload: data,
         raw: JSON.stringify(data, null, 2)
       });

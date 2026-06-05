@@ -1032,16 +1032,40 @@ export class AgentWindow {
       const entry = document.createElement("div");
       entry.className = "dbg-entry";
       const dirCls = f.dir === "out" ? "is-out" : f.dir === "in" ? "is-in" : "is-err";
-      const dirLbl = f.dir === "out" ? "→ out" : f.dir === "in" ? "← in" : "× err";
+      // 矢印の向き: in (受信) を → 、 out (送信) を ← とする。
+      const dirLbl = f.dir === "out" ? "← out" : f.dir === "in" ? "→ in" : "× err";
       const meta = f.payload?.id ? `id=${f.payload.id}` : "";
+      // 展開部は header / payload の 2 サブタブ。 header が無い frame は payload だけ。
+      const hasHeaders = f.headers && Object.keys(f.headers).length > 0;
+      const bodyHtml = f.payload ? syntaxJson(f.payload) : escapeHtml(f.raw || "");
+      const headersHtml = hasHeaders ? syntaxJson(f.headers) : "";
       entry.innerHTML = `
         <span class="dbg-time">${timeStr(f.ts)}</span>
         <span class="dbg-dir ${dirCls}">${dirLbl}</span>
         <span class="dbg-summary">${escapeHtml(f.method)}</span>
         <span class="dbg-meta">${meta}</span>
-        <pre class="dbg-body">${f.payload ? syntaxJson(f.payload) : escapeHtml(f.raw || "")}</pre>
+        <div class="dbg-detail">
+          ${hasHeaders ? `<div class="dbg-subtabs">
+            <button type="button" class="dbg-subtab is-active" data-sub="payload">payload</button>
+            <button type="button" class="dbg-subtab" data-sub="headers">headers</button>
+          </div>` : ""}
+          <pre class="dbg-body dbg-pane-payload is-active">${bodyHtml}</pre>
+          ${hasHeaders ? `<pre class="dbg-body dbg-pane-headers">${headersHtml}</pre>` : ""}
+        </div>
       `;
-      entry.addEventListener("click", () => entry.classList.toggle("is-open"));
+      // 行クリックで開閉。 サブタブのクリックは開閉させず pane だけ切り替える。
+      entry.addEventListener("click", (e) => {
+        const subBtn = e.target.closest(".dbg-subtab");
+        if (subBtn) {
+          e.stopPropagation();
+          const sub = subBtn.dataset.sub;
+          entry.querySelectorAll(".dbg-subtab").forEach(b => b.classList.toggle("is-active", b === subBtn));
+          entry.querySelector(".dbg-pane-payload")?.classList.toggle("is-active", sub === "payload");
+          entry.querySelector(".dbg-pane-headers")?.classList.toggle("is-active", sub === "headers");
+          return;
+        }
+        entry.classList.toggle("is-open");
+      });
       box.appendChild(entry);
     }
     box.scrollTop = box.scrollHeight;

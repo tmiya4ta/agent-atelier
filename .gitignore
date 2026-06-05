@@ -25,3 +25,6 @@ target/
 **/sf-bg-settings.xml
 *-settings.xml
 credentials.env.txt
+
+# yaac CLI local cache
+.yaac/

@@ -43,16 +43,26 @@ Content-Type は拡張子から判定 (html/css/js/json/svg/png/jpg/webp/ico/wof
 
 ```sh
 JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
-  mvn clean package -DskipTests -DattachMuleSources
+  mvn clean package -DskipTests
 ```
 
 → `target/atelier-static-1.0.0-mule-application.jar`
 
+**ソースアタッチは pom.xml に組み込み済み** (`<attachMuleSources>true</attachMuleSources>`)。
+CLI で `-DattachMuleSources` を付けなくても、 jar に flow XML・pom 等が
+`META-INF/mule-src/atelier-static/` として同梱される
+(Exchange から取得した Studio / 他開発者がフローを開ける)。
+無効化したい場合のみ `-DattachMuleSources=false`。
+
 確認:
 ```sh
+# 静的アセットが static/ に入っているか
 unzip -l target/atelier-static-1.0.0-mule-application.jar | grep -E '(index.html|static/js)'
+# Mule ソースが同梱されているか
+unzip -l target/atelier-static-1.0.0-mule-application.jar | grep 'META-INF/mule-src'
 ```
-親フォルダの `index.html` / `js/*.js` が JAR 内 `static/...` に入っていることを確認。
+親フォルダの `index.html` / `js/*.js` が JAR 内 `static/...` に、
+flow XML が `META-INF/mule-src/...` に入っていることを確認。
 
 ## CloudHub 2 デプロイ
 
@@ -82,7 +92,7 @@ yaac logs app <org> <env> atelier-static -j -n 50
 ```sh
 # 親フォルダで JS/CSS/HTML を編集 → mule-app/ で再 build → 再 deploy
 cd mule-app
-mvn clean package -DskipTests -DattachMuleSources
+mvn clean package -DskipTests
 yaac upload asset target/atelier-static-1.0.0-mule-application.jar -g <org> -a atelier-static -v 1.0.0
 yaac deploy app <org> <env> atelier-static target=ch2:<ps> v-cores=0.1 \
   -g <org> -a atelier-static -v 1.0.0 "+mule.env=ch2"

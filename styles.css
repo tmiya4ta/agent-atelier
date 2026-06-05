@@ -1578,24 +1578,24 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   animation: pulse-soft 1.2s ease-in-out infinite;
   cursor: default;
 }
-/* 実行中はクリックで止められる赤い STOP ボタンに切り替える (panel を開かずに停止)。
-   点滅で「今走っている / 押せば止まる」を示す。 */
+/* 実行中はクリックで止められる STOP ボタンに切り替える (panel を開かずに停止)。
+   ベタ塗りの赤は強すぎるので、 他の active 状態 (is-running / is-on) と同じく
+   「赤い○ (アイコン) + 控えめな soft 背景」で示す。 点滅も glyph の淡い明滅だけに留める。 */
 .script-run.is-stop {
-  color: #fff;
-  background: var(--warn, #c0392b);
-  border-color: var(--warn, #c0392b);
-  animation: pulse-stop 1.1s ease-in-out infinite;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-color: var(--warn-soft);
   cursor: pointer;
 }
+.script-run.is-stop svg { animation: pulse-stop 1.3s ease-in-out infinite; }
 .script-run.is-stop:hover {
-  color: #fff;
-  background: #c0392b;
-  border-color: #c0392b;
-  filter: brightness(1.08);
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-color: var(--warn);
 }
 @keyframes pulse-stop {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(192,57,58, 0.45); }
-  50%      { box-shadow: 0 0 0 4px rgba(192,57,58, 0); }
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
 }
 .script-run[disabled] { opacity: 0.55; pointer-events: none; }
 
@@ -3220,9 +3220,39 @@ body.is-dark .tool-result .b { color: #F45D4C; }
 .dbg-dir.is-err { color: var(--warn); background: var(--warn-soft); }
 .dbg-summary { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dbg-meta { color: var(--ink-4); font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1)); }
-.dbg-body {
+/* 展開部 (header / payload サブタブ) — 行が開いた時だけ表示 */
+.dbg-detail {
   grid-column: 1 / -1;
   margin-top: 6px;
+  display: none;
+}
+.dbg-entry.is-open .dbg-detail { display: block; }
+
+.dbg-subtabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.dbg-subtab {
+  padding: 2px 9px;
+  color: var(--ink-3);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font-family: var(--f-mono);
+  font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.dbg-subtab:hover { color: var(--ink); border-color: var(--ink-3); }
+.dbg-subtab.is-active {
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border-color: var(--accent-soft);
+}
+.dbg-body {
   padding: 10px 12px;
   background: var(--panel-soft);
   color: var(--ink);
@@ -3234,12 +3264,12 @@ body.is-dark .tool-result .b { color: #F45D4C; }
   overflow-x: auto;
   display: none;
 }
+.dbg-body.is-active { display: block; }
 body.is-dark .dbg-body {
   background: #0A1B3F;
   color: #D6E0F0;
   border-color: #1A2E5C;
 }
-.dbg-entry.is-open .dbg-body { display: block; }
 
 /* ─── SETTINGS pane ─── */
 .settings-scroll {

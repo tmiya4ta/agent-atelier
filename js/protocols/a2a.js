@@ -11,7 +11,7 @@
 //   同一オリジンの "/proxy?url=..." 経由でリクエストする。
 //   ローカル(同一オリジン)のURLは直接fetch。
 
-import { ProtocolAdapter } from "./base.js";
+import { ProtocolAdapter, headersToObj } from "./base.js";
 
 export class A2AAdapter extends ProtocolAdapter {
   static get id()    { return "a2a"; }
@@ -64,14 +64,14 @@ export class A2AAdapter extends ProtocolAdapter {
 
   async _fetchCard({ emitOpen = false } = {}) {
     const candidates = candidateCardUrls(this.endpoint);
-    let card = null, cardUrl = null, lastErr = null;
+    let card = null, cardUrl = null, lastErr = null, cardResHeaders = null;
     for (const cu of candidates) {
-      this._emit("rpc", { dir: "out", method: `GET ${cu}`, raw: `GET ${cu}\nAccept: application/json` });
+      const reqHeaders = { Accept: "application/json" };
+      if (this.config.auth) reqHeaders["Authorization"] = `Bearer ${this.config.auth}`;
+      if (this.config.authHeaders) Object.assign(reqHeaders, this.config.authHeaders);
+      this._emit("rpc", { dir: "out", method: `GET ${cu}`, headers: reqHeaders, raw: `GET ${cu}\nAccept: application/json` });
       try {
-        const headers = { Accept: "application/json" };
-        if (this.config.auth) headers["Authorization"] = `Bearer ${this.config.auth}`;
-        if (this.config.authHeaders) Object.assign(headers, this.config.authHeaders);
-        const res = await fetch(proxify(cu), { headers });
+        const res = await fetch(proxify(cu), { headers: reqHeaders });
         if (res.status === 404) {
           this._emit("rpc", { dir: "err", method: "404 not found", raw: cu });
           continue;
@@ -79,6 +79,7 @@ export class A2AAdapter extends ProtocolAdapter {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         card = await res.json();
         cardUrl = cu;
+        cardResHeaders = headersToObj(res.headers);
         break;
       } catch (e) {
         lastErr = e;
@@ -103,7 +104,7 @@ export class A2AAdapter extends ProtocolAdapter {
 
     this._emit("rpc", {
       dir: "in", method: `200 OK · agent card · ${shortPath(cardUrl)}`,
-      payload: card, raw: JSON.stringify(card, null, 2)
+      headers: cardResHeaders, payload: card, raw: JSON.stringify(card, null, 2)
     });
 
     if (emitOpen) {
@@ -142,10 +143,6 @@ export class A2AAdapter extends ProtocolAdapter {
       params: { message, configuration: {} }
     };
 
-    this._emit("rpc", {
-      dir: "out", method, payload: body, raw: JSON.stringify(body, null, 2)
-    });
-
     const headers = {
       "Content-Type": "application/json",
       // message/stream のときは SSE を受ける。 そうでなければ JSON。
@@ -153,6 +150,10 @@ export class A2AAdapter extends ProtocolAdapter {
     };
     if (this.config.auth) headers["Authorization"] = `Bearer ${this.config.auth}`;
     if (this.config.authHeaders) Object.assign(headers, this.config.authHeaders);
+
+    this._emit("rpc", {
+      dir: "out", method, headers, payload: body, raw: JSON.stringify(body, null, 2)
+    });
 
     // 停止ボタン用: この送信を中断できるよう AbortController を立てる
     const ac = new AbortController();
@@ -167,7 +168,7 @@ export class A2AAdapter extends ProtocolAdapter {
       // status-update / artifact-update を逐次 message として emit する。
       const ctype = res.headers.get("content-type") || "";
       if (useStream && ctype.includes("text/event-stream")) {
-        await this._consumeSse(res, method, ac);
+        await this._consumeSse(res, method, ac, headersToObj(res.headers));
         return;
       }
 
@@ -175,7 +176,7 @@ export class A2AAdapter extends ProtocolAdapter {
 
       this._emit("rpc", {
         dir: "in", method: `200 OK · ${method}`,
-        payload: data, raw: JSON.stringify(data, null, 2)
+        headers: headersToObj(res.headers), payload: data, raw: JSON.stringify(data, null, 2)
       });
 
       if (data.error) throw new Error(`RPC error: ${data.error.message || data.error.code}`);
@@ -229,22 +230,25 @@ export class A2AAdapter extends ProtocolAdapter {
   //   event: artifact-update → 部分成果物
   // 中間 (final=false) の status は進捗として system 行で逐次表示し、
   // 最終 (final=true / completed) のテキストだけを通常の agent message として出す。
-  async _consumeSse(res, method, ac) {
+  async _consumeSse(res, method, ac, resHeaders) {
     const reader = res.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buf = "";
     let lastText = "";          // 最後に出した進捗テキスト (最終 fallback 用)
     let finalEmitted = false;
+    let firstFrame = true;      // SSE 応答ヘッダは最初のフレームにだけ載せる
 
     const handleEvent = (evName, dataStr) => {
       let data;
       try { data = JSON.parse(dataStr); } catch { return; }
 
-      // debug タブにも生フレームを流す
+      // debug タブにも生フレームを流す (応答ヘッダは最初のフレームにだけ付ける)
       this._emit("rpc", {
         dir: "in", method: `SSE · ${evName}`,
+        headers: firstFrame ? resHeaders : undefined,
         payload: data, raw: JSON.stringify(data, null, 2)
       });
+      firstFrame = false;
 
       const result = data.result || data;
 

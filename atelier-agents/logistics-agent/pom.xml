@@ -35,6 +35,11 @@
                 <extensions>true</extensions>
                 <configuration>
                     <classifier>mule-application</classifier>
+                    <!-- ビルド成果物 (jar) に Mule ソース (flow XML / pom 等) を
+                         META-INF/mule-src/ として同梱する。 これで Studio / 他開発者が
+                         Exchange から取得した jar のフローを開いて確認できる。
+                         CLI の -DattachMuleSources に頼らず常時 attach する。 -->
+                    <attachMuleSources>true</attachMuleSources>
                     <cloudhub2Deployment>
                         <muleVersion>${app.runtime}</muleVersion>
                         <connectedAppClientId>${anypoint.connectedApp.clientId}</connectedAppClientId>

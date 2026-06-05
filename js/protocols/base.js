@@ -3,7 +3,8 @@
 // イベント:
 //   "open"     接続確立 (agentCard 確定)
 //   "message"  エージェントからのメッセージ受信 ({ role, text, partial? })
-//   "rpc"      生のRPCフレーム (debug用) ({ dir: "out"|"in"|"err", method, payload, raw })
+//   "rpc"      生のRPCフレーム (debug用) ({ dir: "out"|"in"|"err", method, headers, payload, raw })
+//              headers: out = リクエストヘッダ / in = レスポンスヘッダ (debug タブの header サブタブ用)
 //   "error"    エラー発生 (Error)
 //   "close"    切断
 
@@ -68,7 +69,9 @@ export class ProtocolAdapter extends EventTarget {
       // outgoing RPC frame (debug タブ用)
       const rpcOut = { jsonrpc: "2.0", id: reqId, method: "message/send",
         params: { message: { role: "user", parts: [{ kind: "text", text }], messageId: `m-${turn}-u` } } };
-      this._emit("rpc", { dir: "out", method: "message/send (mock)", payload: rpcOut, raw: JSON.stringify(rpcOut, null, 2) });
+      this._emit("rpc", { dir: "out", method: "message/send (mock)",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        payload: rpcOut, raw: JSON.stringify(rpcOut, null, 2) });
 
       // 人工 delay: ユーザー入力表示が終わってからスピナーを ~3 秒回し、 LLM の
       // 思考時間っぽさを出してから応答する (短いと入力と応答が被って不自然)。
@@ -79,7 +82,9 @@ export class ProtocolAdapter extends EventTarget {
 
       const rpcIn = { jsonrpc: "2.0", id: reqId,
         result: { status: { state: "completed" }, messages: [{ role: "agent", parts: [{ kind: "text", text: reply }], messageId: `m-${turn}-a` }] } };
-      this._emit("rpc", { dir: "in", method: "200 OK · message/send (mock)", payload: rpcIn, raw: JSON.stringify(rpcIn, null, 2) });
+      this._emit("rpc", { dir: "in", method: "200 OK · message/send (mock)",
+        headers: { "Content-Type": "application/json", "Server": "atelier-mock" },
+        payload: rpcIn, raw: JSON.stringify(rpcIn, null, 2) });
     };
   }
 
@@ -111,4 +116,16 @@ export class ProtocolAdapter extends EventTarget {
     this._mockActive = false;
     this._realSend = this._mockEntries = null;
   }
+}
+
+// fetch の Response.headers (Headers) を debug タブ用の plain object に変換する。
+// proxy 経由の場合 CORS で一部ヘッダが見えないことがあるが、 見える範囲をそのまま並べる。
+export function headersToObj(h) {
+  const out = {};
+  if (!h) return out;
+  try {
+    if (typeof h.forEach === "function") h.forEach((v, k) => { out[k] = v; });
+    else if (typeof h === "object") Object.assign(out, h);
+  } catch { /* ignore */ }
+  return out;
 }

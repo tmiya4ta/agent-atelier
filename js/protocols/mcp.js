@@ -14,7 +14,7 @@
 // CORS:
 //   外部オリジン宛は a2a.js と同じ /proxy?url=... を経由する (proxify ヘルパは a2a.js から複製)。
 
-import { ProtocolAdapter } from "./base.js";
+import { ProtocolAdapter, headersToObj } from "./base.js";
 
 export class MCPAdapter extends ProtocolAdapter {
   static get id()    { return "mcp"; }
@@ -93,11 +93,6 @@ export class MCPAdapter extends ProtocolAdapter {
       ? { jsonrpc: "2.0", method, params }
       : { jsonrpc: "2.0", id, method, params };
 
-    this._emit("rpc", {
-      dir: "out", method,
-      payload: body, raw: JSON.stringify(body, null, 2)
-    });
-
     const headers = {
       "Content-Type": "application/json",
       // Streamable HTTP: server は JSON か SSE のどちらかで返す。 両方受ける。
@@ -107,6 +102,11 @@ export class MCPAdapter extends ProtocolAdapter {
     if (this.config.authHeaders) Object.assign(headers, this.config.authHeaders);
     // initialize で得た session id を以降の全リクエストに付ける (無いと session 不正で弾かれる)
     if (this.sessionId) headers["Mcp-Session-Id"] = this.sessionId;
+
+    this._emit("rpc", {
+      dir: "out", method, headers,
+      payload: body, raw: JSON.stringify(body, null, 2)
+    });
 
     // 停止ボタン用: tools/call 等を中断できるよう AbortController を立てる
     const ac = new AbortController();
@@ -141,12 +141,12 @@ export class MCPAdapter extends ProtocolAdapter {
 
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
-      this._emit("rpc", { dir: "err", method: `HTTP ${res.status}: ${method}`, raw: errText });
+      this._emit("rpc", { dir: "err", method: `HTTP ${res.status}: ${method}`, headers: headersToObj(res.headers), raw: errText });
       throw new Error(`HTTP ${res.status} on ${method}`);
     }
 
     if (opts.isNotification) {
-      this._emit("rpc", { dir: "in", method: `${method} ack (no body)`, payload: {}, raw: "" });
+      this._emit("rpc", { dir: "in", method: `${method} ack (no body)`, headers: headersToObj(res.headers), payload: {}, raw: "" });
       return null;
     }
 
@@ -160,7 +160,7 @@ export class MCPAdapter extends ProtocolAdapter {
 
     this._emit("rpc", {
       dir: "in", method: `${method} response${ctype.includes("event-stream") ? " (SSE)" : ""}`,
-      payload: data, raw: JSON.stringify(data, null, 2)
+      headers: headersToObj(res.headers), payload: data, raw: JSON.stringify(data, null, 2)
     });
 
     if (data.error) {

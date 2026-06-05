@@ -4,7 +4,7 @@ A2A 中核のマルチプロトコルエージェントクライアント。 ブ
 
 - **Repo**: https://github.com/tmiya4ta/agent-atelier
 - **CH2 Deploy**: https://atelier-static-znutqp.pnwfdv.jpn-e1.cloudhub.io  (T1 / Sandbox / rootps)
-- **Local dev**: `python3 server/dev-server.py --port 8000` → http://127.0.0.1:8000/
+- **Local dev**: `node server/dev-server.js --port 8000` → http://127.0.0.1:8000/ (Python 不要版。 後述「ローカル開発」参照)
 - **言語**: 英語 default、 `js/i18n.js` の `setLang("ja")` で日本語に切替可能 (現状 ja 部分翻訳)
 
 > ⚠️ **セキュリティ前提**: このアプリは **dev / demo tool** です。 OAuth `client_credentials` flow で `client_secret` をブラウザに保持、 各種 token を `sessionStorage` に置く設計のため、 信頼できないユーザに公開してはいけません。 CH2 deploy も社内デモ用と割り切ってください (Atelier 配信側に認証が無い)。
@@ -36,8 +36,9 @@ agent-center/
 │       ├── mock.js         ← (unused now, but kept for reference)
 │       └── index.js        ← PROTOCOLS registry
 ├── oauth/callback.html     ← PKCE redirect target (postMessage to opener)
-├── server/                 ← Python: dev-server + mock A2A + CDP test helpers
-│   ├── dev-server.py       ← HTTP static + /proxy (CORS bypass), Cache-Control: no-store
+├── server/                 ← dev-server (Node/Python) + mock A2A + CDP test helpers
+│   ├── dev-server.js       ← HTTP static + /proxy (CORS bypass), no-store, SSRF guard ★推奨
+│   ├── dev-server.py       ← 同等の Python 版 (Python3 環境向け)
 │   └── mock-agent.py       ← Mock A2A server (port 5180)
 └── mule-app/               ← CH2 hosting for the same frontend
     ├── pom.xml             ← maven copies ../{index.html,styles.css,js,oauth,assets} into static/
@@ -89,20 +90,50 @@ clear SCRS Broker                # 指定 window のみクリア
 
 ## ローカル開発
 
+### 開発サーバの起動
+
+dev server は **Node 版 (`dev-server.js`) と Python 版 (`dev-server.py`) の 2 つ**があり、
+どちらも「静的配信 + CORS bypass proxy (`/proxy?url=...`) + `Cache-Control: no-store`」で機能は等価。
+**Node 版を推奨** (Python が無い環境でも動く。 当リポジトリの Windows 開発機は Node のみ)。
+
 ```sh
-# Atelier dev server (CORS bypass proxy 付き、 no-cache 強制)
+# 推奨: Node 版 (引数なしで port 8000 / host 127.0.0.1 が default)
+node server/dev-server.js --port 8000
+# → http://127.0.0.1:8000/
+#   起動すると banner で static / proxy の URL を表示する。
+#   --host 0.0.0.0          他端末からアクセスさせたいとき (社内デモのみ。 公開厳禁)
+#   --proxy-allow host,...  proxy allowlist にホストを追加
+
+# 代替: Python 版 (Python3 がある環境のみ)
 python3 server/dev-server.py --port 8000
 # → http://127.0.0.1:8000/
 
-# Mock A2A サーバ (動作確認用)
+# 確認 (200 が返れば OK)
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/
+
+# Mock A2A サーバ (動作確認用、 Python のみ)
 python3 server/mock-agent.py
 # → http://127.0.0.1:5180/.well-known/agent-card.json
+```
 
+> ⚠️ ES module を多用しているので、 `file://` 直開きでは動かない (CORS / module 解決で失敗)。
+> 必ず dev server 経由 (`http://127.0.0.1:8000/`) で開くこと。
+> JS/CSS を編集したら `no-store` が効いているのでハードリロード不要だが、 念のため ⌘⇧R 推奨。
+
+### Mule アプリのビルド
+
+```sh
 # CH2 hosting アプリのビルド (validation 用)。 Mule 4 にローカル起動 goal は無いので
 # package が通ること = XML/DataWeave/コネクタ解決の検証。 実動作確認は CH2 デプロイ後。
 cd mule-app
-JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 mvn clean package -DskipTests -DattachMuleSources
+JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 mvn clean package -DskipTests
 ```
+
+> **ソースアタッチは pom.xml に `<attachMuleSources>true</attachMuleSources>` を埋め込み済み**
+> (`mule-app` および `atelier-agents/*` 全アプリ)。 そのため CLI で `-DattachMuleSources` を
+> 付けなくても、 ビルド成果物 jar に `META-INF/mule-src/<artifactId>/` として flow XML・pom が
+> 同梱される。 Exchange から jar を取得した Studio / 他開発者がフローを開いて中身を確認できる。
+> (明示的に無効化したい場合のみ `-DattachMuleSources=false`。)
 
 ## CH2 デプロイフロー
 
@@ -112,7 +143,8 @@ JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 mvn clean package -DskipTests -Datt
 cd mule-app
 # version を上げる (1.0.x → 1.0.x+1)
 sed -i 's|<version>1.0.X</version>|<version>1.0.Y</version>|' pom.xml
-JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 mvn clean package -DskipTests -DattachMuleSources
+# attachMuleSources は pom.xml に埋め込み済みなので CLI フラグ不要
+JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 mvn clean package -DskipTests
 yaac upload asset target/atelier-static-1.0.Y-mule-application.jar -g T1 -a atelier-static -v 1.0.Y
 yaac deploy app T1 Sandbox atelier-static target=ch2:rootps v-cores=0.1 \
   -g T1 -a atelier-static -v 1.0.Y "+mule.env=ch2"

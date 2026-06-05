@@ -1,6 +1,0 @@
-http:
-  port: "5180"
-agents:
-  legal_url: "http://localhost:5181/"
-  inventory_url: "http://localhost:5182/"
-  logistics_url: "http://localhost:5183/"

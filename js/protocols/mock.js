@@ -80,12 +80,14 @@ export class MockAdapter extends ProtocolAdapter {
     this._emit("rpc", {
       dir: "out",
       method: "GET /.well-known/agent.json",
+      headers: { "Accept": "application/json" },
       payload: null,
       raw: `GET ${p.url}/.well-known/agent.json HTTP/1.1\nAccept: application/json`
     });
     this._emit("rpc", {
       dir: "in",
       method: "200 OK · agent card",
+      headers: { "Content-Type": "application/json", "Server": "atelier-mock" },
       payload: this.agentCard,
       raw: JSON.stringify(this.agentCard, null, 2)
     });
@@ -118,7 +120,9 @@ export class MockAdapter extends ProtocolAdapter {
         }
       }
     };
-    this._emit("rpc", { dir: "out", method: "message/send", payload: rpcOut, raw: JSON.stringify(rpcOut, null, 2) });
+    this._emit("rpc", { dir: "out", method: "message/send",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      payload: rpcOut, raw: JSON.stringify(rpcOut, null, 2) });
 
     // simulate streaming response
     await sleep(180 + Math.random() * 320);
@@ -151,7 +155,9 @@ export class MockAdapter extends ProtocolAdapter {
         }]
       }
     };
-    this._emit("rpc", { dir: "in", method: "200 OK · message/send", payload: rpcIn, raw: JSON.stringify(rpcIn, null, 2) });
+    this._emit("rpc", { dir: "in", method: "200 OK · message/send",
+      headers: { "Content-Type": "application/json", "Server": "atelier-mock" },
+      payload: rpcIn, raw: JSON.stringify(rpcIn, null, 2) });
   }
 
   async disconnect() {
