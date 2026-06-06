@@ -622,8 +622,10 @@ var sys =
 "  - ★会話履歴の参照: 現発話が「さっき(の)/その/この/先ほどの インシデント」のように直前の話題を指していて、 かつ\n" ++
 "    現発話自体に incidentId が無い場合は、 直前までの会話 (assistant の応答テキストや user 発話) に出てきた\n" ++
 "    INC-... 形式の incidentId を entities.incidentId に補完してよい。 これは『捏造』ではなく『直近文脈の参照』。\n" ++
-"    例: 直前に『INC-20260530-... を登録しました』があり、 現発話が『さっきのをクローズして』→\n" ++
-"        intent=update_status, entities.incidentId=その INC-..., status=RESOLVED。\n" ++
+"    例: 直前に『INC-XXXX を登録しました』があり、 現発話が『さっきのをクローズして』→\n" ++
+"        intent=update_status, entities.incidentId=その INC-XXXX, status=RESOLVED。\n" ++
+"    ※ サンプルの INC-XXXX はプレースホルダ。 実際の incidentId は会話に出てきた文字列をそのまま使い、\n" ++
+"      日付や乱数から自分で組み立ててはいけない (採番は incident-system が行う)。\n" ++
 "\n" ++
 "entities は読み取れた値だけ入れ、 読み取れないものは null。 ★推測・正規化・捏造は禁止 (ただし上記『会話履歴の参照』は許可)。\n" ++
 "  - supplierGoldenId : 正規化済 G-XXX 形式のみ。 社名しか無ければ null。\n" ++
@@ -948,7 +950,10 @@ var e = vars.intent.entities default {}
   severity:         e.severity,
   rawMessage:       (vars.intent.rawMessage default (vars.userText default "")) as String
 } ++ (if (e.quantity != null) { quantity: e.quantity } else {})
-  ++ (if (e.incidentId != null) { incidentId: e.incidentId } else {})]]></ee:set-variable>
+  // ★ register では incidentId を送らない。 採番は必ず incident-system (Salesforce AutoNumber)
+  //    に任せる。 ここで LLM が拾った incidentId (会話文脈や捏造) を送ると、 incident-system が
+  //    それをエコーして「登録しました INC-...」と表示する一方、 実際の Salesforce レコードには
+  //    AutoNumber (INC-2026-XXXX) が振られ、 報告IDと実IDが食い違う。]]></ee:set-variable>
                             </ee:variables>
                         </ee:transform>
                         <flow-ref name="callMcpExecuteFlow"/>
@@ -960,13 +965,18 @@ var tr = vars.toolResult default {}
 var r  = (tr.result default tr default {})
 var isErr = ((tr.status default "") as String) == "error"
 fun cell(v) = if (v == null or (v as String) == "") "—" else (v as String)
+// 実際に採番された incidentId は incident-system のレスポンスからのみ取る。
+// entities.incidentId (LLM が拾った値) には絶対フォールバックしない — 捏造IDを
+// 「登録しました」と表示してしまうのを防ぐ。 レスポンスに ID が無いときは
+// 「採番されました (一覧で確認)」と正直に出す。
+var realId = (r.incidentId default "") as String
 ---
 if (isErr)
   "⚠️ インシデントを登録できませんでした。 — " ++ ((r.message default r.code default "unknown") as String)
 else
 "✅ インシデントを登録しました。\n\n" ++
 "| 項目 | 値 |\n|---|---|\n" ++
-"| incidentId | **" ++ cell(r.incidentId) ++ "** |\n" ++
+"| incidentId | " ++ (if (realId != "") ("**" ++ realId ++ "**") else "*採番されました (一覧で確認してください)*") ++ " |\n" ++
 "| 取引先 | " ++ cell(r.supplierName default r.supplierGoldenId default vars.intent.entities.supplierGoldenId) ++ " |\n" ++
 "| 部品 | " ++ cell(r.partNumber default vars.intent.entities.partNumber) ++ " |\n" ++
 "| severity | " ++ cell(r.severity default vars.intent.entities.severity) ++ " |\n" ++
