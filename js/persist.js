@@ -123,6 +123,7 @@ export function save(state) {
       v: VERSION,
       zoom: state.zoom ?? 1.0,
       sidebarCollapsed: !!state.sidebarCollapsed,
+      sidePanelW: state.sidePanelW ?? 240,
       theme: state.theme === "dark" ? "dark" : "light",
       activeSideCat: state.activeSideCat || "connections",
       identities: sanitizedIdentities,
