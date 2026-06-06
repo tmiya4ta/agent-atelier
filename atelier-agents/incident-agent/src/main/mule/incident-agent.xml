@@ -887,10 +887,13 @@ output application/java
                             <ee:variables>
                                 <ee:set-variable variableName="finalText"><![CDATA[%dw 2.0
 output application/java
-var r = (vars.toolResult.result default vars.toolResult default {})
+var rr = (vars.toolResult.result default vars.toolResult default {})
+// MCP の lookup 成功時は実データを result.incident に入れ子で返す
+// (register/list は展開済み)。 incident があればそれを、 無ければ result 自体を読む。
+var r  = (rr.incident default rr)
 fun cell(v) = if (v == null or (v as String) == "") "—" else (v as String)
 ---
-if ((r.exists default true) == false)
+if ((rr.exists default true) == false)
   ("incidentId **" ++ (cell(vars.intent.entities.incidentId)) ++ "** は見つかりませんでした。")
 else
   ("- インシデント詳細\n\n" ++
