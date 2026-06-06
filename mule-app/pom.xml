@@ -5,16 +5,16 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>fe1db8fb-8261-4b5c-a591-06fea582f980</groupId>
-    <artifactId>atelier-static</artifactId>
+    <artifactId>atelier-legacy</artifactId>
     <!-- version 運用ルール: semver で単調増加。 デプロイのたびに patch を +1 する
          (1.1.0 → 1.1.1 → 1.1.2 ...)。 日付ベース (2026.x.y) は衝突するので使わない
          (例: 6/1 の 2 回目 2026.6.12 と 6/12 の 1 回目 2026.6.12 が同一文字列になる)。
          Exchange は同 version 再 publish 不可・削除済みも再利用不可。
          使用済み: 1.0.32〜1.0.44, 2026.5.31, 2026.6.1。 ここから 1.1.x で再出発。 -->
-    <version>1.1.4</version>
+    <version>1.0.0</version>
     <packaging>mule-application</packaging>
 
-    <name>atelier-static</name>
+    <name>atelier-legacy</name>
     <description>Atelier — static asset hosting for CloudHub 2 (serves index.html / styles.css / js / oauth)</description>
 
     <properties>
