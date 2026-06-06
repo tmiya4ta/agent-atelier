@@ -28,13 +28,37 @@ export class A2AAdapter extends ProtocolAdapter {
     //  client 側で生成すると broker の ObjectStore に存在しないキーを送ることになり、
     //  Object with key [...] does not exist in store ... というエラーで死ぬ。)
     this.contextId = null;
+    // taskId — A2A の task 継続 ID。 server が status.state="input-required"/"auth-required"
+    // (= 追加入力待ち) の task を返したら保持し、 次ターンの message.taskId に付けて
+    // 同じ task を継続する。 これが無いと毎ターン新規 task 扱いになり、 broker が直前の
+    // 問いかけ ("一覧を取得しますか?") を忘れて文脈が切れる (「はい」が通じない)。
+    this.taskId = null;
   }
 
   // 履歴クリアからのフック (window.js から呼ぶ)。 contextId を null に戻すと
   // 次のターンは初対面扱いとなり、 サーバが新しい contextId を採番してくれる。
   resetContext() {
     this.contextId = null;
+    this.taskId = null;
     this.turn = 0;
+  }
+
+  // task の状態を見て taskId を継続 / 破棄する。
+  //  input-required / auth-required (追加入力待ち) → その taskId を次ターンへ継続。
+  //  completed / failed / canceled / rejected (終端)   → taskId を破棄し次は新規 task。
+  //  submitted / working (中間)                         → 何もしない (まだ確定しない)。
+  _trackTask(result) {
+    if (!result || typeof result !== "object") return;
+    const state = result.status?.state || result.state;
+    const tid = (result.kind === "task" ? result.id : undefined)
+      || result.taskId
+      || result.status?.message?.taskId
+      || result.task?.id;
+    if ((state === "input-required" || state === "auth-required") && tid) {
+      this.taskId = tid;
+    } else if (state && state !== "submitted" && state !== "working") {
+      this.taskId = null;
+    }
   }
 
   async connect() {
@@ -135,6 +159,9 @@ export class A2AAdapter extends ProtocolAdapter {
     // 既存セッションがあるときだけ contextId を付ける。
     // 初回 (this.contextId === null) は server に採番させる。
     if (this.contextId) message.contextId = this.contextId;
+    // 追加入力待ち (input-required) の task が残っていれば、 同じ task を継続する。
+    // これが無いと毎ターン新規 task になり、 直前の問いかけの文脈が引き継がれない。
+    if (this.taskId) message.taskId = this.taskId;
 
     const body = {
       jsonrpc: "2.0",
@@ -189,6 +216,8 @@ export class A2AAdapter extends ProtocolAdapter {
         || result.message?.contextId
         || result.status?.contextId;
       if (ctx && !this.contextId) this.contextId = ctx;
+      // input-required の task なら taskId を継続保持する
+      this._trackTask(result);
 
       // A2A 0.3 互換: 応答が様々な形を取りうるため、テキストパートを掘り出す
       const messages = collectMessages(result);
@@ -256,6 +285,8 @@ export class A2AAdapter extends ProtocolAdapter {
       const ctx = result.contextId || result.task?.contextId
         || result.status?.contextId || result.message?.contextId;
       if (ctx && !this.contextId) this.contextId = ctx;
+      // input-required の task なら taskId を継続保持する (最終フレームの状態が効く)
+      this._trackTask(result);
 
       if (data.error) { this._emit("error", new Error(`RPC error: ${data.error.message || data.error.code}`)); return; }
 
