@@ -73,11 +73,17 @@ export class ProtocolAdapter extends EventTarget {
         headers: { "Content-Type": "application/json", "Accept": "application/json" },
         payload: rpcOut, raw: JSON.stringify(rpcOut, null, 2) });
 
-      // 人工 delay: ユーザー入力表示が終わってからスピナーを ~3 秒回し、 LLM の
-      // 思考時間っぽさを出してから応答する (短いと入力と応答が被って不自然)。
-      await new Promise(r => setTimeout(r, 3000 + Math.random() * 600));
-
+      // 応答を先に解決して長さを測る (順番消費型なので二度呼ばない)。
       const reply = this._mockResolve(text);
+
+      // 人工 delay: LLM が考えている感を出す。
+      //   base 4.5〜6.5s + 応答 1 文字あたり ~9ms (長い統合レポートほど長考に見える)。
+      //   上限 14s で頭打ち (デモがだれない範囲)。
+      const base    = 4500 + Math.random() * 2000;
+      const perChar = Math.min((reply?.length || 0) * 9, 8000);
+      const delay   = Math.min(base + perChar, 14000);
+      await new Promise(r => setTimeout(r, delay));
+
       this._emit("message", { role: "agent", text: reply, final: true });
 
       const rpcIn = { jsonrpc: "2.0", id: reqId,

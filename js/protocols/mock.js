@@ -95,8 +95,7 @@ export class MockAdapter extends ProtocolAdapter {
     await sleep(2400 + Math.random() * 600);
 
     const snippet = String(text || "").trim().slice(0, 60);
-    const reply = `**${name}** — 受け付けました${snippet ? `: 「${snippet}${text.length > 60 ? "…" : ""}」` : ""}。\n\n` +
-      `_(デモ応答 / 台本未設定。Script Editor の \`$>\` 行でシナリオ応答を再生できます)_`;
+    const reply = `**${name}** — 受け付けました${snippet ? `: 「${snippet}${text.length > 60 ? "…" : ""}」` : ""}。`;
     this._emit("message", { role: "agent", text: reply, final: true });
 
     const rpcIn = {

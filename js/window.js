@@ -51,6 +51,8 @@ export class AgentWindow {
     const node = tpl.content.firstElementChild.cloneNode(true);
     this.el = node;
     node.id = this.id;
+    // mock (疑似) 接続はチャットの配色等を本物と変える目印 (protoId は "mock" のまま保持)
+    if (this.protoId === "mock") node.classList.add("is-mock");
 
     // Initial position: restore → 復元, それ以外は cascade
     if (this.restore?.pos?.left) {

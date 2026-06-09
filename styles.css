@@ -2616,6 +2616,17 @@ body.is-dark .agent-tag { color: #5BB8E8; }
   background: var(--panel);
   border-color: var(--line);
 }
+/* mock (疑似) 接続のチャットは本物と配色を変える — agent 応答に淡い藤色 + 左ボーダー。
+   本物の青 (--accent) / 緑赤 (status) と混同しない中間色を専用に使う。 */
+.agent-window.is-mock {
+  --mock-tint: #7C5CD6;
+}
+.agent-window.is-mock .msg-agent .msg-body {
+  background: color-mix(in srgb, var(--mock-tint) 9%, var(--panel));
+  border-color: color-mix(in srgb, var(--mock-tint) 30%, var(--line));
+  border-left: 3px solid color-mix(in srgb, var(--mock-tint) 60%, transparent);
+}
+body.is-dark .agent-window.is-mock { --mock-tint: #A98BF0; }
 /* mrkdwn (Slack) — chat bubble 内の安全な HTML サブセット */
 .msg-body code {
   font-family: var(--f-mono);
