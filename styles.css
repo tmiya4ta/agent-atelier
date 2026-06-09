@@ -2356,6 +2356,31 @@ body.is-resizing-side .sidebar { transition: none !important; }
 .conn-proto-badge[data-proto="slack"]  { color: #B07A1A; }
 .conn-proto-badge[data-proto="openai"] { color: var(--ok); }
 
+/* ── mock (simulated) connection — 本物と一目で区別する ── */
+/* 行を薄い破線で囲い、左に "sim" のドット。本物のライブ接続と取り違えないように。 */
+.agent-item.is-mock {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--ink-4) 45%, transparent);
+  background: color-mix(in srgb, var(--ink-4) 4%, transparent);
+}
+.agent-item.is-mock:hover {
+  border-color: color-mix(in srgb, var(--ink-4) 60%, transparent);
+}
+/* mock のバッジは下線(破線)+ desaturate して "本物ではない" を示す */
+.conn-proto-badge.is-mock {
+  position: relative;
+  opacity: 0.78;
+  border-bottom: 1px dashed currentColor;
+}
+.conn-proto-badge.is-mock::after {
+  content: "sim";
+  margin-left: 4px;
+  font-size: 0.82em;
+  letter-spacing: 0.04em;
+  color: var(--ink-4);
+  opacity: 0.85;
+}
+
 .aw-title {
   margin: 0;
   font-family: var(--f-display);
@@ -4221,6 +4246,38 @@ body.is-dark .tk-mock-text { color: #C8A85A; }
   letter-spacing: 0.08em;
   color: var(--ink-4);
   text-transform: uppercase;
+}
+
+/* Segmented toggle (mock kind: A2A / MCP) */
+.seg-toggle {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 6px;
+}
+.seg-opt {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 9px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--f-ui);
+  font-size: calc(13px * var(--fs-mul, 1.1) * var(--fs, 1));
+  font-weight: 500;
+  color: var(--ink);
+  transition: all 0.15s ease;
+}
+.seg-opt:hover { border-color: var(--ink-3); }
+.seg-opt.is-active { border-color: var(--ink); background: var(--paper); }
+.seg-toggle.is-disabled { opacity: 0.55; pointer-events: none; }
+.seg-opt .seg-sub {
+  font-family: var(--f-mono);
+  font-size: calc(9px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.04em;
+  color: var(--ink-4);
+  font-weight: 400;
 }
 
 /* Advanced */

@@ -16,7 +16,14 @@ export class AgentWindow {
     this.restore  = restore || null;
 
     this.protoId = adapter.constructor.id;
-    this.protoLabel = adapter.constructor.label;
+    // protoMode = 実際の挙動/見た目を決めるプロトコル。
+    // mock は本物の A2A / MCP を「装う」ので、adapter.emulates を採用する。
+    // (protoId は "mock" のまま — bookmark のキー化と一覧の色分けに使う)
+    this.protoMode = (this.protoId === "mock" && adapter.emulates) ? adapter.emulates : this.protoId;
+    // バッジ表示は装っているプロトコル名 (mock であることは出さない)
+    this.protoLabel = (this.protoId === "mock")
+      ? (this.protoMode === "mcp" ? "MCP" : "A2A")
+      : adapter.constructor.label;
     this.name = adapter.config.name || adapter.config.url || "Unnamed";
 
     // restore (persisted snapshot or import) の場合、 config.name は意図して付けられた値
@@ -73,7 +80,8 @@ export class AgentWindow {
     if (wm) wm.textContent = this.name + this.instanceSuffix;
     const badge = node.querySelector(".aw-proto-badge");
     badge.textContent = this.protoLabel;
-    badge.dataset.proto = this.protoId;
+    // 見た目の色は装っているプロトコル基準 (mock でも A2A/MCP の色で表示)
+    badge.dataset.proto = this.protoMode;
 
     // Close / clear / maximize
     node.querySelector(".aw-btn-clear")?.addEventListener("click", () => this.clearChat());
@@ -209,7 +217,7 @@ export class AgentWindow {
     this._applyPinnedState();
 
     // MCP モード: tools タブを露出し、 chat タブを使わない構成に切り替える。
-    if (this.protoId === "mcp") this._setupMcpMode(node);
+    if (this.protoMode === "mcp") this._setupMcpMode(node);
 
     // 既に open 済み adapter を渡された場合は、 open event 相当の初期描画を即時実行
     if (this.adapter.state === "open" && this.adapter.agentCard) {
@@ -674,7 +682,7 @@ export class AgentWindow {
     const finalize = () => {
       if (final) msg.dataset.streaming = "0";
       // Slack: typewriter 完了後に mrkdwn を HTML 化
-      if (final && this.protoId === "slack") {
+      if (final && this.protoMode === "slack") {
         body.innerHTML = safeHtml(mrkdwnToHtml(fullText));
         body.dataset.md = "1";
       }
@@ -683,7 +691,7 @@ export class AgentWindow {
       // 【○○エージェント】を単一改行で区切るので、 breaks:false だと 1 段落に潰れて
       // 非常に読みづらい (実機応答で確認)。 table 構文は breaks 設定の影響を受けず
       // 壊れないことを検証済み (marked 11.2.0)。
-      else if (final && this.protoId === "a2a" && window.marked) {
+      else if (final && this.protoMode === "a2a" && window.marked) {
         try {
           window.marked.setOptions({ gfm: true, breaks: true });
           // broker 統合レポートは整形してから Markdown 化 (それ以外はそのまま)
@@ -746,10 +754,10 @@ export class AgentWindow {
         msg.dataset.typing = "0";
         this._userTypeTimer = null;
         // protocol に応じた整形
-        if (this.protoId === "slack") {
+        if (this.protoMode === "slack") {
           body.innerHTML = safeHtml(mrkdwnToHtml(normalized));
           body.dataset.md = "1";
-        } else if (this.protoId === "a2a" && window.marked) {
+        } else if (this.protoMode === "a2a" && window.marked) {
           try {
             window.marked.setOptions({ gfm: true, breaks: true });
             body.innerHTML = safeHtml(window.marked.parse(normalized));
@@ -1080,7 +1088,7 @@ export class AgentWindow {
     const card          = this.adapter.agentCard || null;
     const effectiveUrl  = card?.url || "";
     const urlMismatch   = effectiveUrl && configuredUrl && !effectiveUrl.startsWith(stripTrailingSlash(configuredUrl)) && !configuredUrl.startsWith(stripTrailingSlash(effectiveUrl));
-    const cardTip = this.protoId === "mcp"
+    const cardTip = this.protoMode === "mcp"
       ? "MCP では agent card は提供されないため、 接続先はそのまま Discovery URL です。"
       : "AgentCard の url フィールド。 メッセージはこの URL に POST されます (Discovery URL ではなく)。 Discovery URL と異なる場合があるので注意してください。";
 
@@ -1098,14 +1106,14 @@ export class AgentWindow {
 
       <div class="set-section">
         <h4>Connection</h4>
-        <div class="set-row" title="Connect ダイアログで入力した Discovery URL。 ${this.protoId === "mcp" ? "MCP server (POST /mcp) を直接叩きます。" : "Atelier はこの URL の /.well-known/agent-card.json を取得して AgentCard を解釈します。 実際のチャット送信先は AgentCard 側の url フィールドです。"}">
+        <div class="set-row" title="Connect ダイアログで入力した Discovery URL。 ${this.protoMode === "mcp" ? "MCP server (POST /mcp) を直接叩きます。" : "Atelier はこの URL の /.well-known/agent-card.json を取得して AgentCard を解釈します。 実際のチャット送信先は AgentCard 側の url フィールドです。"}">
           <div class="set-row-text">
             <div class="set-row-title">Discovery URL <span class="set-row-help" aria-hidden="true">?</span></div>
-            <div class="set-row-sub">${this.protoId === "mcp" ? "POST /mcp に直接送信します。" : "AgentCard を取得する起点 URL。 メッセージ送信先ではない。"}</div>
+            <div class="set-row-sub">${this.protoMode === "mcp" ? "POST /mcp に直接送信します。" : "AgentCard を取得する起点 URL。 メッセージ送信先ではない。"}</div>
           </div>
           <input class="set-input" value="${escapeHtml(configuredUrl)}" readonly />
         </div>
-        ${this.protoId !== "mcp" ? `
+        ${this.protoMode !== "mcp" ? `
         <div class="set-row" title="${cardTip}">
           <div class="set-row-text">
             <div class="set-row-title">Effective endpoint <span class="set-row-help" aria-hidden="true">?</span></div>
@@ -1138,7 +1146,7 @@ export class AgentWindow {
             <div class="set-row-title">Protocol</div>
             <div class="set-row-sub">通信プロトコル</div>
           </div>
-          <input class="set-input" value="${escapeHtml(this.protoId || "")}" readonly />
+          <input class="set-input" value="${escapeHtml(this.protoMode || "")}" readonly />
         </div>
       </div>
     `;

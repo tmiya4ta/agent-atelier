@@ -1,0 +1,388 @@
+{
+  "app": "atelier",
+  "exportedAt": "2026-06-09T00:00:00.000Z",
+  "_doc": "保険業界デモ — 自動車保険の保険金請求 (追突事故) を部門横断で処理。すべて mock 接続 (実エンドポイント不要)。受付/契約照会/損害査定/不正検知/支払 (a2a) + 契約データストア (mcp) + 保険オーケストレーター (broker, a2a)。A 系=Broker なし (人間が持ち回る)、B 系=Broker あり (1 文で横断)。WS1=個別部門 6 窓、WS2=Broker 1 窓。SCRS とは別物の汎用シナリオ。",
+  "state": {
+    "v": 1,
+    "zoom": 1,
+    "sidebarCollapsed": false,
+    "theme": "light",
+    "catalogs": [],
+    "scripts": [
+      {
+        "id": "A0",
+        "name": "A0 — Broker なし: 請求の横断照会を 4 部門に持ち回る",
+        "body": "# ─────────────────────────────────────────\n# A0. Broker なし — 保険金請求の状況を人間が部門横断で「照会」\n# 自動車事故 (追突) の請求。証券 POL-2024-0042 / 田中一郎。\n# Broker が無いので、契約→査定→不正→支払 を 1 つずつ開いて\n# 同じ証券番号を毎回打ち込み、4 つの答えを人間が突き合わせる。\n# ─────────────────────────────────────────\n\nclear\nsleep 1s\n\n# 1) 契約照会 — 証券の有効性と補償\n< 契約照会: 証券 POL-2024-0042 (田中一郎) は有効ですか? 対物・車両の補償範囲と免責金額を教えてください。\n> 契約照会 90s\n$> 契約照会: 📄 契約照会 (Underwriting)\\n\\n| 項目 | 値 |\\n|---|---|\\n| 証券 | **POL-2024-0042** |\\n| 契約者 | 田中 一郎 |\\n| 状態 | **有効** (2024-04-01〜2025-03-31) |\\n| 車両補償 | ¥3,000,000 |\\n| 対物 | 無制限 |\\n| 免責金額 | ¥50,000 |\nsleep 2s\n\n# 2) 損害査定 — 見積の妥当性と過失割合\n< 損害査定: 追突事故の修理見積 ¥850,000 は妥当ですか? 過失割合の見立ても教えてください。\n> 損害査定 90s\n$> 損害査定: 🔧 損害査定 (Claims)\\n\\n| 項目 | 値 |\\n|---|---|\\n| 見積 | ¥850,000 |\\n| 妥当性 | 概ね妥当 (相場 ¥780,000〜¥900,000) |\\n| 過失割合 | 当方 **0** : 相手 **10** (追突され) |\\n| 査定額 | ¥820,000 (免責控除前) |\nsleep 2s\n\n# 3) 不正検知 — 重複・不審指標\n< 不正検知: 田中一郎 / POL-2024-0042 のこの請求に不審な点や重複請求はありますか?\n> 不正検知 90s\n$> 不正検知: 🛡️ 不正調査 (SIU)\\n\\n| 項目 | 値 |\\n|---|---|\\n| 重複請求 | なし |\\n| 過去フラグ | 0 件 |\\n| リスクスコア | **0.12** (低) |\\n| 判定 | 通常処理で可 |\nsleep 2s\n\n# 4) 支払 — 支払可否と金額 (終着)\n< 支払: 上記を踏まえ、この請求の支払可否と確定金額を教えてください。免責 ¥50,000 を控除してください。\n> 支払 90s\n$> 支払: 💴 支払 (Disbursement)\\n\\n| 項目 | 値 |\\n|---|---|\\n| 査定額 | ¥820,000 |\\n| 免責控除 | −¥50,000 |\\n| **支払額** | **¥770,000** |\\n| 可否 | **承認可** |\n# まとめ: 1 件の請求を見るのに 4 部門を順に開き、同じ証券番号を何度も打ち込み、\n# 4 つの答えを人間が頭の中で突き合わせた。これを Broker は 1 文で肩代わりする (→ B0)。",
+        "createdAt": 0,
+        "updatedAt": 0
+      },
+      {
+        "id": "A1",
+        "name": "A1 — Broker なし: 担当外で弾かれ、次の部門へ持ち回る",
+        "body": "# ─────────────────────────────────────────\n# A1. Broker なし — 各部門は自領域では賢いが、担当外はきっぱり断る。\n# 人間が受付→契約→査定→不正→支払 と文脈を手で運ぶ (たらい回し)。\n# ─────────────────────────────────────────\n\nclear\nsleep 1s\n\n# 1) 受付 — 事故受付・請求番号採番\n< 受付: 田中一郎さん (証券 POL-2024-0042) が追突事故。相手に追突され、車両後部破損。人身なし。新規の保険金請求として受け付けてください。\n> 受付 90s\n$> 受付: ✅ 請求を受け付けました。\\n\\n| 項目 | 値 |\\n|---|---|\\n| 請求番号 | **CLM-20260609-0007** |\\n| 証券 | POL-2024-0042 |\\n| 事故区分 | 追突 (被害) |\\n| status | OPEN |\nsleep 2s\n# ↓『ついでに補償範囲も』→ 担当外で弾かれる\n< 受付: ついでにこの証券の補償範囲と免責も教えて。\n> 受付 60s\n$> 受付: その照会は受付の担当外です。\\n補償・免責は「契約照会」、査定は「損害査定」、不正確認は「不正検知」、支払は「支払」へ。\nsleep 2s\n\n# 2) 契約照会 — 人間が証券番号を持ち込む\n< 契約照会: POL-2024-0042 の補償範囲 (車両・対物) と免責金額を教えてください。\n> 契約照会 90s\n$> 契約照会: 📄 契約照会 (Underwriting)\\n\\n| 項目 | 値 |\\n|---|---|\\n| 状態 | 有効 |\\n| 車両補償 | ¥3,000,000 |\\n| 対物 | 無制限 |\\n| 免責 | ¥50,000 |\nsleep 2s\n\n# 3) 損害査定 — 見積の妥当性\n< 損害査定: 修理見積 ¥850,000 の妥当性と過失割合を査定してください。\n> 損害査定 90s\n$> 損害査定: 🔧 損害査定 (Claims)\\n\\n| 項目 | 値 |\\n|---|---|\\n| 妥当性 | 妥当 |\\n| 過失 | 当方0 : 相手10 |\\n| 査定額 | ¥820,000 |\nsleep 2s\n\n# 4) 不正検知 — スクリーニング\n< 不正検知: CLM-20260609-0007 / 田中一郎 に不審指標や重複はありますか?\n> 不正検知 90s\n$> 不正検知: 🛡️ SIU\\n\\n| 項目 | 値 |\\n|---|---|\\n| リスクスコア | 0.12 (低) |\\n| 重複 | なし |\\n| 判定 | 通常処理可 |\nsleep 2s\n\n# 5) 支払 — 確定 (終着) → 受付に戻ってクローズ\n< 支払: 査定 ¥820,000、免責 ¥50,000 控除で支払額を確定してください。\n> 支払 90s\n$> 支払: 💴 支払 (Disbursement)\\n\\n| 項目 | 値 |\\n|---|---|\\n| 支払額 | **¥770,000** |\\n| 可否 | 承認可 |\nsleep 2s\n< 受付: CLM-20260609-0007 を支払承認済みでクローズしてください。\n> 受付 60s\n$> 受付: ✅ **CLM-20260609-0007** を **CLOSED (支払済)** に更新しました。\n# まとめ: 各部門は自領域では即答したが、隣は全部「○○へ」と弾いた。\n# 人間が請求番号と証券番号を手で運び、5 部門をたらい回し。これを Broker が肩代わりする (→ B1)。",
+        "createdAt": 0,
+        "updatedAt": 0
+      },
+      {
+        "id": "B0",
+        "name": "B0 — Broker あり: 1 文で請求を横断照会",
+        "body": "# ─────────────────────────────────────────\n# B0. Broker あり — A0 の 4 部門横断照会を 1 文で。\n# Broker が契約/査定/不正/支払 を呼び、1 つの回答に統合する。\n# ─────────────────────────────────────────\n\nclear\nsleep 1s\n\n< 保険オーケストレーター: 証券 POL-2024-0042 (田中一郎) の追突事故・修理見積 ¥850,000 について、補償範囲・査定の妥当性・不正リスク・最終支払見込みを横断的に教えてください。\n> 保険オーケストレーター 300s\n$> 保険オーケストレーター: 確認しました。要点は以下の通りです。\\n\\n**契約照会**\\n- 証券 POL-2024-0042 は有効。車両 ¥3,000,000 / 対物 無制限 / 免責 ¥50,000。\\n\\n**損害査定**\\n- 見積 ¥850,000 は相場内。過失 当方0:相手10。査定額 ¥820,000。\\n\\n**不正検知**\\n- リスクスコア 0.12 (低)、重複・過去フラグなし。通常処理可。\\n\\n**支払見込み**\\n- 査定 ¥820,000 − 免責 ¥50,000 = **¥770,000** を承認可。\\n\\n次の対応案: 請求の正式受付 / 支払承認 / 相手保険会社への求償。どれを進めますか?\n# Broker が 4 部門を 1 度に横断照会し、1 つの回答に統合。\n# A0 で人間が 4 窓口を持ち回ったのと同じ情報が、1 文で揃う。",
+        "createdAt": 0,
+        "updatedAt": 0
+      },
+      {
+        "id": "B1",
+        "name": "B1 — Broker あり: 請求処理を自律オーケストレーション",
+        "body": "# ─────────────────────────────────────────\n# B1. Broker あり — A1 で人間が持ち回った請求処理を Broker が自律実行。\n# 1 文投げるだけで: 受付採番 → 契約/査定/不正 を並列 → 支払確定 まで。\n# ─────────────────────────────────────────\n\nclear\nsleep 1s\n\n< 保険オーケストレーター: 田中一郎さん (証券 POL-2024-0042) が追突事故 (被害)。修理見積 ¥850,000、人身なし。新規の保険金請求として一連の処理を進めてください。\n> 保険オーケストレーター 300s\n$> 保険オーケストレーター: 請求を受け付け、各部門を稼働させました。\\n請求番号: **CLM-20260609-0042**\\n証券: POL-2024-0042 (田中一郎)\\n\\n【受付】事故区分 追突(被害) で起票。status OPEN。\\n【契約照会】証券有効。車両 ¥3,000,000 / 対物 無制限 / 免責 ¥50,000。\\n【損害査定】見積 ¥850,000 妥当。過失 当方0:相手10。査定額 ¥820,000。\\n【不正検知】リスクスコア 0.12 (低)、重複なし。通常処理可。\\n【支払】査定 ¥820,000 − 免責 ¥50,000 = **¥770,000** を承認。送金キュー登録済。\\n\\n相手 (加害) 側への求償も起票可能です。実行しますか?\n# Broker が返す統合レポートに、請求番号・証券・査定・不正・支払 (¥770,000) が\n# 1 度の応答で揃う。これが Agent Network の価値 = 部門横断の自律オーケストレーション。",
+        "createdAt": 0,
+        "updatedAt": 0
+      }
+    ],
+    "selectedScriptId": "B1",
+    "bookmarks": [
+      {
+        "key": "mock::mock://a2a/受付",
+        "protoId": "mock",
+        "url": "mock://a2a/受付",
+        "name": "受付",
+        "auth": "",
+        "persona": "",
+        "channel": "",
+        "emulate": "a2a"
+      },
+      {
+        "key": "mock::mock://a2a/契約照会",
+        "protoId": "mock",
+        "url": "mock://a2a/契約照会",
+        "name": "契約照会",
+        "auth": "",
+        "persona": "",
+        "channel": "",
+        "emulate": "a2a"
+      },
+      {
+        "key": "mock::mock://a2a/損害査定",
+        "protoId": "mock",
+        "url": "mock://a2a/損害査定",
+        "name": "損害査定",
+        "auth": "",
+        "persona": "",
+        "channel": "",
+        "emulate": "a2a"
+      },
+      {
+        "key": "mock::mock://a2a/不正検知",
+        "protoId": "mock",
+        "url": "mock://a2a/不正検知",
+        "name": "不正検知",
+        "auth": "",
+        "persona": "",
+        "channel": "",
+        "emulate": "a2a"
+      },
+      {
+        "key": "mock::mock://a2a/支払",
+        "protoId": "mock",
+        "url": "mock://a2a/支払",
+        "name": "支払",
+        "auth": "",
+        "persona": "",
+        "channel": "",
+        "emulate": "a2a"
+      },
+      {
+        "key": "mock::mock://mcp/契約データストア",
+        "protoId": "mock",
+        "url": "mock://mcp/契約データストア",
+        "name": "契約データストア",
+        "auth": "",
+        "persona": "",
+        "channel": "",
+        "emulate": "mcp",
+        "mockTools": [
+          {
+            "name": "getPolicy",
+            "description": "証券番号から契約を取得する",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "policyId": {
+                  "type": "string",
+                  "description": "証券番号 (例 POL-2024-0042)"
+                }
+              },
+              "required": [
+                "policyId"
+              ]
+            },
+            "mockResult": {
+              "policyId": "POL-2024-0042",
+              "holder": "田中 一郎",
+              "product": "自動車保険 (車両+対物+対人)",
+              "status": "有効",
+              "effective": "2024-04-01",
+              "expires": "2025-03-31",
+              "coverage": {
+                "vehicle": 3000000,
+                "property": "無制限",
+                "liability": "無制限"
+              },
+              "deductible": 50000
+            }
+          },
+          {
+            "name": "getClaimsHistory",
+            "description": "契約者の過去請求履歴を取得する",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "holderId": {
+                  "type": "string",
+                  "description": "契約者 ID または証券番号"
+                }
+              },
+              "required": [
+                "holderId"
+              ]
+            },
+            "mockResult": {
+              "holder": "田中 一郎",
+              "pastClaims": [
+                {
+                  "id": "CLM-2022-1180",
+                  "type": "車両",
+                  "amount": 120000,
+                  "status": "支払済"
+                }
+              ],
+              "fraudFlags": 0
+            }
+          }
+        ]
+      },
+      {
+        "key": "mock::mock://a2a/保険オーケストレーター",
+        "protoId": "mock",
+        "url": "mock://a2a/保険オーケストレーター",
+        "name": "保険オーケストレーター",
+        "auth": "",
+        "persona": "",
+        "channel": "",
+        "emulate": "a2a"
+      }
+    ],
+    "activeWsIdx": 0,
+    "workspaces": [
+      {
+        "name": "保険 — 部門別 (A 系)",
+        "windows": [
+          {
+            "protoId": "mock",
+            "config": {
+              "url": "mock://a2a/受付",
+              "name": "受付",
+              "auth": "",
+              "persona": "",
+              "channel": "",
+              "emulate": "a2a"
+            },
+            "pos": {
+              "left": "14px",
+              "top": "14px",
+              "width": "470px",
+              "height": "340px",
+              "zIndex": "210"
+            },
+            "activeTab": "chat",
+            "pinned": false
+          },
+          {
+            "protoId": "mock",
+            "config": {
+              "url": "mock://a2a/契約照会",
+              "name": "契約照会",
+              "auth": "",
+              "persona": "",
+              "channel": "",
+              "emulate": "a2a"
+            },
+            "pos": {
+              "left": "496px",
+              "top": "14px",
+              "width": "470px",
+              "height": "340px",
+              "zIndex": "211"
+            },
+            "activeTab": "chat",
+            "pinned": false
+          },
+          {
+            "protoId": "mock",
+            "config": {
+              "url": "mock://a2a/損害査定",
+              "name": "損害査定",
+              "auth": "",
+              "persona": "",
+              "channel": "",
+              "emulate": "a2a"
+            },
+            "pos": {
+              "left": "978px",
+              "top": "14px",
+              "width": "470px",
+              "height": "340px",
+              "zIndex": "212"
+            },
+            "activeTab": "chat",
+            "pinned": false
+          },
+          {
+            "protoId": "mock",
+            "config": {
+              "url": "mock://a2a/不正検知",
+              "name": "不正検知",
+              "auth": "",
+              "persona": "",
+              "channel": "",
+              "emulate": "a2a"
+            },
+            "pos": {
+              "left": "14px",
+              "top": "366px",
+              "width": "470px",
+              "height": "340px",
+              "zIndex": "213"
+            },
+            "activeTab": "chat",
+            "pinned": false
+          },
+          {
+            "protoId": "mock",
+            "config": {
+              "url": "mock://a2a/支払",
+              "name": "支払",
+              "auth": "",
+              "persona": "",
+              "channel": "",
+              "emulate": "a2a"
+            },
+            "pos": {
+              "left": "496px",
+              "top": "366px",
+              "width": "470px",
+              "height": "340px",
+              "zIndex": "214"
+            },
+            "activeTab": "chat",
+            "pinned": false
+          },
+          {
+            "protoId": "mock",
+            "config": {
+              "url": "mock://mcp/契約データストア",
+              "name": "契約データストア",
+              "auth": "",
+              "persona": "",
+              "channel": "",
+              "emulate": "mcp",
+              "mockTools": [
+                {
+                  "name": "getPolicy",
+                  "description": "証券番号から契約を取得する",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "policyId": {
+                        "type": "string",
+                        "description": "証券番号 (例 POL-2024-0042)"
+                      }
+                    },
+                    "required": [
+                      "policyId"
+                    ]
+                  },
+                  "mockResult": {
+                    "policyId": "POL-2024-0042",
+                    "holder": "田中 一郎",
+                    "product": "自動車保険 (車両+対物+対人)",
+                    "status": "有効",
+                    "effective": "2024-04-01",
+                    "expires": "2025-03-31",
+                    "coverage": {
+                      "vehicle": 3000000,
+                      "property": "無制限",
+                      "liability": "無制限"
+                    },
+                    "deductible": 50000
+                  }
+                },
+                {
+                  "name": "getClaimsHistory",
+                  "description": "契約者の過去請求履歴を取得する",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "holderId": {
+                        "type": "string",
+                        "description": "契約者 ID または証券番号"
+                      }
+                    },
+                    "required": [
+                      "holderId"
+                    ]
+                  },
+                  "mockResult": {
+                    "holder": "田中 一郎",
+                    "pastClaims": [
+                      {
+                        "id": "CLM-2022-1180",
+                        "type": "車両",
+                        "amount": 120000,
+                        "status": "支払済"
+                      }
+                    ],
+                    "fraudFlags": 0
+                  }
+                }
+              ]
+            },
+            "pos": {
+              "left": "978px",
+              "top": "366px",
+              "width": "470px",
+              "height": "340px",
+              "zIndex": "215"
+            },
+            "activeTab": "tools",
+            "pinned": false
+          }
+        ]
+      },
+      {
+        "name": "保険 — Broker (B 系)",
+        "windows": [
+          {
+            "protoId": "mock",
+            "config": {
+              "url": "mock://a2a/保険オーケストレーター",
+              "name": "保険オーケストレーター",
+              "auth": "",
+              "persona": "",
+              "channel": "",
+              "emulate": "a2a"
+            },
+            "pos": {
+              "left": "120px",
+              "top": "40px",
+              "width": "820px",
+              "height": "560px",
+              "zIndex": "220"
+            },
+            "activeTab": "chat",
+            "pinned": false
+          }
+        ]
+      }
+    ]
+  }
+}

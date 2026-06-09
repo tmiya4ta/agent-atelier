@@ -6,6 +6,12 @@
       "name": "SCRS — シナリオ A/B (品質トラブル横断対応)",
       "description": "サプライヤー品質トラブルの横断対応デモ。 A1-A3=Broker なし (人間が 5 窓口を持ち回るハブ)、 B1-B3=Broker あり (StepB の MAF Agent Network に 1 文で自律ディスパッチ)。 A1/B1 九州製作所 ターボ分子ポンプ、 A2/B2 関西部品 コアスチール、 A3/B3 東京精密 電子部品。 WS1 個別 agent、 WS2 Broker。 5 agent + MDM MCP は StepA (d7gr5m)、 broker は StepB (n6coif)。",
       "url": "/scenarios/scrs-a.json"
+    },
+    {
+      "id": "insurance-claims",
+      "name": "保険 — 自動車保険金請求 (部門横断 · 全 mock)",
+      "description": "自動車保険の保険金請求 (追突事故) を部門横断で処理する汎用デモ。 受付/契約照会/損害査定/不正検知/支払 (mock A2A) + 契約データストア (mock MCP) + 保険オーケストレーター (Broker)。 A 系=Broker なし (人間が 5 部門を持ち回る)、 B 系=Broker あり (1 文で横断オーケストレーション)。 すべて mock 接続なので実エンドポイント不要。 WS1 部門別 6 窓、 WS2 Broker。 SCRS とは独立。",
+      "url": "/scenarios/insurance-claims.json"
     }
   ]
 }

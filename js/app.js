@@ -468,7 +468,9 @@ function restoreFromSaved(saved) {
         auth:    hydrated.config?.auth,
         authRef: hydrated.config?.authRef,
         persona: hydrated.config?.persona,
-        channel: hydrated.config?.channel
+        channel: hydrated.config?.channel,
+        emulate:   hydrated.config?.emulate,
+        mockTools: hydrated.config?.mockTools
       }, { restore: { pos: hydrated.pos, activeTab: hydrated.activeTab }, skipDirty: true });
     });
   });
@@ -609,12 +611,12 @@ function wireWsTabs() {
 }
 
 // 「コネクション登録」エントリの追加 / 上書き。 ウインドウの open/close と独立。
-function upsertBookmark({ protoId, url, name, auth, authRef, persona, channel }) {
+function upsertBookmark({ protoId, url, name, auth, authRef, persona, channel, emulate, mockTools }) {
   if (!protoId || !url) return;
   const key = bookmarkKey(protoId, url);
   state.bookmarks = state.bookmarks || [];
   const idx = state.bookmarks.findIndex(b => b.key === key);
-  const entry = { key, protoId, url, name, auth, authRef, persona, channel };
+  const entry = { key, protoId, url, name, auth, authRef, persona, channel, emulate, mockTools };
   if (idx >= 0) {
     // 既存はユーザーが付けた display name 等を尊重しつつ最新値で更新
     const prev = state.bookmarks[idx];
@@ -732,12 +734,21 @@ function renderBookmarks() {
       if (!fromKey || fromKey === b.key) return;
       reorderBookmark(fromKey, b.key, before ? "before" : "after");
     });
-    const protoLabel = (getProtocol(b.protoId)?.label) || b.protoId.toUpperCase();
+    // mock は装っているプロトコル (a2a/mcp) のラベルで表示。本物との区別は color/marker で。
+    const isMock = b.protoId === "mock";
+    const badgeProto = isMock ? (b.emulate === "mcp" ? "mcp" : "a2a") : b.protoId;
+    const protoLabel = isMock
+      ? (b.emulate === "mcp" ? "MCP" : "A2A")
+      : ((getProtocol(b.protoId)?.label) || b.protoId.toUpperCase());
+    const badgeTitle = isMock
+      ? `${protoLabel} (mock — simulated, no live connection)`
+      : `${protoLabel} connection`;
+    if (isMock) li.classList.add("is-mock");
     li.innerHTML = `
       <button class="conn-toggle" aria-label="${expanded ? 'collapse' : 'expand'} window list" title="${canExpand ? (expanded ? 'collapse' : 'expand') : 'no open windows'}" ${canExpand ? '' : 'disabled'}>
         <svg viewBox="0 0 12 12" width="9" height="9"><polyline points="3,4.5 6,8 9,4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
-      <span class="conn-proto-badge" data-proto="${escapeHtml(b.protoId)}" title="${escapeHtml(protoLabel)} connection">${escapeHtml(protoLabel)}</span>
+      <span class="conn-proto-badge${isMock ? ' is-mock' : ''}" data-proto="${escapeHtml(badgeProto)}" title="${escapeHtml(badgeTitle)}">${escapeHtml(protoLabel)}</span>
       <span class="agent-name">${escapeHtml(displayName)}</span>
       <span class="bm-count" title="${wins.length} window(s)">${wins.length}</span>
       <button class="bookmark-new" title="${wins.length ? 'Open another window to the same agent' : 'Open a window'}" aria-label="new window">
@@ -764,7 +775,7 @@ function renderBookmarks() {
         e.stopPropagation();
         openRowMenu(e.target.closest(".row-kebab"), [
           { label: "Edit",        onClick: () => openDialog({ editBookmark: b }) },
-          { label: "New window",  onClick: () => connect({ protoId: b.protoId, url: b.url, name: displayName, auth: b.auth, authRef: b.authRef, persona: b.persona, channel: b.channel }, { lockName: true }) },
+          { label: "New window",  onClick: () => connect({ protoId: b.protoId, url: b.url, name: displayName, auth: b.auth, authRef: b.authRef, persona: b.persona, channel: b.channel, emulate: b.emulate, mockTools: b.mockTools }, { lockName: true }) },
           { label: "Delete", danger: true, onClick: doDelete }
         ]);
         return;
@@ -778,7 +789,9 @@ function renderBookmarks() {
           auth:    b.auth,
           authRef: b.authRef,
           persona: b.persona,
-          channel: b.channel
+          channel: b.channel,
+          emulate:   b.emulate,
+          mockTools: b.mockTools
         }, { lockName: true });
         return;
       }
@@ -787,7 +800,8 @@ function renderBookmarks() {
       if (wins.length === 0) {
         connect({
           protoId: b.protoId, url: b.url, name: displayName,
-          auth: b.auth, authRef: b.authRef, persona: b.persona, channel: b.channel
+          auth: b.auth, authRef: b.authRef, persona: b.persona, channel: b.channel,
+          emulate: b.emulate, mockTools: b.mockTools
         }, { lockName: true });
         return;
       }
@@ -2617,6 +2631,16 @@ function applyProtoSpecificFields() {
   const isMock  = proto === "mock";
   const channelField = $("#dlgSlackChannelField");
   if (channelField) channelField.hidden = !isSlack;
+  // mock の「装うプロトコル」選択 (A2A / MCP)。
+  // 編集モードでは url が emulate でキー化済みなので変更不可 (toggle を無効化)。
+  const mockKindField = $("#dlgMockKindField");
+  if (mockKindField) mockKindField.hidden = !isMock;
+  const mockKindBox = $("#dlgMockKind");
+  if (mockKindBox) {
+    const editing = !!state._editingBookmarkKey;
+    mockKindBox.querySelectorAll(".seg-opt").forEach(b => { b.disabled = editing; });
+    mockKindBox.classList.toggle("is-disabled", editing);
+  }
 
   // ── mock: URL は不要。代わりに「agent name」を主役にする ──
   // url field を name 入力に転用し、auth / test / advanced を隠す。
@@ -2646,8 +2670,11 @@ function applyProtoSpecificFields() {
   const urlInput  = $("#dlgUrl");
   if (urlInput) {
     if (isMock) {
-      urlInput.placeholder = "e.g. 与信審査エージェント   ·   Fraud Detection   ·   Incident";
-      urlInput.title = "疑似エージェントの表示名。実通信はせず、Script Editor の台本 (`<` 送信 / `$>` 応答) を再生します。";
+      const mcpKind = (state.mockEmulate || "a2a") === "mcp";
+      urlInput.placeholder = mcpKind
+        ? "e.g. 契約データストア   ·   Policy Records   ·   MDM"
+        : "e.g. 査定エージェント   ·   Fraud Detection   ·   Incident";
+      urlInput.title = "この名前がその役割を表します。実通信はせず、Script Editor の台本 / tools 呼び出しを再生します。";
     } else if (isSlack) {
       urlInput.placeholder = "https://slack.com   ·   https://slack.example.com   (compatible server)";
       urlInput.title = "";
@@ -3871,7 +3898,7 @@ async function importFromUrlFlow() {
 //   1) 同一オリジン (/scenarios/...) — atelier-static / dev-server が静的配信する場合
 //   2) GitHub raw — どこで開いていても、 push 済みの最新ファイルを直接読む (再デプロイ不要)
 // raw.githubusercontent.com は CORS 許可 (ACAO:*) なのでブラウザから直接 fetch 可能。
-const SCENARIO_REPO_RAW = "https://raw.githubusercontent.com/tmiya4ta/agent-atelier/feat/mdm-list-suppliers";
+const SCENARIO_REPO_RAW = "https://raw.githubusercontent.com/tmiya4ta/agent-atelier/main";
 
 // index の item.url は同一オリジン相対パス (/scenarios/xxx.json) なので、
 // GitHub raw から読むときは base を付け替える。
@@ -4316,6 +4343,34 @@ function wireDialog() {
       openIdentityDialog();
     });
   }
+
+  // mock の「装うプロトコル」セグメントトグル (A2A / MCP)
+  const mockKind = $("#dlgMockKind");
+  if (mockKind) {
+    mockKind.addEventListener("click", (e) => {
+      const opt = e.target.closest(".seg-opt");
+      if (!opt) return;
+      state.mockEmulate = opt.dataset.emulate === "mcp" ? "mcp" : "a2a";
+      mockKind.querySelectorAll(".seg-opt").forEach(b => {
+        const on = b === opt;
+        b.classList.toggle("is-active", on);
+        b.setAttribute("aria-checked", on ? "true" : "false");
+      });
+      applyProtoSpecificFields();   // placeholder を kind に合わせて更新
+    });
+  }
+}
+
+// mock kind トグルの表示状態を state.mockEmulate に同期する。
+function syncMockKindToggle() {
+  const mockKind = $("#dlgMockKind");
+  if (!mockKind) return;
+  const cur = state.mockEmulate === "mcp" ? "mcp" : "a2a";
+  mockKind.querySelectorAll(".seg-opt").forEach(b => {
+    const on = b.dataset.emulate === cur;
+    b.classList.toggle("is-active", on);
+    b.setAttribute("aria-checked", on ? "true" : "false");
+  });
 }
 
 function openDialog(opts = {}) {
@@ -4324,7 +4379,10 @@ function openDialog(opts = {}) {
 
   $("#connectDialog").hidden = false;
   if (editB) state.selectedProto = editB.protoId;
+  // mock kind の初期値: 編集なら bookmark の emulate、新規なら直近選択 (既定 a2a)
+  state.mockEmulate = editB?.emulate || state.mockEmulate || "a2a";
   renderProtoGrid();
+  syncMockKindToggle();
   renderAuthRefSelect(editB ? (editB.authRef || "") : "");
   clearDialogTest();
 
@@ -4490,8 +4548,9 @@ async function submitDialog() {
     $("#dlgUrl").focus();
     return;
   }
+  const emulate = isMock ? (state.mockEmulate === "mcp" ? "mcp" : "a2a") : undefined;
   const url = isMock
-    ? mockUrl(raw)
+    ? mockUrl(raw, emulate)
     : (raw ? (/^https?:\/\//i.test(raw) ? raw : "https://" + raw) : "");
   const cleanAuthRef = (authRef && authRef !== "__new__") ? authRef : undefined;
 
@@ -4531,6 +4590,7 @@ async function submitDialog() {
     url,
     name: name || hostFromUrl(url) || "Untitled",
     authRef: cleanAuthRef,
+    emulate,
     channel: state.selectedProto === "slack" ? (channel || "general") : undefined
   });
   btn.disabled = false;
@@ -4541,7 +4601,7 @@ async function submitDialog() {
 }
 
 // ─── Connect ────────────────────────────────────────
-async function connect({ protoId, url, name, auth, authRef, persona, channel }, opts = {}) {
+async function connect({ protoId, url, name, auth, authRef, persona, channel, emulate, mockTools }, opts = {}) {
   const proto = getProtocol(protoId);
   if (!proto || !proto.AdapterClass) {
     await modalAlert({
@@ -4568,7 +4628,7 @@ async function connect({ protoId, url, name, auth, authRef, persona, channel }, 
   // authRef があれば identity から実トークン/ヘッダを解決 (無ければ旧 auth 文字列を後方互換で使用)
   const resolved = await resolveAuthForConnection({ authRef, auth });
   const adapter = new proto.AdapterClass({
-    url, name, persona, channel,
+    url, name, persona, channel, emulate, mockTools,
     auth: resolved.auth,
     authHeaders: resolved.authHeaders,
     authRef
@@ -4604,7 +4664,7 @@ async function connect({ protoId, url, name, auth, authRef, persona, channel }, 
 
   // bookmark 登録: 同じ proto+url が無ければ追加、 あれば最新の name/authRef/etc に更新
   upsertBookmark({
-    protoId, url, name, auth, authRef, persona, channel
+    protoId, url, name, auth, authRef, persona, channel, emulate, mockTools
   });
 
   renderTabs();

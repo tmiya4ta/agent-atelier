@@ -83,7 +83,9 @@ function snapshotWindow(win) {
       auth:    "",
       authRef: cfg.authRef,   // identity 参照 (非 secret)
       persona: cfg.persona,
-      channel: cfg.channel
+      channel: cfg.channel,
+      emulate:   cfg.emulate,    // mock が装うプロトコル (a2a/mcp)
+      mockTools: cfg.mockTools   // mock(mcp) のツール定義
     },
     pos: {
       left:   win.el.style.left,
