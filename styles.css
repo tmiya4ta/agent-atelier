@@ -514,6 +514,32 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   position: relative;
   z-index: 20;
 }
+/* 右端リサイズハンドル (CONNECTIONS パネル幅の可変) */
+.side-resize {
+  position: absolute;
+  top: 0; bottom: 0; right: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 25;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+.side-resize::after {
+  content: "";
+  position: absolute; top: 0; bottom: 0; right: 0;
+  width: 2px;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+.side-resize:hover::after,
+body.is-resizing-side .side-resize::after {
+  background: var(--ink-navy-2);
+}
+/* ドラッグ中はグリッド幅アニメを切ってカクつきを防ぐ */
+body.is-resizing-side { transition: none !important; }
+body.is-resizing-side .sidebar { transition: none !important; }
+/* collapse 時はハンドルを無効化 (sidebar 全体が pointer-events:none) */
+
 /* rail + panel を横並びにする内側コンテナ (footer はこの下に独立) */
 .side-body {
   flex: 1 1 auto;

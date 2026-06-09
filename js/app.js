@@ -92,7 +92,8 @@ const state = {
   selectedScriptId: null,
   openScriptIds: [],  // panel に open しているタブの順序
   scriptPanelOpen: false,
-  scriptPanelHeight: 0  // 0 = 未設定。 init で canvas の ~50% に決まる
+  scriptPanelHeight: 0,  // 0 = 未設定。 init で canvas の ~50% に決まる
+  sidePanelW: 240        // CONNECTIONS パネル領域の幅 (px)。 右端ドラッグで可変
 };
 
 function defaultScriptPanelHeight() {
@@ -158,6 +159,9 @@ function closeRowMenu() {
 const ZOOM_MIN = 0.8;
 const ZOOM_MAX = 2.0;
 const ZOOM_STEP = 0.1;
+const SIDE_PANEL_W_MIN = 160;
+const SIDE_PANEL_W_MAX = 560;
+const SIDE_PANEL_W_DEF = 240;
 
 const $  = (s, p = document) => p.querySelector(s);
 const $$ = (s, p = document) => Array.from(p.querySelectorAll(s));
@@ -187,6 +191,7 @@ function init() {
     state.openScriptIds    = (saved.openScriptIds || []).filter(id => state.scripts.find(s => s.id === id));
     state.scriptPanelOpen  = !!saved.scriptPanelOpen && state.openScriptIds.length > 0;
     state.scriptPanelHeight = normalizeScriptPanelHeight(saved.scriptPanelHeight);
+    state.sidePanelW = normalizeSidePanelW(saved.sidePanelW);
     catCounter    = state.catalogs.reduce((m, c) => Math.max(m, parseInt(c.id?.split("-")[1] || 0)), 0);
     scriptCounter = state.scripts.reduce((m, s) => Math.max(m, parseInt(s.id?.split("-")[1] || 0)), 0);
     restoreFromSaved(saved);
@@ -203,6 +208,7 @@ function init() {
     state.openScriptIds    = (saved?.openScriptIds || []).filter(id => state.scripts.find(s => s.id === id));
     state.scriptPanelOpen  = !!saved?.scriptPanelOpen && state.openScriptIds.length > 0;
     state.scriptPanelHeight = normalizeScriptPanelHeight(saved?.scriptPanelHeight);
+    state.sidePanelW = normalizeSidePanelW(saved?.sidePanelW);
     scriptCounter = state.scripts.reduce((m, s) => Math.max(m, parseInt(s.id?.split("-")[1] || 0)), 0);
     createWorkspace("default", { focus: true, silent: true });
   }
@@ -231,6 +237,7 @@ function init() {
   wireWsTabs();
   wireZoom();
   wireSidebarToggle();
+  wireSideResize();
   wireTheme();
   wireWorkspaceBlur();
   wireScriptPanel();
@@ -238,6 +245,7 @@ function init() {
   wireConnToggleAll();
   applyZoom();   // 復元値を反映
   applySidebar();
+  applySidePanelW();   // 復元値を反映
   applyTheme();
   applyScriptPanel();   // 復元値を反映
   updateStatusLine();
@@ -312,6 +320,58 @@ function toggleSidebar() {
 }
 function wireSidebarToggle() {
   $("#sidebarToggle").addEventListener("click", toggleSidebar);
+}
+
+// ───────────────────────────────────────────────────────
+// SIDEBAR 幅リサイズ (CONNECTIONS パネル領域)
+// アイコンレールは固定。 --side-panel-w を動かしてパネル幅だけ可変にする。
+// (定数 SIDE_PANEL_W_* はファイル上部の定数群で定義 — init() より前に初期化が必要)
+// ───────────────────────────────────────────────────────
+function normalizeSidePanelW(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return SIDE_PANEL_W_DEF;
+  return Math.max(SIDE_PANEL_W_MIN, Math.min(SIDE_PANEL_W_MAX, Math.round(n)));
+}
+function applySidePanelW() {
+  document.documentElement.style.setProperty("--side-panel-w", state.sidePanelW + "px");
+}
+function wireSideResize() {
+  const handle = $("#sideResize");
+  if (!handle) return;
+  const begin = (clientX) => {
+    const startX = clientX;
+    const startW = state.sidePanelW;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    document.body.classList.add("is-resizing-side");
+    const onMove = (ev) => {
+      const x = ev.touches ? ev.touches[0].clientX : ev.clientX;
+      state.sidePanelW = Math.max(SIDE_PANEL_W_MIN, Math.min(SIDE_PANEL_W_MAX, startW + (x - startX)));
+      applySidePanelW();
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      document.body.classList.remove("is-resizing-side");
+      dirty();
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    window.addEventListener("touchmove", onMove, { passive: true });
+    window.addEventListener("touchend", onUp);
+  };
+  handle.addEventListener("mousedown", (e) => { e.preventDefault(); begin(e.clientX); });
+  handle.addEventListener("touchstart", (e) => { begin(e.touches[0].clientX); }, { passive: true });
+  // ダブルクリックで既定幅にリセット
+  handle.addEventListener("dblclick", () => {
+    state.sidePanelW = SIDE_PANEL_W_DEF;
+    applySidePanelW();
+    dirty();
+  });
 }
 
 // ═══════════════════════════════════════════════════════
