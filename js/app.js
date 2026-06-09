@@ -3,6 +3,7 @@
 // ワークスペース(タブ)、サイドバー、接続ダイアログ、フローティングウインドウ管理
 
 import { PROTOCOLS, getProtocol }           from "./protocols/index.js";
+import { mockUrl }                          from "./protocols/mock.js";
 import { AgentWindow }                      from "./window.js";
 import * as persist                         from "./persist.js";
 import { modalConfirm, modalAlert, modalPrompt, modalChoice } from "./modal.js";
@@ -2613,12 +2614,41 @@ function applyProtoSpecificFields() {
   const proto = state.selectedProto;
   const isSlack = proto === "slack";
   const isMcp   = proto === "mcp";
+  const isMock  = proto === "mock";
   const channelField = $("#dlgSlackChannelField");
   if (channelField) channelField.hidden = !isSlack;
+
+  // ── mock: URL は不要。代わりに「agent name」を主役にする ──
+  // url field を name 入力に転用し、auth / test / advanced を隠す。
+  const urlField   = $("#dlgUrl")?.closest(".field");
+  const urlLabel   = $("#dlgUrl")?.closest(".field")?.querySelector(".field-label span:first-child");
+  const urlHint    = $("#dlgUrl")?.closest(".field")?.querySelector(".field-hint");
+  const urlPrefix  = $("#dlgUrl")?.closest(".input-wrap")?.querySelector(".input-prefix");
+  const nameField  = $("#dlgName")?.closest(".field");
+  const authField  = $("#dlgAuthRef")?.closest(".field");
+  const testBtn    = $("#dlgTest");
+  const advanced   = document.querySelector("#connectDialog .advanced");
+  if (urlLabel)  urlLabel.textContent  = isMock ? "agent name" : "discovery url";
+  if (urlHint)   urlHint.textContent   = isMock ? "この名前だけが役割を表します (例: 与信審査 / 不正検知 / インシデント)"
+                                                : "A2A: base URL → AgentCard 解釈 / MCP: /mcp endpoint";
+  if (urlPrefix) urlPrefix.textContent = isMock ? "name" : "url";
+  // mock では display name 行・auth 行・test ボタン・advanced を畳む。
+  // ただし編集モードでは url(=mock:// key) が readonly なので、rename 用に name 行は残す。
+  const isEditing = !!state._editingBookmarkKey;
+  if (urlLabel && isMock && isEditing) urlLabel.textContent = "agent id";
+  if (urlHint  && isMock && isEditing) urlHint.textContent  = "mock connection key (readonly)";
+  if (nameField) nameField.hidden = isMock && !isEditing;
+  if (authField) authField.hidden = isMock;
+  if (testBtn)   testBtn.hidden   = isMock;
+  if (advanced)  advanced.hidden  = isMock;
+
   // placeholder の切替
   const urlInput  = $("#dlgUrl");
   if (urlInput) {
-    if (isSlack) {
+    if (isMock) {
+      urlInput.placeholder = "e.g. 与信審査エージェント   ·   Fraud Detection   ·   Incident";
+      urlInput.title = "疑似エージェントの表示名。実通信はせず、Script Editor の台本 (`<` 送信 / `$>` 応答) を再生します。";
+    } else if (isSlack) {
       urlInput.placeholder = "https://slack.com   ·   https://slack.example.com   (compatible server)";
       urlInput.title = "";
     } else if (isMcp) {
@@ -4451,14 +4481,18 @@ async function testA2a(baseUrl, auth, authHeaders) {
 
 async function submitDialog() {
   const raw  = $("#dlgUrl").value.trim();
-  const name = $("#dlgName").value.trim();
+  const isMock = state.selectedProto === "mock";
+  // mock では url field に「agent name」を入れている。display name 行は隠している。
+  const name = isMock ? raw : $("#dlgName").value.trim();
   const authRef = $("#dlgAuthRef")?.value || "";
   const channel = $("#dlgChannel")?.value.trim().replace(/^#/, "") || "";
   if (!raw) {
     $("#dlgUrl").focus();
     return;
   }
-  const url = raw ? (/^https?:\/\//i.test(raw) ? raw : "https://" + raw) : "";
+  const url = isMock
+    ? mockUrl(raw)
+    : (raw ? (/^https?:\/\//i.test(raw) ? raw : "https://" + raw) : "");
   const cleanAuthRef = (authRef && authRef !== "__new__") ? authRef : undefined;
 
   // ── 編集モード: 既存 bookmark を更新し、開いているウインドウを新設定で再接続 ──

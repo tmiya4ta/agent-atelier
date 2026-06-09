@@ -4,6 +4,7 @@
 import { A2AAdapter }   from "./a2a.js";
 import { SlackAdapter } from "./slack.js";
 import { MCPAdapter }   from "./mcp.js";
+import { MockAdapter }  from "./mock.js";
 
 export const PROTOCOLS = [
   {
@@ -28,6 +29,14 @@ export const PROTOCOLS = [
     sub: "model context",
     description: "Model Context Protocol · JSON-RPC 2.0 over HTTP",
     AdapterClass: MCPAdapter,
+    status: "ready"
+  },
+  {
+    id: "mock",
+    label: "Mock",
+    sub: "offline · scripted",
+    description: "疑似エージェント · 名前だけで役割を表す · 台本 (Script Editor) を再生",
+    AdapterClass: MockAdapter,
     status: "ready"
   },
   {
