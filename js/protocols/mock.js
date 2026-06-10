@@ -92,10 +92,13 @@ export class MockAdapter extends ProtocolAdapter {
       headers: { "Content-Type": "application/json", "Accept": "application/json" },
       payload: rpcOut, raw: JSON.stringify(rpcOut, null, 2) });
 
-    await sleep(2400 + Math.random() * 600);
+    await sleep(7000 + Math.random() * 3000);
 
-    const snippet = String(text || "").trim().slice(0, 60);
-    const reply = `**${name}** — 受け付けました${snippet ? `: 「${snippet}${text.length > 60 ? "…" : ""}」` : ""}。`;
+    // 手入力時の応答。config.mockReply があれば、その agent の「担当範囲 + 担当外の振り先」を
+    // 案内する定型文を返す (どんな質問でも筋が通る)。無ければ汎用の受領応答。
+    const reply = this.config?.mockReply
+      ? String(this.config.mockReply).replace(/\\n/g, "\n")
+      : `**${name}** です。ご用件を承ります。`;
     this._emit("message", { role: "agent", text: reply, final: true });
 
     const rpcIn = {

@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>fe1db8fb-8261-4b5c-a591-06fea582f980</groupId>
+    <artifactId>atelier2</artifactId>
+    <!-- T1 BG / Sandbox / Private Space rootps への deploy 用 (atelier2)。
+         version は単調増加。Exchange は同 version 再 publish 不可。 -->
+    <version>1.0.1</version>
+    <packaging>mule-application</packaging>
+
+    <name>atelier2</name>
+    <description>Atelier2 — Agent Workbench UI (static hosting) on T1 Sandbox / rootps</description>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <app.runtime>4.9.8</app.runtime>
+        <mule.maven.plugin.version>4.9.1</mule.maven.plugin.version>
+        <!-- 親 (../) にある Atelier の静的アセット。 build 時に src/main/resources/static/ にコピー -->
+        <atelier.root>${project.basedir}/..</atelier.root>
+
+        <anypoint.businessGroup>MuleSoft\T1</anypoint.businessGroup>
+        <anypoint.environment>Sandbox</anypoint.environment>
+        <anypoint.targetSpace>rootps</anypoint.targetSpace>
+    </properties>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-clean-plugin</artifactId>
+                <version>3.2.0</version>
+            </plugin>
+
+            <!-- 親フォルダの static アセットを src/main/resources/static/ に同梱 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>copy-atelier-static</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>copy-resources</goal></goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/staged-static</outputDirectory>
+                            <overwrite>true</overwrite>
+                            <resources>
+                                <resource>
+                                    <directory>${atelier.root}</directory>
+                                    <includes>
+                                        <include>index.html</include>
+                                        <include>styles.css</include>
+                                        <include>js/**</include>
+                                        <include>oauth/**</include>
+                                        <include>assets/**</include>
+                                        <include>scenarios/**</include>
+                                    </includes>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.mule.tools.maven</groupId>
+                <artifactId>mule-maven-plugin</artifactId>
+                <version>${mule.maven.plugin.version}</version>
+                <extensions>true</extensions>
+                <configuration>
+                    <classifier>mule-application</classifier>
+                    <!-- ビルド成果物 (jar) に Mule ソース (flow XML / pom 等) を
+                         META-INF/mule-src/ として同梱する。 これで Studio / 他開発者が
+                         Exchange から取得した jar のフローを開いて確認できる。
+                         CLI の -DattachMuleSources に頼らず常時 attach する。 -->
+                    <attachMuleSources>true</attachMuleSources>
+                    <cloudhub2Deployment>
+                        <muleVersion>${app.runtime}</muleVersion>
+                        <connectedAppClientId>${anypoint.connectedApp.clientId}</connectedAppClientId>
+                        <connectedAppClientSecret>${anypoint.connectedApp.clientSecret}</connectedAppClientSecret>
+                        <connectedAppGrantType>client_credentials</connectedAppGrantType>
+                        <businessGroup>${anypoint.businessGroup}</businessGroup>
+                        <environment>${anypoint.environment}</environment>
+                        <target>${anypoint.targetSpace}</target>
+                        <provider>MC</provider>
+                        <applicationName>${project.artifactId}</applicationName>
+                        <replicas>1</replicas>
+                        <vCores>0.1</vCores>
+                        <deploymentTimeout>600000</deploymentTimeout>
+                        <deploymentSettings>
+                            <generateDefaultPublicUrl>true</generateDefaultPublicUrl>
+                        </deploymentSettings>
+                    </cloudhub2Deployment>
+                </configuration>
+            </plugin>
+        </plugins>
+
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <resource>
+                <directory>${project.build.directory}/staged-static</directory>
+                <targetPath>static</targetPath>
+            </resource>
+        </resources>
+    </build>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.mule.connectors</groupId>
+            <artifactId>mule-http-connector</artifactId>
+            <version>1.11.0</version>
+            <classifier>mule-plugin</classifier>
+        </dependency>
+        <dependency>
+            <groupId>com.demo-group</groupId>
+            <artifactId>mule-jmx-module</artifactId>
+            <version>0.1.0</version>
+            <classifier>mule-plugin</classifier>
+        </dependency>
+    </dependencies>
+
+    <distributionManagement>
+        <repository>
+            <id>anypoint-exchange-v3</id>
+            <name>Anypoint Exchange v3</name>
+            <url>https://maven.anypoint.mulesoft.com/api/v3/organizations/fe1db8fb-8261-4b5c-a591-06fea582f980/maven</url>
+            <layout>default</layout>
+        </repository>
+    </distributionManagement>
+
+    <repositories>
+        <repository>
+            <id>anypoint-exchange-v3</id>
+            <name>Anypoint Exchange</name>
+            <url>https://maven.anypoint.mulesoft.com/api/v3/maven</url>
+            <layout>default</layout>
+        </repository>
+        <repository>
+            <id>mulesoft-releases</id>
+            <name>MuleSoft Releases Repository</name>
+            <url>https://repository.mulesoft.org/releases/</url>
+            <layout>default</layout>
+        </repository>
+        <repository>
+            <id>mulesoft-ee-releases</id>
+            <name>MuleSoft EE Releases Repository</name>
+            <url>https://repository.mulesoft.org/nexus/content/repositories/releases-ee/</url>
+            <layout>default</layout>
+        </repository>
+    </repositories>
+
+    <pluginRepositories>
+        <pluginRepository>
+            <id>mulesoft-releases</id>
+            <name>MuleSoft Releases Repository</name>
+            <layout>default</layout>
+            <url>https://repository.mulesoft.org/releases/</url>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </pluginRepository>
+    </pluginRepositories>
+
+</project>

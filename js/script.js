@@ -12,8 +12,15 @@
 //   clear                                         全 window のチャットをクリア
 //   clear <window>                                指定 window のチャットをクリア
 //   $> <window>: <応答>                          mock 応答 (`<` と対称)。 その window への n 回目の send が
-//                                                 n 番目の $> を取る。 mock モード ON 時のみ使用。 改行は \n。
+//                                                 n 番目の応答を取る。 mock モード ON 時のみ使用。 改行は \n。
 //                                                 mock OFF 時は非表示 (実行されない)。
+//                                                 ★同じ window 宛の $> を連続して並べると、 1 回の応答の中で
+//                                                 「ステップを 1 つずつ順番に表示」する (1 ステップ = 1 行で書ける)。
+//                                                 間に < / > / sleep などが入ると次の応答 (次の send 用) に分かれる。
+//                                                 例:
+//                                                   $> Broker: まず受付します
+//                                                   $> Broker: 次に査定します
+//                                                   $> Broker: 完了しました   ← この 3 行で 1 応答 (3 ステップ順次表示)
 //   # ...                                         comment (ignored)
 //
 //  <window> はウインドウ名 (大文字小文字区別なし、部分一致OK) または ID (例 aw-1)
@@ -62,17 +69,42 @@ export function parseScript(text) {
 // 台本から mock 辞書を組み立てる: { "<window名>": ["応答1", "応答2", ...] }。
 // `$> win: text` の win から直接引き、 その window への n 回目の send が n 番目の応答を取る。
 // \n リテラルは実改行に展開。
+//
+// ★連続グルーピング: 同じ window 宛の `$>` を「途中に他の行を挟まず」連続して並べると、
+//   それらを 1 つの応答 (要素) にまとめ、各ステップを "[[STEP]]" で連結する。
+//   adapter (base.js) 側が [[STEP]] を分割して 1 つずつ順番に表示する。
+//   - コメント / 空行は区切りにしない (グループ継続)
+//   - 別 window の `$>`、 または `<` `>` `sleep` `clear` などの非 $> 行が来たらグループを閉じる
+//   これで「1 ステップ = 1 行」で書け、 続けて並べるだけで順次表示になる。
 export function parseMocks(text) {
   const dict = {};
+  // window ごとに「いま積み上げ中のステップ配列」を保持。null = グループ未開始。
+  let curWin = null;     // 直前に $> を積んだ window
+  let curSteps = null;   // その積み上げ中ステップ (string[])
+
+  const flush = () => {
+    if (curWin != null && curSteps && curSteps.length) {
+      (dict[curWin] = dict[curWin] || []).push(curSteps.join("[[STEP]]"));
+    }
+    curWin = null; curSteps = null;
+  };
+
   String(text || "").split(/\r?\n/).forEach(raw => {
     const ln = raw.trim();
-    if (!ln || ln.startsWith("#")) return;
+    if (!ln || ln.startsWith("#")) return;   // 空行/コメントはグループを切らない
     const m = ln.match(MOCK_RE);
-    if (!m) return;
-    const win = m[1].trim().replace(/^["']|["']$/g, "");
-    const reply = m[2].replace(/\\n/g, "\n");
-    (dict[win] = dict[win] || []).push(reply);
+    if (m) {
+      const win = m[1].trim().replace(/^["']|["']$/g, "");
+      const step = m[2].replace(/\\n/g, "\n");
+      if (curWin !== null && curWin !== win) flush();   // 別 window に切替 → 確定
+      curWin = win;
+      (curSteps = curSteps || []).push(step);
+    } else {
+      // $> 以外の実行行 (< / > / sleep / clear 等) が来たらグループを閉じる
+      flush();
+    }
   });
+  flush();
   return dict;
 }
 

@@ -2769,6 +2769,28 @@ body.is-dark .agent-window.is-mock { --mock-tint: #A98BF0; }
   flex-shrink: 0;
 }
 
+/* Broker の「各エージェントへの依頼を 1 つずつ」表示する進捗ステップ。
+   中央の nowrap pill ではなく、左寄せの複数行カードにする。 */
+.msg-system.msg-step {
+  align-self: flex-start;
+  max-width: 86%;
+}
+.msg-system.msg-step .msg-body {
+  display: block;
+  white-space: normal;
+  border-radius: 8px;
+  border-left: 3px solid var(--accent);
+  padding: 8px 12px;
+  font-family: var(--f-ui);
+  font-size: calc(12px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0;
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+.msg-system.msg-step .msg-body::before { display: none; }
+.msg-system.msg-step .msg-body p { margin: 2px 0; }
+.msg-system.msg-step .msg-body strong { color: var(--ink); }
+
 /* typing: 通常メッセージと同じく名前は msg-head として枠外に。 ドットのみ枠内。 */
 .msg-typing {
   align-self: flex-start;

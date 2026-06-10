@@ -470,7 +470,8 @@ function restoreFromSaved(saved) {
         persona: hydrated.config?.persona,
         channel: hydrated.config?.channel,
         emulate:   hydrated.config?.emulate,
-        mockTools: hydrated.config?.mockTools
+        mockTools: hydrated.config?.mockTools,
+        mockReply: hydrated.config?.mockReply
       }, { restore: { pos: hydrated.pos, activeTab: hydrated.activeTab }, skipDirty: true });
     });
   });
@@ -611,12 +612,12 @@ function wireWsTabs() {
 }
 
 // 「コネクション登録」エントリの追加 / 上書き。 ウインドウの open/close と独立。
-function upsertBookmark({ protoId, url, name, auth, authRef, persona, channel, emulate, mockTools }) {
+function upsertBookmark({ protoId, url, name, auth, authRef, persona, channel, emulate, mockTools, mockReply }) {
   if (!protoId || !url) return;
   const key = bookmarkKey(protoId, url);
   state.bookmarks = state.bookmarks || [];
   const idx = state.bookmarks.findIndex(b => b.key === key);
-  const entry = { key, protoId, url, name, auth, authRef, persona, channel, emulate, mockTools };
+  const entry = { key, protoId, url, name, auth, authRef, persona, channel, emulate, mockTools, mockReply };
   if (idx >= 0) {
     // 既存はユーザーが付けた display name 等を尊重しつつ最新値で更新
     const prev = state.bookmarks[idx];
@@ -775,7 +776,7 @@ function renderBookmarks() {
         e.stopPropagation();
         openRowMenu(e.target.closest(".row-kebab"), [
           { label: "Edit",        onClick: () => openDialog({ editBookmark: b }) },
-          { label: "New window",  onClick: () => connect({ protoId: b.protoId, url: b.url, name: displayName, auth: b.auth, authRef: b.authRef, persona: b.persona, channel: b.channel, emulate: b.emulate, mockTools: b.mockTools }, { lockName: true }) },
+          { label: "New window",  onClick: () => connect({ protoId: b.protoId, url: b.url, name: displayName, auth: b.auth, authRef: b.authRef, persona: b.persona, channel: b.channel, emulate: b.emulate, mockTools: b.mockTools, mockReply: b.mockReply }, { lockName: true }) },
           { label: "Delete", danger: true, onClick: doDelete }
         ]);
         return;
@@ -791,7 +792,8 @@ function renderBookmarks() {
           persona: b.persona,
           channel: b.channel,
           emulate:   b.emulate,
-          mockTools: b.mockTools
+          mockTools: b.mockTools,
+          mockReply: b.mockReply
         }, { lockName: true });
         return;
       }
@@ -801,7 +803,7 @@ function renderBookmarks() {
         connect({
           protoId: b.protoId, url: b.url, name: displayName,
           auth: b.auth, authRef: b.authRef, persona: b.persona, channel: b.channel,
-          emulate: b.emulate, mockTools: b.mockTools
+          emulate: b.emulate, mockTools: b.mockTools, mockReply: b.mockReply
         }, { lockName: true });
         return;
       }
@@ -2867,6 +2869,7 @@ function loadActiveScriptIntoPanel() {
   if (!s) {
     editor.value = "";
     $("#scriptSavedAt").textContent = "—";
+    refreshEditorMockState();
     updateScriptHighlight();
     return;
   }
@@ -2885,6 +2888,7 @@ function loadActiveScriptIntoPanel() {
     ? `${s.name} · saved ${formatAge(ageSec)}`
     : s.name;
   setScriptStatus("", "");
+  refreshEditorMockState();
   updateScriptHighlight();
 }
 
@@ -2960,6 +2964,27 @@ function highlightVarRefs(s) {
   if (last < text.length) out.push(escapeHtmlInline(text.slice(last)));
   return out.join("");
 }
+
+// エディタ上で「mock モードとして表示すべきか」。
+// 明示 MOCK ボタン ON、 または 開いている台本の参照 window が全部 mock 接続なら true。
+// state._editorAllMock は loadActiveScriptIntoPanel / 編集時に更新する (毎行計算しない)。
+function editorMockActive() {
+  return !!state.scriptMock || !!state._editorAllMock;
+}
+
+// 現在エディタに載っている台本を parse して all-mock かを判定し、 state._editorAllMock に反映。
+// mock ボタンの見た目も (手動 ON でない時は) これに合わせる。
+function refreshEditorMockState() {
+  const ed = $("#scriptEditor");
+  let allMock = false;
+  if (ed && ed.value.trim()) {
+    try { allMock = scriptIsAllMock(parseScript(ed.value)); } catch { allMock = false; }
+  }
+  state._editorAllMock = allMock;
+  // 手動 MOCK が OFF のときだけ、 ボタン表示を auto 判定に追従させる (手動 ON は尊重)
+  if (!state.scriptMock) setMockButtonState(allMock);
+}
+
 function highlightDslLine(raw) {
   const trimmed = raw.trimStart();
   const lead = raw.slice(0, raw.length - trimmed.length);
@@ -2990,7 +3015,7 @@ function highlightDslLine(raw) {
   // mock ON: mock 色で強調 / OFF: コメント色 dim (実行されない行なので目立たせない)。
   // ※ 空文字を返すと overlay の行が消えて textarea と行高がずれるので、 必ず 1 行描画する。
   if ((m = trimmed.match(/^(\$>)(\s*)(.+?)(\s*)(:)(\s*)([\s\S]*)$/))) {
-    if (!state.scriptMock) {
+    if (!editorMockActive()) {
       // OFF 時はコメント扱い。 絵文字 (✅⚖️📦 等) は固有色を持ち dim グレーでも目立つので
       // tk-mock-off クラス側で grayscale+低不透明度にして沈める。
       return escapeHtmlInline(lead) + `<span class="tk-comment tk-mock-off">${escapeHtmlInline(trimmed)}</span>`;
@@ -3005,7 +3030,7 @@ function highlightDslLine(raw) {
   if ((m = trimmed.match(/^(>)(\s+)(.+?)(?:(\s+)(\d+(?:\.\d+)?)\s*s?)?(?:(\s+)(as)(\s+)([a-zA-Z_][a-zA-Z0-9_]*))?$/))) {
     // mock モード時は応答源が直後の $> なので wait 行は無関係。 dim にして沈める
     // ($> OFF 時と対称)。 空文字では消さない (overlay の行が消えて行高がずれるため)。
-    if (state.scriptMock) {
+    if (editorMockActive()) {
       return escapeHtmlInline(lead) + `<span class="tk-comment tk-mock-off">${escapeHtmlInline(trimmed)}</span>`;
     }
     let out = escapeHtmlInline(lead)
@@ -3262,8 +3287,8 @@ function runCurrentLine() {
 // 台本 ops が参照する window 名を集め、 未オープンのものは bookmark から開く。
 // 開いた window は AgentCard 取得 (adapter "open") まで待ってから返るので、
 // 直後の send/wait が「接続前」で空振りしない。
-async function ensureScriptWindowsOpen(ops) {
-  // ops から参照される window 名 (send / wait / operator / clear<win>) を重複なく集める
+// ops が参照する window 名を重複なく集める (send / wait / operator / clear<win>)。
+function scriptReferencedWindowNames(ops) {
   const names = [];
   const seen = new Set();
   for (const op of ops) {
@@ -3274,6 +3299,28 @@ async function ensureScriptWindowsOpen(ops) {
     seen.add(key);
     names.push(op.win);
   }
+  return names;
+}
+
+// 台本が参照する window が「すべて mock 接続」かを判定。
+// 開いている window か、未オープンでも登録 bookmark が mock なら mock とみなす。
+// 1 つでも非 mock (実 A2A/MCP/Slack) が混じる、または解決先が無ければ false。
+function scriptIsAllMock(ops) {
+  const names = scriptReferencedWindowNames(ops);
+  if (!names.length) return false;
+  for (const name of names) {
+    const w = findWindowByQuery(name);
+    if (w) { if (w.protoId !== "mock") return false; continue; }
+    const bm = findBookmarkByQuery(name);
+    if (bm) { if (bm.protoId !== "mock") return false; continue; }
+    return false;   // 解決先が無い → 自動 mock 判定はしない
+  }
+  return true;
+}
+
+async function ensureScriptWindowsOpen(ops) {
+  // ops から参照される window 名 (send / wait / operator / clear<win>) を重複なく集める
+  const names = scriptReferencedWindowNames(ops);
 
   // まだ開いていない & bookmark がある名前だけを対象に connect
   // (複数の名前が同じ bookmark に解決される場合は key で重複排除)
@@ -3303,12 +3350,22 @@ async function ensureScriptWindowsOpen(ops) {
       // lockName: bookmark の display name を維持 (AgentCard.name で上書きしない)
       await connect({
         protoId: bm.protoId, url: bm.url, name: bm.name,
-        auth: bm.auth, authRef: bm.authRef, persona: bm.persona, channel: bm.channel
+        auth: bm.auth, authRef: bm.authRef, persona: bm.persona, channel: bm.channel,
+        emulate: bm.emulate, mockTools: bm.mockTools, mockReply: bm.mockReply
       }, { lockName: true });
     } catch (e) {
       appendScriptLog({ level: "err", text: `auto-open "${bm.name || bm.url}" failed: ${e?.message || e}` });
     }
   }
+}
+
+// MOCK ボタンの見た目を on/off に同期する (state.scriptMock とは独立に呼べる)。
+// auto-mock 実行中は state を変えずに見た目だけ ON にするのに使う。
+function setMockButtonState(on) {
+  const btn = $("#scriptMock");
+  if (!btn) return;
+  btn.classList.toggle("is-on", !!on);
+  btn.setAttribute("aria-pressed", on ? "true" : "false");
 }
 
 async function runScript(opts = {}) {
@@ -3328,20 +3385,30 @@ async function runScript(opts = {}) {
   // script の実行は panel と独立なので、 閉じても走り続ける。
   if (state.scriptPanelOpen) closeScriptPanel();
 
+  // ─── mock モードの実効判定 ───
+  // 明示的に MOCK ボタン ON、 または 台本が参照する window が「全部 mock 接続」なら
+  // 自動的に mock モード扱いにする (mock しか無いデモでボタン操作を不要にする)。
+  const autoMock = !state.scriptMock && scriptIsAllMock(ops);
+  const effMock = state.scriptMock || autoMock;
+
   // ─── 未オープン window の自動オープン ───
   // 台本が参照する window 名で、 まだ開いていないが bookmark (登録済み connection) が
-  // あるものは、 実行前にここで開いておく。 mock モード時は実通信しないので skip。
+  // あるものは、 実行前にここで開いておく。 mock 接続は実通信しないので auto-mock 時も開く。
+  // (明示 MOCK モードのみ skip — 旧挙動: 実通信させない前提で window を開かない)
   if (!state.scriptMock) {
     await ensureScriptWindowsOpen(ops);
   }
 
-  // ─── モックモード: ON なら対象 window の adapter を mock に乗っ取る ───
+  // ─── モックモード: 対象 window の adapter を mock に乗っ取る ───
   // 台本インラインの `$> 応答` を { "<window名>": ["応答1", ...] } に畳んでローカル応答に。 実通信なし。
   const mockWins = [];
-  if (state.scriptMock) {
+  // auto-mock 時は state は変えず、ボタンの見た目だけ ON にして「MOCK で動いている」と分かるように
+  if (autoMock) setMockButtonState(true);
+  if (effMock) {
+    if (autoMock) appendScriptLog({ level: "dim", text: `· 全 window が mock 接続 → MOCK モードを自動 ON` });
     const mocks = parseMocks(text);
     if (!Object.keys(mocks).length) {
-      appendScriptLog({ level: "err", text: `mock mode ON だが "${script?.name || '?'}" に mock 応答 ($> 行) がありません — 通常実行します` });
+      appendScriptLog({ level: "err", text: `mock mode だが "${script?.name || '?'}" に mock 応答 ($> 行) がありません — 通常実行します` });
     } else {
       for (const winName of Object.keys(mocks)) {
         const w = findWindowByQuery(winName);
@@ -3382,6 +3449,8 @@ async function runScript(opts = {}) {
   } finally {
     // mock で乗っ取った adapter を元に戻す (実通信に復帰)
     mockWins.forEach(w => { try { w.adapter.mockRestore(); } catch {} });
+    // auto-mock で点けたボタンの見た目を、実 state (scriptMock) に戻す
+    if (autoMock) setMockButtonState(state.scriptMock);
     $("#scriptRun").disabled  = false;
     $("#scriptStop").disabled = true;
     const elapsed = Math.round(performance.now() - t0);
@@ -3512,10 +3581,14 @@ function wireScriptPanel() {
   // mock トグル: セッション内のみ (persist しない)。 ON で実通信せずローカル応答。
   $("#scriptMock").addEventListener("click", (e) => {
     state.scriptMock = !state.scriptMock;
-    const btn = e.currentTarget;
-    btn.classList.toggle("is-on", state.scriptMock);
-    btn.setAttribute("aria-pressed", state.scriptMock ? "true" : "false");
-    setScriptStatus(state.scriptMock ? "MOCK モード ON (ローカル応答・実通信なし)" : "MOCK モード OFF", state.scriptMock ? "running" : "");
+    // 手動 OFF でも台本が all-mock なら見た目は ON のまま (auto 判定に戻す)
+    setMockButtonState(state.scriptMock || state._editorAllMock);
+    const auto = !state.scriptMock && state._editorAllMock;
+    setScriptStatus(
+      state.scriptMock ? "MOCK モード ON (ローカル応答・実通信なし)"
+      : auto           ? "MOCK モード ON (全 window が mock 接続のため自動)"
+      :                  "MOCK モード OFF",
+      (state.scriptMock || auto) ? "running" : "");
     // ハイライトを mock ON/OFF で切替: $> は ON=mock 色 / OFF=dim、 > は ON=dim / OFF=通常
     updateScriptHighlight();
     setTimeout(() => { if (!state._script) setScriptStatus("", ""); }, 2500);
@@ -3541,6 +3614,8 @@ function wireScriptPanel() {
     $("#scriptEditor").addEventListener(ev, () => { refreshScriptChips(); updateScriptHighlight(); })
   );
   $("#scriptEditor").addEventListener("input", autoSaveScript);
+  // 内容変更時のみ all-mock 判定を更新 (mock ボタン表示 / $> ハイライトに反映)
+  $("#scriptEditor").addEventListener("input", () => { refreshEditorMockState(); updateScriptHighlight(); });
   $("#scriptEditor").addEventListener("scroll", () => {
     const ed = $("#scriptEditor");
     const hl = $("#scriptHighlight");
@@ -3756,16 +3831,22 @@ function wireBackup() {
 }
 
 // ─── shared import dispatcher ───────────────────────────
-// Ask user for scope (all / scripts-only) and apply.
+// scope を聞く。 repository フローと同じ「Import 1 ボタン + "Scenarios only" チェック」に統一。
+//   チェック ON → scenarios のみ merge / OFF → everything 置換 (reload)。
+// 戻り値: "scripts" | "all" | null(キャンセル)。
 async function chooseImportScope() {
-  return await modalChoice({
+  const result = await modalChoice({
     title:   "What to import?",
     message: "Pick the scope of this import.",
     choices: [
-      { id: "all",     label: "Everything",     description: "Replace connections, catalogs and scenarios — page will reload" },
-      { id: "scripts", label: "Scenarios only", description: "Merge scenarios into the current set — no reload, current connections kept" }
+      { id: "import", label: "Import", description: "Apply this snapshot" }
+    ],
+    extras: [
+      { id: "scriptsOnly", label: "Scenarios only", description: "Merge scenarios only — keep current connections, no reload", defaultChecked: true }
     ]
   });
+  if (!result) return null;
+  return result.extras?.scriptsOnly ? "scripts" : "all";
 }
 
 // Returns true if import happened (so caller can persist URL history etc.).
@@ -4601,7 +4682,7 @@ async function submitDialog() {
 }
 
 // ─── Connect ────────────────────────────────────────
-async function connect({ protoId, url, name, auth, authRef, persona, channel, emulate, mockTools }, opts = {}) {
+async function connect({ protoId, url, name, auth, authRef, persona, channel, emulate, mockTools, mockReply }, opts = {}) {
   const proto = getProtocol(protoId);
   if (!proto || !proto.AdapterClass) {
     await modalAlert({
@@ -4628,7 +4709,7 @@ async function connect({ protoId, url, name, auth, authRef, persona, channel, em
   // authRef があれば identity から実トークン/ヘッダを解決 (無ければ旧 auth 文字列を後方互換で使用)
   const resolved = await resolveAuthForConnection({ authRef, auth });
   const adapter = new proto.AdapterClass({
-    url, name, persona, channel, emulate, mockTools,
+    url, name, persona, channel, emulate, mockTools, mockReply,
     auth: resolved.auth,
     authHeaders: resolved.authHeaders,
     authRef
@@ -4664,7 +4745,7 @@ async function connect({ protoId, url, name, auth, authRef, persona, channel, em
 
   // bookmark 登録: 同じ proto+url が無ければ追加、 あれば最新の name/authRef/etc に更新
   upsertBookmark({
-    protoId, url, name, auth, authRef, persona, channel, emulate, mockTools
+    protoId, url, name, auth, authRef, persona, channel, emulate, mockTools, mockReply
   });
 
   renderTabs();

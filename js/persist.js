@@ -85,7 +85,8 @@ function snapshotWindow(win) {
       persona: cfg.persona,
       channel: cfg.channel,
       emulate:   cfg.emulate,    // mock が装うプロトコル (a2a/mcp)
-      mockTools: cfg.mockTools   // mock(mcp) のツール定義
+      mockTools: cfg.mockTools,  // mock(mcp) のツール定義
+      mockReply: cfg.mockReply   // mock 手入力時の定型応答 (担当範囲 + 振り先)
     },
     pos: {
       left:   win.el.style.left,

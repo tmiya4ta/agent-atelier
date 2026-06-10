@@ -648,7 +648,23 @@ export class AgentWindow {
     const stream = this.el.querySelector(".chat-stream");
     const node = this._renderMsg("system", "status", text);
     node.classList.add("msg-status");
+    // a2a の進捗ステップは Markdown (太字・表) を含むことがあるので HTML 化して読みやすく。
+    // 複数行を許容するため msg-step クラスで pill の nowrap を解除する。
+    if (this.protoMode === "a2a" && window.marked) {
+      const body = node.querySelector(".msg-body");
+      if (body) {
+        try {
+          window.marked.setOptions({ gfm: true, breaks: true });
+          body.innerHTML = safeHtml(window.marked.parse(text));
+          body.dataset.md = "1";
+          node.classList.add("msg-step");
+        } catch { /* keep plain text on parse error */ }
+      }
+    }
     stream.appendChild(node);
+    // 思考中スピナーが出ていれば最下部へ移動 (常に「最新ステップの下で考えている」見た目に)
+    const typing = stream.querySelector(".msg-typing");
+    if (typing) stream.appendChild(typing);
     this._scrollChat(true);
   }
 

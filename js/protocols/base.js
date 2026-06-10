@@ -76,15 +76,33 @@ export class ProtocolAdapter extends EventTarget {
       // 応答を先に解決して長さを測る (順番消費型なので二度呼ばない)。
       const reply = this._mockResolve(text);
 
-      // 人工 delay: LLM が考えている感を出す。
-      //   base 4.5〜6.5s + 応答 1 文字あたり ~9ms (長い統合レポートほど長考に見える)。
-      //   上限 14s で頭打ち (デモがだれない範囲)。
-      const base    = 4500 + Math.random() * 2000;
-      const perChar = Math.min((reply?.length || 0) * 9, 8000);
-      const delay   = Math.min(base + perChar, 14000);
-      await new Promise(r => setTimeout(r, delay));
+      // 思考時間の見積り (LLM が考えている感)。base 7〜10s + 文字数連動、上限 26s。
+      const thinkDelay = (txt) => {
+        const base    = 7000 + Math.random() * 3000;
+        const perChar = Math.min((txt?.length || 0) * 14, 16000);
+        return Math.min(base + perChar, 26000);
+      };
 
-      this._emit("message", { role: "agent", text: reply, final: true });
+      // `[[STEP]]` 区切りを含む応答は、各セグメントを順番に表示する
+      // (Broker が「各エージェントへの依頼を 1 つずつ」見せる演出)。
+      // 最後のセグメント以外は status イベント (独立行・wait を解決しない)、
+      // 最後だけ final message として出す → 台本の wait は最終セグメントで解決。
+      if (typeof reply === "string" && reply.indexOf("[[STEP]]") >= 0) {
+        const segs = reply.split("[[STEP]]").map(s => s.trim()).filter(Boolean);
+        for (let s = 0; s < segs.length; s++) {
+          const isLast = s === segs.length - 1;
+          // 各ステップごとに少し考えてから出す (一気に出さず順次)
+          await new Promise(r => setTimeout(r, Math.min(thinkDelay(segs[s]), isLast ? 26000 : 9000)));
+          if (isLast) {
+            this._emit("message", { role: "agent", text: segs[s], final: true });
+          } else {
+            this._emit("status", { state: "working", text: segs[s] });
+          }
+        }
+      } else {
+        await new Promise(r => setTimeout(r, thinkDelay(reply)));
+        this._emit("message", { role: "agent", text: reply, final: true });
+      }
 
       const rpcIn = { jsonrpc: "2.0", id: reqId,
         result: { status: { state: "completed" }, messages: [{ role: "agent", parts: [{ kind: "text", text: reply }], messageId: `m-${turn}-a` }] } };
