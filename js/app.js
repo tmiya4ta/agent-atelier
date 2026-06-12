@@ -3716,38 +3716,21 @@ function wireScriptPanel() {
 // ═══════════════════════════════════════════════════════
 // BACKUP — export / import the full saved snapshot
 // ═══════════════════════════════════════════════════════
+// Import の入口。 source を 1 ダイアログ (Repository / Direct URL / From file…) で選ばせる。
+// 以前は「From file / From remote site」→「Repository / Direct URL」の 2 段だったが冗長なので統合。
 async function openImportPicker() {
   const choice = await modalChoice({
-    title: "Import configuration",
-    message: "Load a saved snapshot. This replaces the current connections, catalogs and scripts.",
-    choices: [
-      { id: "file",   label: "From file…",        description: "Pick a .json file from this device" },
-      { id: "remote", label: "From remote site…", description: "Fetch from the scenario repository or a direct URL" }
-    ]
-  });
-  if (choice === "file") {
-    $("#importFile").click();
-  } else if (choice === "remote") {
-    await importFromRemoteSiteFlow();
-  }
-}
-
-// Import from remote site — repository (bundled snapshots) か direct URL かを選ばせてから
-// それぞれの既存フローに分岐する。
-async function importFromRemoteSiteFlow() {
-  const where = await modalChoice({
-    title: "Import from remote site",
-    message: "Where should the snapshot come from?",
+    title: "Import",
+    message: "Load a bundled scenario, or import a snapshot from a URL or file.",
     choices: [
       { id: "repo", label: "Repository", description: "Pick from the bundled scenario list" },
-      { id: "url",  label: "Direct URL", description: "Fetch a JSON snapshot from an HTTP(S) URL" }
+      { id: "url",  label: "Direct URL", description: "Fetch a JSON snapshot from an HTTP(S) URL" },
+      { id: "file", label: "From file…", description: "Pick a .json file from this device" }
     ]
   });
-  if (where === "repo") {
-    await importFromRepositoryFlow();
-  } else if (where === "url") {
-    await importFromUrlFlow();
-  }
+  if (choice === "repo")      await importFromRepositoryFlow();
+  else if (choice === "url")  await importFromUrlFlow();
+  else if (choice === "file") $("#importFile").click();
 }
 
 function wireBackup() {
