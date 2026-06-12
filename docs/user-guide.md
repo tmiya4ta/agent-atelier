@@ -198,6 +198,7 @@ $> 受付: 損害サービスへ引き継ぎました。      # ← 上の行と
 > 上の `<video>` がレンダリングされない環境（GitHub の Markdown プレビュー等）では、ファイルを直接開いてください：
 > - [`docs/media/atelier-insurance-demo-2.5x.mp4`](media/atelier-insurance-demo-2.5x.mp4)（2.5 倍速・約 3 分 55 秒・1080p・ナレーション字幕付き）
 > - [`docs/media/atelier-insurance-demo.mp4`](media/atelier-insurance-demo.mp4)（等速・約 9 分 47 秒・1080p・ナレーション字幕付き）
+> - 字幕なし版：[`atelier-insurance-demo-2.5x-nosub.mp4`](media/atelier-insurance-demo-2.5x-nosub.mp4) / [`atelier-insurance-demo-nosub.mp4`](media/atelier-insurance-demo-nosub.mp4)
 
 ### 画面イメージ
 
