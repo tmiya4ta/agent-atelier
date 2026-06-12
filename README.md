@@ -4,19 +4,9 @@
 A2A 中核のマルチプロトコル・エージェントクライアント。1 接続 = 1 ウィンドウ。チャット・Agent Card・
 デバッグ（生 RPC フレーム）・設定をタブで切り替えながら、複数エージェントを横断して触れる「作業台（Atelier）」。
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│  Atelier                                       [⌘N] [⌘T]      │
-│ ┌───────────┐  ┌─ SCRS Broker ───────┐ ┌─ incident-agent ─┐ │
-│ │Connections│  │ chat │card│debug│set │ │ chat │card│debug │ │
-│ │ ├ broker  │  │                     │ │                  │ │
-│ │ ├ incident│  │  you: 在庫を確認して │ │  ✅ 登録しました   │ │
-│ │ Catalogs  │  │  agent: ...         │ │  INC-2026-0677   │ │
-│ │ Scripts   │  │  [_______________]→ │ │  [____________]→ │ │
-│ └───────────┘  └─────────────────────┘ └──────────────────┘ │
-│ ▸ Script Panel (DSL IDE)                                     │
-└──────────────────────────────────────────────────────────────┘
-```
+![Atelier — 複数のエージェント窓を並べた作業台（保険シナリオの 6 部門を表示）](docs/img/ws-departments.png)
+
+> 📹 **デモ動画**は下の [デモ（保険シナリオ・モック）](#デモ保険シナリオモック) を参照。
 
 - **Repo**: https://github.com/tmiya4ta/agent-atelier
 - **言語**: 英語 default、`js/i18n.js` の `setLang("ja")` で日本語に切替可（現状 ja 部分翻訳）
@@ -47,6 +37,25 @@ python3 server/dev-server.py --port 8000
 
 > dev サーバは「静的配信 + CORS バイパス proxy（`/proxy?url=...`）+ `Cache-Control: no-store`
 > + SSRF ガード」を提供します。詳細は [ONBOARDING.md](ONBOARDING.md#ローカル開発) 参照。
+
+---
+
+## デモ（保険シナリオ・モック）
+
+実エンドポイント無しで動く自動車保険金請求のデモです。Import →
+**①Broker なし（FA1）= 人が 6 部門をたらい回し** → **②Broker あり（FB1）= 1 文で横断オーケストレーション** の順に実行します。
+
+<video src="docs/media/atelier-insurance-demo-2.5x.mp4" controls width="820" muted></video>
+
+> 上の `<video>` が再生されない環境（GitHub の Markdown ビューア等）ではファイルを直接開いてください：
+> [`atelier-insurance-demo-2.5x.mp4`](docs/media/atelier-insurance-demo-2.5x.mp4)（2.5 倍速・約 3 分 51 秒・1080p）/
+> [`atelier-insurance-demo.mp4`](docs/media/atelier-insurance-demo.mp4)（等速・約 9 分 38 秒・1080p）
+
+| Broker なし（FA1）：6 部門を 3 往復ずつ持ち回る | Broker あり（FB1）：保険オーケストレーターが統合 |
+|---|---|
+| ![FA1](docs/img/ws1-fa1-result.png) | ![FB1](docs/img/broker-result.png) |
+
+操作手順は [操作手順書（日本語）](docs/user-guide.md) を参照。
 
 ---
 
