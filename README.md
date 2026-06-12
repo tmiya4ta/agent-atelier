@@ -48,8 +48,8 @@ python3 server/dev-server.py --port 8000
 <video src="docs/media/atelier-insurance-demo-2.5x.mp4" controls width="820" muted></video>
 
 > 上の `<video>` が再生されない環境（GitHub の Markdown ビューア等）ではファイルを直接開いてください：
-> [`atelier-insurance-demo-2.5x.mp4`](docs/media/atelier-insurance-demo-2.5x.mp4)（2.5 倍速・約 3 分 51 秒・1080p）/
-> [`atelier-insurance-demo.mp4`](docs/media/atelier-insurance-demo.mp4)（等速・約 9 分 38 秒・1080p）
+> [`atelier-insurance-demo-2.5x.mp4`](docs/media/atelier-insurance-demo-2.5x.mp4)（2.5 倍速・約 3 分 51 秒・1080p・字幕付き）/
+> [`atelier-insurance-demo.mp4`](docs/media/atelier-insurance-demo.mp4)（等速・約 9 分 38 秒・1080p・字幕付き）
 
 | Broker なし（FA1）：6 部門を 3 往復ずつ持ち回る | Broker あり（FB1）：保険オーケストレーターが統合 |
 |---|---|
