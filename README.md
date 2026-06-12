@@ -20,6 +20,7 @@ A2A 中核のマルチプロトコル・エージェントクライアント。1
 
 - **Repo**: https://github.com/tmiya4ta/agent-atelier
 - **言語**: 英語 default、`js/i18n.js` の `setLang("ja")` で日本語に切替可（現状 ja 部分翻訳）
+- **操作手順書（日本語）**: [`docs/user-guide.md`](docs/user-guide.md) — 接続・Mock・Import・台本実行の使い方
 - **詳細ドキュメント**: [`docs/architecture.md`](docs/architecture.md) — 設計・データフロー・拡張方法
 - **運用 / デプロイ手引き**: [`ONBOARDING.md`](ONBOARDING.md) — CH2 デプロイ・ハマりどころ・キーバインド
 - **CH2 ホスティング**: [`mule-app/README.md`](mule-app/README.md)
@@ -152,6 +153,7 @@ agent-atelier/
 | ドキュメント | 内容 |
 |---|---|
 | [`README.md`](README.md) | 本書。概要・クイックスタート・機能一覧 |
+| [`docs/user-guide.md`](docs/user-guide.md) | **操作手順書（日本語）** — 接続 / Mock / Import / 台本実行 / ショートカット |
 | [`docs/architecture.md`](docs/architecture.md) | アーキテクチャ・状態管理・データフロー・adapter 拡張・永続化の詳細 |
 | [`ONBOARDING.md`](ONBOARDING.md) | ローカル開発・CH2 デプロイ・ハマりどころ・キーバインド早見表 |
 | [`docs/scenario-mock-mode.md`](docs/scenario-mock-mode.md) | mock モード（オフラインデモ）の仕組み |
