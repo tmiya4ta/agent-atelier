@@ -1,22 +1,23 @@
 # Atelier — Agent Workbench
 
-ブラウザ内に複数のフローティングウィンドウを並べて、**A2A / MCP / Slack** サーバへ同時接続する、
-A2A 中核のマルチプロトコル・エージェントクライアント。1 接続 = 1 ウィンドウ。チャット・Agent Card・
-デバッグ（生 RPC フレーム）・設定をタブで切り替えながら、複数エージェントを横断して触れる「作業台（Atelier）」。
+**Atelier** は、複数のエージェントを 1 つの画面でまとめて扱うためのワークベンチです。
+ブラウザ上にフローティングウィンドウを並べ、**A2A / MCP / Slack** の各サーバへ同時に接続できます。
+接続 1 つにつき、ウィンドウ 1 つ。各ウィンドウではチャット・Agent Card・デバッグ（生の RPC フレーム）・設定を
+タブで切り替えながら、複数のエージェントを行き来して操作できます。プロトコルは A2A を中核に据えています。
 
-![Atelier — 複数のエージェント窓を並べた作業台（保険シナリオの 6 部門を表示）](docs/img/ws-departments.png)
+![Atelier — 複数のエージェントウィンドウを並べた画面（保険シナリオの 6 部門を表示）](docs/img/ws-departments.png)
 
 > 📹 **デモ動画**は下の [デモ（保険シナリオ・モック）](#デモ保険シナリオモック) を参照。
 
 - **Repo**: https://github.com/tmiya4ta/agent-atelier
 - **言語**: 英語 default、`js/i18n.js` の `setLang("ja")` で日本語に切替可（現状 ja 部分翻訳）
-- **操作手順書（日本語）**: [`docs/user-guide.md`](docs/user-guide.md) — 接続・Mock・Import・台本実行の使い方
+- **操作手順書（日本語）**: [`docs/user-guide.md`](docs/user-guide.md) — 接続・Mock・Import・シナリオ実行の使い方
 - **詳細ドキュメント**: [`docs/architecture.md`](docs/architecture.md) — 設計・データフロー・拡張方法
 - **運用 / デプロイ手引き**: [`ONBOARDING.md`](ONBOARDING.md) — CH2 デプロイ・ハマりどころ・キーバインド
 - **CH2 ホスティング**: [`mule-app/README.md`](mule-app/README.md)
 
-純粋なフロントエンド（ビルド不要の ES Modules + 1 枚の `index.html`）。バックエンドは CORS 回避の
-薄い静的サーバ（`/proxy`）だけ。フレームワーク・npm・バンドラに依存しません。
+ビルド不要のフロントエンドだけで動きます（ES Modules と `index.html` 1 枚）。バックエンドは CORS を
+回避するための薄い静的サーバ（`/proxy`）のみで、フレームワークや npm、バンドラには依存しません。
 
 ---
 
@@ -42,14 +43,14 @@ python3 server/dev-server.py --port 8000
 
 ## デモ（保険シナリオ・モック）
 
-実エンドポイント無しで動く自動車保険金請求のデモです。Import →
-**①Broker なし（FA1）= 人が 6 部門をたらい回し** → **②Broker あり（FB1）= 1 文で横断オーケストレーション** の順に実行します。
+実際のサーバを用意しなくても動かせる、自動車保険金請求のデモです。Import で取り込んだあと、
+**① Broker なし（FA1）＝担当者が 6 部門をたらい回しする** → **② Broker あり（FB1）＝ 1 文を投げるだけで横断的にまとめる** の順で実行します。
 
 <video src="docs/media/atelier-insurance-demo-2.5x.mp4" controls width="820" muted></video>
 
 > 上の `<video>` が再生されない環境（GitHub の Markdown ビューア等）ではファイルを直接開いてください：
-> [`atelier-insurance-demo-2.5x.mp4`](docs/media/atelier-insurance-demo-2.5x.mp4)（2.5 倍速・約 3 分 51 秒・1080p・字幕付き）/
-> [`atelier-insurance-demo.mp4`](docs/media/atelier-insurance-demo.mp4)（等速・約 9 分 38 秒・1080p・字幕付き）
+> [`atelier-insurance-demo-2.5x.mp4`](docs/media/atelier-insurance-demo-2.5x.mp4)（2.5 倍速・約 3 分 22 秒・1080p・ナレーション字幕付き）/
+> [`atelier-insurance-demo.mp4`](docs/media/atelier-insurance-demo.mp4)（等速・約 8 分 25 秒・1080p・ナレーション字幕付き）
 
 | Broker なし（FA1）：6 部門を 3 往復ずつ持ち回る | Broker あり（FB1）：保険オーケストレーターが統合 |
 |---|---|
@@ -91,7 +92,7 @@ python3 server/dev-server.py --port 8000
 
 ## 会話 DSL（Script Panel）
 
-複数エージェントを跨いだ会話シナリオを台本として記述・再生できます。
+複数のエージェントをまたぐ会話の流れを、テキストのシナリオとして書いて再生できます。
 
 ```
 < SCRS Broker: 九州製作所の在庫を確認して      # 送信 (chevron 入 = agent への入力)
@@ -108,7 +109,7 @@ $> SCRS Broker: 在庫は十分です                 # mock 応答 (mock モー
 
 - `<window>` はウィンドウ名（大小無視・部分一致可）または ID（`aw-1`）。
 - **Run 時に未オープンのウィンドウは、登録済み接続（bookmark）から自動でオープン**してから実行します。
-- auto-loop モードで台本を繰り返し実行可能。
+- auto-loop モードを使えば、シナリオを繰り返し実行できます。
 - mock モード（`$>`）は実通信せずローカル応答を返すデモ用機能。詳細は [`docs/scenario-mock-mode.md`](docs/scenario-mock-mode.md)。
 
 ---
@@ -136,7 +137,7 @@ agent-atelier/
 │       └── index.js        PROTOCOLS レジストリ
 ├── oauth/callback.html     PKCE redirect target (postMessage で opener に返す)
 ├── server/                 dev サーバ (Node/Python) + mock A2A + CDP テストヘルパ
-├── scenarios/              サンプル台本 / mock 定義
+├── scenarios/              サンプルのシナリオ / mock 定義
 ├── docs/                   設計ドキュメント (architecture.md ほか)
 ├── atelier-agents/         デモ用 Mule エージェント群 (A2A worker / MCP server) ※別途デプロイ
 └── mule-app/               フロントエンドを CloudHub 2.0 で配信するための Mule アプリ
@@ -162,7 +163,7 @@ agent-atelier/
 | ドキュメント | 内容 |
 |---|---|
 | [`README.md`](README.md) | 本書。概要・クイックスタート・機能一覧 |
-| [`docs/user-guide.md`](docs/user-guide.md) | **操作手順書（日本語）** — 接続 / Mock / Import / 台本実行 / ショートカット |
+| [`docs/user-guide.md`](docs/user-guide.md) | **操作手順書（日本語）** — 接続 / Mock / Import / シナリオ実行 / ショートカット |
 | [`docs/architecture.md`](docs/architecture.md) | アーキテクチャ・状態管理・データフロー・adapter 拡張・永続化の詳細 |
 | [`ONBOARDING.md`](ONBOARDING.md) | ローカル開発・CH2 デプロイ・ハマりどころ・キーバインド早見表 |
 | [`docs/scenario-mock-mode.md`](docs/scenario-mock-mode.md) | mock モード（オフラインデモ）の仕組み |
