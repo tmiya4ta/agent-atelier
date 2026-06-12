@@ -446,6 +446,7 @@ function wireWorkspaceBlur() {
     if (t.closest(".modal-backdrop"))  return;  // confirm/alert/prompt が出ているとき
     if (t.closest("#scriptList"))      return;  // sidebar の script リスト
     if (t.closest("#scriptAdd"))       return;  // sidebar の "+" 新規シナリオボタン
+    if (t.closest("#scriptClearAll"))  return;  // sidebar の全シナリオ削除ボタン
     if (t.closest("#scriptCtxMenu"))   return;  // editor から spawn された右クリックメニュー
     closeScriptPanel();
   }, true);
@@ -2432,6 +2433,31 @@ async function deleteScript(id) {
   dirty();
 }
 
+// シナリオを全部消す。 接続・カタログ・ワークスペースには触れない。
+async function clearAllScripts() {
+  if (!state.scripts.length) return;
+  const n = state.scripts.length;
+  const ok = await modalConfirm({
+    title:        "Clear all scenarios?",
+    message:      `Delete all ${n} scenario${n === 1 ? "" : "s"}. Connections, catalogs and workspaces are kept.`,
+    confirmLabel: "Clear all",
+    danger:       true
+  });
+  if (!ok) return;
+  // 実行中なら止める
+  if (state._script) {
+    state._script.loopShouldStop = true;
+    state._script.runner?.stop?.();
+  }
+  state.scripts          = [];
+  state.openScriptIds    = [];
+  state.selectedScriptId = null;
+  state.scriptPanelOpen  = false;
+  renderScripts();
+  applyScriptPanel();
+  dirty();
+}
+
 function toggleScriptLoop(id) {
   const s = findScript(id);
   if (!s) return;
@@ -2464,6 +2490,8 @@ function renderScripts() {
   const root  = $("#scriptList");
   const empty = $("#scriptsEmpty");
   if (!root) return;
+  const clearAllBtn = $("#scriptClearAll");
+  if (clearAllBtn) clearAllBtn.hidden = state.scripts.length === 0;
   root.innerHTML = "";
   state.scripts.forEach(s => {
     const li = document.createElement("li");
@@ -2722,6 +2750,7 @@ function wireRail() {
   const btnCloseAll = $("#btnCloseAll");
   if (btnCloseAll) btnCloseAll.addEventListener("click", closeAllWindows);
   $("#scriptAdd").addEventListener("click", () => createScript({}));
+  $("#scriptClearAll").addEventListener("click", clearAllScripts);
 }
 
 // 現ワークスペースの全ウインドウを閉じる (接続も切断)。確認あり。
