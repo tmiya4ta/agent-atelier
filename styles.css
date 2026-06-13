@@ -4104,6 +4104,20 @@ body.is-dark .tk-mock-text { color: #C8A85A; }
 }
 #identityDialog .dialog { margin-top: 14vh; flex: 0 0 auto; }
 
+/* connect ダイアログの縦位置は JS (centerConnectDialog) が marginTop で決める。
+   「畳んだ状態がちょうど縦中央」になる位置に上端を固定し、 ADVANCED 展開や
+   test 結果はそこから下方向にだけ伸ばす (中央寄せのままだと高さ変化で上端も
+   動いてガタつくため)。 protocol 切替は本体高さを揃えてあるので動かない
+   (applyProtoSpecificFields 参照)。 下端は余白を確保し、 はみ出したらスクロール。 */
+#connectDialog {
+  display: flex;
+  flex-direction: column;
+  align-items: center;        /* 横は中央 */
+  justify-content: flex-start;/* 縦は上寄せ。 実際の位置は marginTop で調整 */
+  overflow-y: auto;
+}
+#connectDialog .dialog { margin: 0 0 6vh; flex: 0 0 auto; }
+
 .dialog {
   width: min(560px, 92vw);
   background: var(--panel);

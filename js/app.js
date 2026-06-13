@@ -2659,8 +2659,15 @@ function applyProtoSpecificFields() {
   const isSlack = proto === "slack";
   const isMcp   = proto === "mcp";
   const isMock  = proto === "mock";
+  // CHANNEL は Slack 専用。 ただし A2A/MCP/Slack は本体高さを揃えたい
+  // (中央寄せ時に protocol 切替で上下に動かないように) ので、 Slack 以外でも
+  // 行の領域だけ確保して中身を不可視にする。 Mock はフォーム構成が大きく
+  // 違うので完全に畳む。
   const channelField = $("#dlgSlackChannelField");
-  if (channelField) channelField.hidden = !isSlack;
+  if (channelField) {
+    channelField.hidden = isMock;                          // Mock では行ごと畳む
+    channelField.style.visibility = isSlack ? "" : "hidden"; // A2A/MCP は領域だけ確保
+  }
   // mock の「装うプロトコル」選択 (A2A / MCP)。
   // 編集モードでは url が emulate でキー化済みなので変更不可 (toggle を無効化)。
   const mockKindField = $("#dlgMockKindField");
@@ -2702,11 +2709,11 @@ function applyProtoSpecificFields() {
     if (isMock) {
       const mcpKind = (state.mockEmulate || "a2a") === "mcp";
       urlInput.placeholder = mcpKind
-        ? "e.g. 契約データストア   ·   Policy Records   ·   MDM"
-        : "e.g. 査定エージェント   ·   Fraud Detection   ·   Incident";
+        ? "e.g. 契約データストア"
+        : "e.g. 査定エージェント";
       urlInput.title = "この名前がその役割を表します。実通信はせず、Script Editor の台本 / tools 呼び出しを再生します。";
     } else if (isSlack) {
-      urlInput.placeholder = "https://slack.com   ·   https://slack.example.com   (compatible server)";
+      urlInput.placeholder = "https://slack.com";
       urlInput.title = "";
     } else if (isMcp) {
       urlInput.placeholder = "https://example.com/mcp   (MCP JSON-RPC endpoint)";
@@ -2715,6 +2722,20 @@ function applyProtoSpecificFields() {
       urlInput.placeholder = "https://api.example.com";
       urlInput.title = "Base URL is fine — Atelier appends /.well-known/agent-card.json automatically (falls back to /.well-known/agent.json for the legacy spec).";
     }
+  }
+
+  // 全 proto で本体高さを一定にし、 中央寄せ時の再センタリングをなくす。
+  // 非mock が最も高い (url + name/auth + channel + advanced) ので、 その自然
+  // 高さを基準として記録し、 全 proto に min-height で適用する。 mock は短い
+  // ぶん下端に余白が出るだけで、 ダイアログは一切動かなくなる。
+  // box-sizing:border-box なので offsetHeight と min-height は一致する。
+  const dlgBody = document.querySelector("#connectDialog .dialog-body");
+  if (dlgBody) {
+    dlgBody.style.minHeight = "";                 // いったん外して自然高さを測る
+    // 基準は「畳んだ非mock」の高さ。 ADVANCED 展開中は測らない (肥大化防止)。
+    const advOpen = advanced && advanced.open && !advanced.hidden;
+    if (!isMock && !advOpen) state._dlgBaseBodyH = dlgBody.offsetHeight;
+    if (state._dlgBaseBodyH) dlgBody.style.minHeight = state._dlgBaseBodyH + "px";
   }
 }
 
@@ -4471,6 +4492,7 @@ function openDialog(opts = {}) {
   state._editingBookmarkKey = editB ? editB.key : null;
 
   $("#connectDialog").hidden = false;
+  state._dlgBaseBodyH = 0;   // 高さ基準はこの開いた回の実測で取り直す (fs 変更対策)
   if (editB) state.selectedProto = editB.protoId;
   // mock kind の初期値: 編集なら bookmark の emulate、新規なら直近選択 (既定 a2a)
   state.mockEmulate = editB?.emulate || state.mockEmulate || "a2a";
@@ -4503,6 +4525,9 @@ function openDialog(opts = {}) {
     $("#dlgUrl").classList.remove("is-readonly");
   }
 
+  // レイアウト確定後に縦中央へ。 以降の ADVANCED 展開等は下にだけ伸びる。
+  requestAnimationFrame(centerConnectDialog);
+
   setTimeout(() => $(editB ? "#dlgName" : "#dlgUrl").focus(), 50);
 }
 function closeDialog() {
@@ -4510,6 +4535,22 @@ function closeDialog() {
   state._editingBookmarkKey = null;
   clearDialogTest();
 }
+
+// ダイアログの上端を「畳んだ状態がちょうど縦中央」になる位置に固定する。
+// ADVANCED 展開・test 結果・protocol 切替はここから下にだけ伸び、上端は不動。
+function centerConnectDialog() {
+  const bd = $("#connectDialog");
+  if (!bd || bd.hidden) return;
+  const dlg = bd.querySelector(".dialog");
+  if (!dlg) return;
+  dlg.style.marginTop = "";   // 現在(畳んだ)高さを測るため一旦リセット
+  const top = Math.max(24, Math.round((bd.clientHeight - dlg.offsetHeight) / 2));
+  dlg.style.marginTop = top + "px";
+}
+// 開いている間はウィンドウリサイズで中央位置を取り直す。
+window.addEventListener("resize", () => {
+  if (!$("#connectDialog").hidden) centerConnectDialog();
+});
 
 function clearDialogTest() {
   const row = $("#dlgTestRow");
