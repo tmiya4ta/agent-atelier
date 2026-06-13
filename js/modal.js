@@ -227,3 +227,105 @@ export function modalPrompt({ title, label, placeholder, defaultValue, confirmLa
     setTimeout(() => { input.focus(); input.select(); }, 50);
   });
 }
+
+// modalBusinessGroup — business group を「1 枚で」選ばせる/入力させるモーダル。
+//   await modalBusinessGroup({ title, loadGroups })
+//     loadGroups: async () => [{id,name}]   (throw すると失敗扱い)
+//   挙動: 開いた直後にロード表示 → 成功なら select + 手入力テキスト併設、
+//         取得 0 件 or 失敗ならその旨を出してテキスト入力にフォールバック。
+//   返り値: { input, bgId, bgName } または null (cancel)。
+export function modalBusinessGroup({ title, loadGroups } = {}) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement("div");
+    wrap.className = "modal-backdrop";
+    wrap.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true">
+        <header class="modal-head">
+          <span class="modal-eyebrow">business group</span>
+          <h3 class="modal-title">${escapeHtml(title || "Add business group")}</h3>
+        </header>
+        <div class="modal-body">
+          <p class="modal-msg modal-bg-status">Loading business groups…</p>
+          <select class="modal-input modal-bg-select" aria-label="business group" hidden></select>
+          <label class="modal-label modal-bg-or" hidden>or enter name / ID manually</label>
+          <input class="modal-input modal-bg-text" type="text" autocomplete="off"
+                 placeholder="e.g. btd  or  0fc4eaf1-5697-4cef-9c1b-3b96e3a52ee2" hidden />
+        </div>
+        <footer class="modal-foot">
+          <div class="modal-foot-actions">
+            <button type="button" class="ghost-btn modal-cancel">Cancel</button>
+            <button type="button" class="primary-btn modal-confirm"><span>Add</span><span class="arrow">→</span></button>
+          </div>
+        </footer>
+      </div>
+    `;
+    document.body.appendChild(wrap);
+    requestAnimationFrame(() => wrap.classList.add("is-open"));
+
+    const status = wrap.querySelector(".modal-bg-status");
+    const sel    = wrap.querySelector(".modal-bg-select");
+    const orLbl  = wrap.querySelector(".modal-bg-or");
+    const text   = wrap.querySelector(".modal-bg-text");
+
+    const close = (result) => {
+      wrap.classList.remove("is-open");
+      setTimeout(() => wrap.remove(), 220);
+      if (_stackKeyHandler === onKey) {
+        document.removeEventListener("keydown", onKey, true);
+        _stackKeyHandler = null;
+      }
+      resolve(result);
+    };
+    const confirm = () => {
+      if (!sel.hidden && sel.value) {
+        const opt = sel.selectedOptions[0];
+        const nm = (opt?.dataset.name || opt?.textContent || sel.value).trim();
+        close({ input: nm || sel.value, bgId: sel.value, bgName: opt?.dataset.name || null });
+        return;
+      }
+      const v = text.value.trim();
+      if (v) { close({ input: v, bgId: null, bgName: null }); return; }
+      text.hidden = false; text.focus();
+    };
+    wrap.querySelector(".modal-confirm").addEventListener("click", confirm);
+    wrap.querySelector(".modal-cancel").addEventListener("click", () => close(null));
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(null); }
+      else if (e.key === "Enter" && document.activeElement === text) {
+        e.preventDefault(); e.stopPropagation(); confirm();
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    _stackKeyHandler = onKey;
+
+    // 非同期で org 一覧をロード
+    (async () => {
+      try {
+        const groups = (typeof loadGroups === "function") ? await loadGroups() : [];
+        if (!wrap.isConnected) return;
+        if (Array.isArray(groups) && groups.length) {
+          sel.innerHTML = "";
+          const head = document.createElement("option");
+          head.value = ""; head.textContent = "— select business group —";
+          sel.appendChild(head);
+          groups.forEach(g => {
+            const o = document.createElement("option");
+            o.value = g.id; o.textContent = g.name || g.id; o.dataset.name = g.name || "";
+            sel.appendChild(o);
+          });
+          status.hidden = true;
+          sel.hidden = false; orLbl.hidden = false; text.hidden = false;
+          sel.focus();
+        } else {
+          status.textContent = "No selectable business groups found — enter name / ID.";
+          text.hidden = false; text.focus();
+        }
+      } catch (e) {
+        if (!wrap.isConnected) return;
+        status.classList.add("is-error");
+        status.textContent = `Couldn't load business groups (${e?.message || e}). Enter name / ID manually.`;
+        text.hidden = false; text.focus();
+      }
+    })();
+  });
+}

@@ -6,7 +6,7 @@ import { PROTOCOLS, getProtocol }           from "./protocols/index.js";
 import { mockUrl }                          from "./protocols/mock.js";
 import { AgentWindow }                      from "./window.js";
 import * as persist                         from "./persist.js";
-import { modalConfirm, modalAlert, modalPrompt, modalChoice } from "./modal.js";
+import { modalConfirm, modalAlert, modalPrompt, modalChoice, modalBusinessGroup } from "./modal.js";
 import { runAuthCodeFlow, redirectUri }     from "./oauth.js";
 import { parseScript, parseMocks, ScriptRunner }        from "./script.js";
 
@@ -1055,6 +1055,7 @@ async function ensureIdentityToken(idn) {
   if (idn.accessToken && Date.now() < (idn.tokenExpiresAt || 0)) return idn.accessToken;
   try {
     if (idn.kind === "oauth2_cc")        await fetchCcTokenForIdentity(idn);
+    else if (idn.kind === "oauth2_password") await fetchPasswordGrantToken(idn);
     else if (idn.kind === "jwt_bearer")  await fetchJwtBearerToken(idn);
     else if (idn.kind === "oauth2_authcode") {
       const data = await runAuthCodeFlow(idn);
@@ -1100,6 +1101,41 @@ async function fetchJwtBearerToken(idn) {
   idn.tokenExpiresAt = Date.now() + Math.max(60, (data.expires_in || 3600) - 60) * 1000;
 }
 
+// username/password でトークン取得。
+//  - Anypoint 系 (/accounts/login, または provider=anypoint): JSON {username,password} を POST。
+//  - それ以外 (custom): RFC 6749 §4.3 ROPC (grant_type=password, form-encoded)。
+async function fetchPasswordGrantToken(idn) {
+  const url = idn.tokenUrl || "";
+  const isLogin = idn.provider === "anypoint" || /\/(accounts\/)?login\b/i.test(url);
+  let res;
+  if (isLogin) {
+    res = await fetch(`/proxy?url=${encodeURIComponent(url)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify({ username: idn.username || "", password: idn.password || "" })
+    });
+  } else {
+    const params = new URLSearchParams({
+      grant_type: "password", username: idn.username || "", password: idn.password || ""
+    });
+    if (idn.clientId) {
+      params.set("client_id", idn.clientId);
+      if (idn.clientSecret) params.set("client_secret", idn.clientSecret);
+    }
+    if (idn.scopes) params.set("scope", idn.scopes);
+    res = await fetch(`/proxy?url=${encodeURIComponent(url)}`, {
+      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString()
+    });
+  }
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    throw new Error(data.error_description || data.error || data.message || `HTTP ${res.status}`);
+  }
+  idn.accessToken    = data.access_token;
+  idn.tokenExpiresAt = Date.now() + Math.max(60, (data.expires_in || 3600) - 60) * 1000;
+  if (data.refresh_token) idn.refreshToken = data.refresh_token;
+}
+
 // connection ({authRef, auth}) → adapter に渡す { auth, authHeaders }。
 // authRef 優先、無ければ旧 auth 文字列 (後方互換)。
 async function resolveAuthForConnection(conn) {
@@ -1116,9 +1152,67 @@ async function resolveAuthForConnection(conn) {
     const val = idn.scheme === "raw" ? idn.token : `${idn.scheme || "Bearer"} ${idn.token}`;
     return { authHeaders: { [headerName]: val } };
   }
-  // oauth2_cc / oauth2_authcode / jwt_bearer → bearer token を取得
+  // oauth2_cc / oauth2_authcode / oauth2_password / jwt_bearer → bearer token を取得
   const tok = await ensureIdentityToken(idn);
   return tok ? { auth: tok } : {};
+}
+
+// 送信直前用: トークン期限を見て、 切れていれば更新して新鮮な auth を返す。
+// authcode で対話的再認証が必要な場合は code:"REAUTH_REQUIRED" の例外を投げる
+// (自動でポップアップせず、 window 側で「再認証」トリガーを出すため)。
+async function ensureFreshAuth(authRef) {
+  const idn = identityById(authRef);
+  if (!idn) return {};
+  if (idn.kind === "bearer") return resolveAuthForConnection({ authRef });   // 静的
+  // まだ有効ならそのまま使う
+  if (idn.accessToken && Date.now() < (idn.tokenExpiresAt || 0)) return { auth: idn.accessToken };
+  // 期限切れ → kind 別に更新
+  if (idn.kind === "oauth2_cc")       { await fetchCcTokenForIdentity(idn); dirty(); return { auth: idn.accessToken }; }
+  if (idn.kind === "oauth2_password") { await fetchPasswordGrantToken(idn);  dirty(); return { auth: idn.accessToken }; }
+  if (idn.kind === "jwt_bearer")      { await fetchJwtBearerToken(idn);      dirty(); return { auth: idn.accessToken }; }
+  if (idn.kind === "oauth2_authcode") {
+    // refresh_token があれば黙って更新を試す
+    if (idn.refreshToken) {
+      try { await refreshAuthcodeToken(idn); dirty(); return { auth: idn.accessToken }; }
+      catch (e) { console.warn("[auth] refresh_token failed:", e?.message || e); }
+    }
+    // 黙って更新できない → 対話的再認証が必要
+    const err = new Error(`"${idn.name}" のセッションが切れました。 再認証が必要です。`);
+    err.code = "REAUTH_REQUIRED"; err.idnName = idn.name; err.kind = idn.kind;
+    throw err;
+  }
+  return resolveAuthForConnection({ authRef });
+}
+
+// Authorization Code の refresh_token grant で access token を更新。
+async function refreshAuthcodeToken(idn) {
+  const params = new URLSearchParams({ grant_type: "refresh_token", refresh_token: idn.refreshToken });
+  if (idn.clientId)     params.set("client_id", idn.clientId);
+  if (idn.clientSecret) params.set("client_secret", idn.clientSecret);
+  if (idn.scopes)       params.set("scope", idn.scopes);
+  const res = await fetch(`/proxy?url=${encodeURIComponent(idn.tokenUrl)}`, {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString()
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error_description || data.error || `HTTP ${res.status}`);
+  idn.accessToken    = data.access_token;
+  idn.tokenExpiresAt = Date.now() + Math.max(60, (data.expires_in || 3600) - 60) * 1000;
+  if (data.refresh_token) idn.refreshToken = data.refresh_token;
+}
+
+// 対話的再認証 (Authorization Code フローを起動)。 成功後の新しい auth を返す。
+async function reauthIdentity(authRef) {
+  const idn = identityById(authRef);
+  if (!idn) return {};
+  if (idn.kind === "oauth2_authcode") {
+    const data = await runAuthCodeFlow(idn);
+    idn.accessToken    = data.access_token;
+    idn.tokenExpiresAt = Date.now() + Math.max(60, (data.expires_in || 3600) - 60) * 1000;
+    if (data.refresh_token) idn.refreshToken = data.refresh_token;
+    dirty();
+    return { auth: idn.accessToken };
+  }
+  return ensureFreshAuth(authRef);   // 他 kind は黙って更新
 }
 
 async function fetchBgAssets(cat, bg) {
@@ -1274,6 +1368,219 @@ function flattenOrgTree(node, acc = []) {
   return acc;
 }
 
+// identity の control plane ベース URL (tokenUrl の origin)。 既定は anypoint.mulesoft.com。
+function controlPlaneBase(idn) {
+  try { return new URL(idn.tokenUrl).origin; } catch { return "https://anypoint.mulesoft.com"; }
+}
+
+// token で business group (org 階層) を一覧取得して [{id,name}] を返す。
+async function fetchBusinessGroupsForToken(token, base) {
+  const meRes = await fetch(`/proxy?url=${encodeURIComponent(base + "/accounts/api/me")}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!meRes.ok) throw new Error(`/me HTTP ${meRes.status}`);
+  const me = await meRes.json();
+  const rootOrgId =
+       me.user?.organization?.id || me.organization?.id
+    || me.user?.organizationId   || me.client?.org_id;
+  if (!rootOrgId) throw new Error("no organization id in /me");
+  const rootName = me.user?.organization?.name || me.organization?.name || "";
+  const hUrl = `${base}/accounts/api/organizations/${rootOrgId}/hierarchy`;
+  const hRes = await fetch(`/proxy?url=${encodeURIComponent(hUrl)}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!hRes.ok) return [{ id: rootOrgId, name: rootName || rootOrgId }];
+  const h = await hRes.json();
+  return flattenOrgTree(h).map(n => ({ id: n.id, name: n.name || (n.id === rootOrgId ? rootName : n.id) }));
+}
+
+// org (BG) の environment 一覧 → [{id,name,type,isProduction}]
+async function fetchEnvironmentsForOrg(token, base, orgId) {
+  const url = `${base}/accounts/api/organizations/${orgId}/environments`;
+  const res = await fetch(`/proxy?url=${encodeURIComponent(url)}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!res.ok) throw new Error(`environments HTTP ${res.status}`);
+  const j = await res.json();
+  const data = j.data || j.environments || [];
+  return data.map(e => ({ id: e.id, name: e.name, type: e.type, isProduction: !!e.isProduction }));
+}
+
+// Runtime Manager (Application Manager) のデプロイ一覧 (env 単位) → [{id,name,status,target,envId,envName}]
+async function fetchRtmDeployments(token, base, orgId, env) {
+  const url = `${base}/amc/application-manager/api/v2/organizations/${orgId}/environments/${env.id}/deployments`;
+  const res = await fetch(`/proxy?url=${encodeURIComponent(url)}`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" }
+  });
+  if (!res.ok) throw new Error(`deployments HTTP ${res.status}`);
+  const j = await res.json();
+  const items = j.items || j.data || [];
+  return items.map(d => ({
+    id:      d.id,
+    name:    d.name,
+    status:  d.application?.status || d.status || "",
+    target:  d.target?.provider || d.target?.type || "",
+    envId:   env.id,
+    envName: env.name
+  }));
+}
+
+// catalog ダイアログで現在選択中の identity の token/base を確保 (対話を避ける)。
+async function catalogDialogAuth() {
+  const idn = identityById($("#catAuthRef")?.value || "");
+  if (!idn) return null;
+  const tokenReady = idn.accessToken && Date.now() < (idn.tokenExpiresAt || 0);
+  const silentKind = idn.kind === "oauth2_cc" || idn.kind === "oauth2_password";
+  if (!silentKind && !tokenReady) return null;
+  const token = await ensureIdentityToken(idn);
+  if (!token) return null;
+  return { token, base: controlPlaneBase(idn), idn };
+}
+
+// catalog ダイアログ: identity 選択時に BUSINESS GROUP を dropdown 化する。
+// 取得できない / 対話が要る場合は手入力テキストにフォールバック。
+async function loadCatBusinessGroups(idn) {
+  const sel  = $("#catBgSelect");
+  const txt  = $("#catBusinessGroup");
+  const hint = $("#catBgHint");
+  if (!sel || !idn) return;
+  // 自動ロードは「対話なしで token が得られる」場合のみ (authcode で未認証なら勝手にポップアップしない)。
+  const tokenReady = idn.accessToken && Date.now() < (idn.tokenExpiresAt || 0);
+  const silentKind = idn.kind === "oauth2_cc" || idn.kind === "oauth2_password"; // 対話なしで取得可
+  if (!silentKind && !tokenReady) {
+    // authcode 等は対話的サインインが必要 → その場でサインインできるトリガーを出す。
+    sel.hidden = true; txt.hidden = false;
+    if (hint) hint.textContent = "sign in to pick from the list — or type name / ID";
+    showCatBgSignIn(idn);
+    return;
+  }
+  hideCatBgSignIn();
+  sel.hidden = false; txt.hidden = true; sel.disabled = true;
+  sel.innerHTML = `<option>loading business groups…</option>`;
+  if (hint) hint.textContent = "select from your Anypoint org tree — optional";
+  try {
+    const token = await ensureIdentityToken(idn);
+    if (!token) throw new Error("no token");
+    const groups = await fetchBusinessGroupsForToken(token, controlPlaneBase(idn));
+    sel.innerHTML = "";
+    const head = document.createElement("option");
+    head.value = ""; head.textContent = "— select business group (optional) —";
+    sel.appendChild(head);
+    groups.forEach(g => {
+      const o = document.createElement("option");
+      o.value = g.id; o.textContent = g.name; o.dataset.name = g.name;
+      sel.appendChild(o);
+    });
+    const man = document.createElement("option");
+    man.value = "__manual__"; man.textContent = "+ enter name / ID manually…";
+    sel.appendChild(man);
+    sel.disabled = false;
+  } catch (e) {
+    console.warn("[catalog] business group load failed:", e?.message || e);
+    sel.hidden = true; txt.hidden = false;
+    if (hint) hint.textContent = "couldn't load groups — enter name or ID manually";
+  }
+}
+
+// 現在の catAuthRef 選択に応じて BG フィールドを更新。
+function loadCatBgForCurrent() {
+  const idn = identityById($("#catAuthRef")?.value || "");
+  if (idn) loadCatBusinessGroups(idn);
+  else resetCatBgField();
+}
+// authcode 等: BG 欄に「サインイン」ボタンを出す。 押すと OAuth フロー → BG 再ロード。
+function hideCatBgSignIn() { document.getElementById("catBgSignIn")?.remove(); }
+function showCatBgSignIn(idn) {
+  const field = $("#catBusinessGroup")?.closest(".field");
+  if (!field) return;
+  let btn = document.getElementById("catBgSignIn");
+  if (!btn) {
+    btn = document.createElement("button");
+    btn.type = "button"; btn.id = "catBgSignIn"; btn.className = "cat-bg-signin";
+    field.appendChild(btn);
+  }
+  btn.disabled = false;
+  btn.innerHTML = `<span class="cat-bg-signin-dot"></span> Sign in to load business groups <span class="arrow">→</span>`;
+  btn.onclick = async () => {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="cat-bg-signin-dot"></span> signing in…`;
+    try {
+      const tok = await ensureIdentityToken(idn);   // authcode → OAuth ポップアップ
+      if (!tok) throw new Error("no token");
+      hideCatBgSignIn();
+      await loadCatBusinessGroups(idn);             // token 取得済みで再ロード
+      if ($("#catScanRtm")?.checked) refreshCatEnvField();
+    } catch (e) {
+      btn.disabled = false;
+      btn.innerHTML = `Retry sign-in <span class="arrow">→</span>`;
+      console.warn("[catalog] sign-in failed:", e?.message || e);
+    }
+  };
+}
+
+// BG フィールドを手入力テキストの初期状態へ戻す。
+function resetCatBgField() {
+  const sel = $("#catBgSelect"), txt = $("#catBusinessGroup"), hint = $("#catBgHint");
+  hideCatBgSignIn();
+  if (sel) { sel.hidden = true; sel.innerHTML = ""; }
+  if (txt) txt.hidden = false;
+  if (hint) hint.textContent = "name or ID — optional (more can be added later)";
+}
+
+// 現在 catBgSelect で選ばれている BG の UUID (dropdown 選択時のみ)。
+function selectedCatBgOrgId() {
+  const bgSel = $("#catBgSelect");
+  return (bgSel && !bgSel.hidden && bgSel.value && bgSel.value !== "__manual__") ? bgSel.value : null;
+}
+
+// 「Scan RTM」チェック + BG 選択に応じて environment チェックボックス群を更新。
+async function refreshCatEnvField() {
+  const scan   = $("#catScanRtm");
+  const field  = $("#catEnvField");
+  const list   = $("#catEnvList");
+  const status = $("#catEnvStatus");
+  if (!scan || !field || !list) return;
+  if (!scan.checked) { field.hidden = true; return; }
+  field.hidden = false;
+
+  const orgId = selectedCatBgOrgId();
+  if (!orgId) {
+    list.innerHTML = "";
+    if (status) status.textContent = "select a business group first";
+    return;
+  }
+  if (status) status.textContent = "loading environments…";
+  list.innerHTML = "";
+  try {
+    const auth = await catalogDialogAuth();
+    if (!auth) throw new Error("not authenticated");
+    const envs = await fetchEnvironmentsForOrg(auth.token, auth.base, orgId);
+    if (!envs.length) { if (status) status.textContent = "no environments found"; return; }
+    if (status) status.textContent = "scan する環境を選択";
+    list.innerHTML = "";
+    envs.forEach(e => {
+      const row = document.createElement("label");
+      row.className = "cat-env-opt";
+      row.innerHTML =
+        `<input type="checkbox" value="${escapeHtml(e.id)}" data-name="${escapeHtml(e.name)}" />` +
+        `<span>${escapeHtml(e.name)}${e.isProduction ? " · prod" : ""}</span>`;
+      list.appendChild(row);
+    });
+  } catch (e) {
+    console.warn("[catalog] environments load failed:", e?.message || e);
+    if (status) status.textContent = `couldn't load environments (${e?.message || e})`;
+  }
+}
+
+// ダイアログで選択された RTM scan 設定を読む → { scanRtm, envs:[{id,name}] }
+function readCatRtmSelection() {
+  const scan = $("#catScanRtm");
+  if (!scan || !scan.checked) return { scanRtm: false, envs: [] };
+  const boxes = $("#catEnvList")?.querySelectorAll('input[type="checkbox"]:checked') || [];
+  const envs = Array.from(boxes).map(b => ({ id: b.value, name: b.dataset.name || b.value }));
+  return { scanRtm: true, envs };
+}
+
 // ─── Drawer ────────────────────────────────────────────
 function openBgDrawer(cat, bg) {
   // Script panel と排他
@@ -1292,14 +1599,10 @@ function openBgDrawer(cat, bg) {
   $("#drawerFilterClear").hidden = true;
   state._drawerCatalogId = cat.id;
   state._drawerBgId      = bg.id;
+  state._drawerTab       = "api";
   renderCatalogs();
-
-  if (Array.isArray(bg.assets) && bg.assets.length > 0) {
-    $("#drawerSpinner").hidden = true;
-    renderCachedAssets(cat, bg);
-    return;
-  }
-  loadDrawerAssets(cat, bg);
+  renderDrawerTabs(bg);
+  showDrawerTab(cat, bg, "api");
 }
 function closeCatalogDrawer() {
   $("#assetDrawer").classList.remove("is-open");
@@ -1309,13 +1612,182 @@ function closeCatalogDrawer() {
   renderCatalogs();
 }
 
-function renderCachedAssets(cat, bg) {
-  const withInst = bg.assets.filter(a => a._a2aUrl && !isInternalCh2Url(a._a2aUrl)).length;
-  const ageSec = Math.round((Date.now() - (bg.assetsFetchedAt || Date.now())) / 1000);
-  $("#drawerMeta").textContent =
-    `${bg.assets.length} assets · ${withInst} connectable · cached ${formatAge(ageSec)} · BG: ${bg.bgName || bg.input}`;
-  renderAssetList(bg.assets);
-  applyDrawerFilter();
+// API / APP タブバーを描画 (APP は環境選択時のみ表示)。
+function renderDrawerTabs(bg) {
+  const tabs = $("#drawerTabs");
+  if (!tabs) return;
+  tabs.hidden = !bg.envs?.length;   // 環境未選択なら API のみ → タブ非表示
+  tabs.querySelectorAll(".drawer-tab").forEach(t => {
+    t.classList.toggle("is-active", t.dataset.tab === state._drawerTab);
+  });
+}
+
+// タブを切り替えて内容を描画。
+function showDrawerTab(cat, bg, tab) {
+  state._drawerTab = tab;
+  renderDrawerTabs(bg);
+  const showAllBar = $("#drawerShowAll");
+  if (showAllBar) showAllBar.hidden = tab !== "app";   // Show all は APP タブのみ
+  if (tab === "app") renderAppTab(cat, bg);
+  else               renderApiTab(cat, bg);
+}
+
+// API タブ: Exchange アセット (キャッシュ有りは即表示、 無ければ取得)。
+function renderApiTab(cat, bg) {
+  if (Array.isArray(bg.assets)) {
+    const withInst = bg.assets.filter(a => a._a2aUrl && !isInternalCh2Url(a._a2aUrl)).length;
+    const ageSec = Math.round((Date.now() - (bg.assetsFetchedAt || Date.now())) / 1000);
+    $("#drawerSpinner").hidden = true;
+    $("#drawerMeta").classList.remove("is-error");
+    $("#drawerMeta").textContent =
+      `${bg.assets.length} assets · ${withInst} connectable · cached ${formatAge(ageSec)} · BG: ${bg.bgName || bg.input}`;
+    renderAssetList(bg.assets);
+    applyDrawerFilter();
+  } else {
+    loadDrawerAssets(cat, bg);
+  }
+}
+
+// APP タブ: Runtime Manager アプリ (キャッシュ有りは即表示、 無ければ取得)。
+function renderAppTab(cat, bg) {
+  if (Array.isArray(bg.rtmApps)) {
+    const ageSec = Math.round((Date.now() - (bg.rtmAppsFetchedAt || Date.now())) / 1000);
+    const envNames = (bg.envs || []).map(e => e.name).join(", ");
+    $("#drawerSpinner").hidden = true;
+    $("#drawerMeta").classList.remove("is-error");
+    $("#drawerMeta").textContent =
+      `${bg.rtmApps.length} apps · ${envNames} · cached ${formatAge(ageSec)}`;
+    renderRtmList(bg);
+    applyDrawerFilter();
+  } else {
+    loadBgRtmApps(cat, bg);
+  }
+}
+
+// RTM アプリを取得して bg にキャッシュし、 APP タブに描画する。
+async function loadBgRtmApps(cat, bg) {
+  const meta = $("#drawerMeta");
+  const spinner = $("#drawerSpinner");
+  const refresh = $("#drawerRefresh");
+  $("#drawerBody").innerHTML = "";
+  const spinLabel = spinner?.querySelector(".spinner-label");
+  if (spinLabel) spinLabel.textContent = "scanning Runtime Manager…";
+  spinner.hidden = false;
+  meta.classList.remove("is-error");
+  meta.textContent = "scanning Runtime Manager…";
+  refresh?.classList.add("is-spinning");
+  try {
+    const apps = await fetchBgRtmApps(cat, bg);
+    if (state._drawerBgId !== bg.id) return;
+    bg.rtmApps = apps;
+    bg.rtmAppsFetchedAt = Date.now();
+    spinner.hidden = true;
+    const envNames = (bg.envs || []).map(e => e.name).join(", ");
+    meta.textContent = `${apps.length} apps · ${envNames}`;
+    renderRtmList(bg);
+    applyDrawerFilter();
+    renderCatalogs();
+    dirty();
+  } catch (e) {
+    spinner.hidden = true;
+    meta.textContent = `error: ${e?.message || e}`;
+    meta.classList.add("is-error");
+    renderRtmList(bg, { error: e?.message || String(e) });
+  } finally {
+    refresh?.classList.remove("is-spinning");
+  }
+}
+
+// bg.envs の各環境について Runtime Manager のデプロイ一覧を取得。
+async function fetchBgRtmApps(cat, bg) {
+  if (!bg.envs?.length || !bg.bgId) return [];
+  if (!cat.accessToken || Date.now() > (cat.tokenExpiresAt || 0)) await authenticateCatalog(cat);
+  const idn  = identityById(cat.authRef || "");
+  const base = idn ? controlPlaneBase(idn) : "https://anypoint.mulesoft.com";
+  const out = [];
+  for (const env of bg.envs) {
+    try {
+      out.push(...await fetchRtmDeployments(cat.accessToken, base, bg.bgId, env));
+    } catch (e) {
+      console.warn("[rtm] deployments failed:", env.name, e?.message || e);
+    }
+  }
+  return out;
+}
+
+function rtmIsRunning(app) {
+  const s = String(app.status || "").toLowerCase();
+  return s === "running" || s === "started" || s === "applied";
+}
+// APP タブの「Show all」バーの表示更新 (hiddenCount = 隠れている not-running 数)。
+function updateRtmShowAllBar(hiddenCount) {
+  const cb = $("#drawerShowAllCb"), lbl = $("#drawerShowAllLabel");
+  if (cb) cb.checked = !!state._rtmShowAll;
+  if (lbl) lbl.textContent = hiddenCount > 0 ? `Show all · ${hiddenCount} not running` : "Show all";
+}
+
+// RTM アプリを drawer 本体に描画 (APP タブ)。 environment ごとに見出し+仕切り線でグループ化。
+function renderRtmList(bg, opts = {}) {
+  const body = $("#drawerBody");
+  if (!body) return;
+  body.innerHTML = "";
+  if (opts.loading) { body.innerHTML = `<div class="drawer-empty">scanning Runtime Manager…</div>`; return; }
+  if (opts.error)   { body.innerHTML = `<div class="drawer-empty">RTM scan failed: ${escapeHtml(opts.error)}</div>`; return; }
+  if (!bg.rtmApps?.length) { body.innerHTML = `<div class="drawer-empty">No RTM apps</div>`; return; }
+
+  const cat = state.catalogs.find(c => c.id === state._drawerCatalogId);
+
+  // not running は既定で隠す。 「Show all」で表示。
+  const showAll = !!state._rtmShowAll;
+  const shown = showAll ? bg.rtmApps : bg.rtmApps.filter(rtmIsRunning);
+  updateRtmShowAllBar(bg.rtmApps.length - shown.length);
+  if (!shown.length) {
+    body.innerHTML = `<div class="drawer-empty">No running apps · toggle “Show all”</div>`;
+    return;
+  }
+
+  // env ごとにグループ化 (bg.envs の順を優先、 残りは出現順)
+  const byEnv = new Map();
+  shown.forEach(app => {
+    const key = app.envName || app.envId || "—";
+    if (!byEnv.has(key)) byEnv.set(key, []);
+    byEnv.get(key).push(app);
+  });
+  const order = [];
+  (bg.envs || []).forEach(e => { if (byEnv.has(e.name) && !order.includes(e.name)) order.push(e.name); });
+  byEnv.forEach((_, k) => { if (!order.includes(k)) order.push(k); });
+
+  let idx = 0;
+  order.forEach(envName => {
+    const apps = byEnv.get(envName) || [];
+    const group = document.createElement("div");
+    group.className = "rtm-group";
+    group.innerHTML =
+      `<div class="rtm-group-head"><span class="rtm-group-name">${escapeHtml(envName)}</span>` +
+      `<span class="rtm-group-count">${apps.length} app${apps.length === 1 ? "" : "s"}</span></div>`;
+    apps.forEach(app => {
+      const running = rtmIsRunning(app);
+      const item = document.createElement("div");
+      item.className = "asset-item is-rtm has-instance" + (running ? "" : " is-stopped");   // クリックで接続 detail を開く
+      item.style.animationDelay = `${Math.min(idx++ * 24, 800)}ms`;
+      item.innerHTML =
+        `<div class="asset-row-top"><span class="asset-status-dot${running ? " is-on" : ""}"></span>` +
+        `<span class="asset-name">${escapeHtml(app.name || "(unnamed)")}</span></div>` +
+        `<span class="asset-tags"><span class="asset-tag">rtm</span>` +
+        // env は見出しで分かるので item 側にも残し (filter 用)、 控えめ表示。
+        `<span class="asset-tag is-muted">${escapeHtml(envName)}</span>` +
+        (app.status ? `<span class="asset-tag ${running ? "is-accent" : "is-muted"}">${escapeHtml(String(app.status).toLowerCase())}</span>` : "") +
+        (app.target ? `<span class="asset-tag is-muted">${escapeHtml(String(app.target).toLowerCase())}</span>` : "") +
+        `</span>` +
+        `<span class="asset-go" aria-hidden="true">→</span>`;
+      if (cat) {
+        item.title = "Set resource path and connect";
+        item.addEventListener("click", () => openRtmAppDetail(app, cat, bg));
+      }
+      group.appendChild(item);
+    });
+    body.appendChild(group);
+  });
 }
 
 function formatAge(sec) {
@@ -1329,10 +1801,14 @@ async function loadDrawerAssets(cat, bg) {
   const meta    = $("#drawerMeta");
   const body    = $("#drawerBody");
   const spinner = $("#drawerSpinner");
+  const refresh = $("#drawerRefresh");
+  const spinLabel = spinner?.querySelector(".spinner-label");
+  if (spinLabel) spinLabel.textContent = "fetching from Exchange…";
   spinner.hidden = false;
   body.innerHTML = "";
   meta.textContent = "fetching…";
   meta.classList.remove("is-error");
+  refresh?.classList.add("is-spinning");
   try {
     const t0 = performance.now();
     const assets = await fetchBgAssets(cat, bg);
@@ -1353,6 +1829,8 @@ async function loadDrawerAssets(cat, bg) {
     meta.classList.add("is-error");
     body.innerHTML = `<div class="drawer-empty">Fetch failed</div>`;
     renderCatalogs();
+  } finally {
+    refresh?.classList.remove("is-spinning");
   }
 }
 
@@ -1368,6 +1846,11 @@ function applyDrawerFilter() {
     const match = !q || name.includes(q) || sub.includes(q) || tags.includes(q);
     it.classList.toggle("is-filtered-out", !match);
     if (match) visible++;
+  });
+  // RTM の env グループは、 中の項目が全部隠れたら見出しごと隠す
+  $("#drawerBody").querySelectorAll(".rtm-group").forEach(g => {
+    const anyVisible = !!g.querySelector(".asset-item:not(.is-filtered-out)");
+    g.classList.toggle("is-filtered-out", !anyVisible);
   });
   // empty hit表示
   let empty = $("#drawerBody").querySelector(".drawer-empty-filter");
@@ -1454,6 +1937,15 @@ function renderAssetList(assets) {
 }
 
 // アセットクリック: 詳細パネル(2段目)を開く
+// detail フッターのモード切替 (api: instance url 入力 / rtm: public endpoint 固定 + path 編集)。
+function setDetailMode(mode) {
+  state._detailMode = mode;
+  const urlRow = $("#detailUrlRow"), rtmRow = $("#detailRtmRow"), testBtn = $("#detailTest");
+  if (urlRow) urlRow.hidden = mode === "rtm";
+  if (rtmRow) rtmRow.hidden = mode !== "rtm";
+  if (testBtn) testBtn.hidden = mode !== "rtm";
+}
+
 function openAssetDetail(asset, cat) {
   const card = asset._a2aCard || {};
   const resolvedUrl = asset._a2aUrl;
@@ -1461,10 +1953,12 @@ function openAssetDetail(asset, cat) {
   const rawCardUrl = card?.url || "";
   state._detailAsset = asset;
   state._detailCat   = cat;
+  state._detailRtmApp = null;
 
   const drawer = $("#assetDetailDrawer");
   drawer.classList.add("is-open");
   drawer.setAttribute("aria-hidden", "false");
+  setDetailMode("api");
 
   $("#detailName").textContent = card.name || asset.name || asset.assetId;
   $("#detailBody").innerHTML = renderDetailBody(asset, card);
@@ -1503,6 +1997,196 @@ function closeAssetDetail() {
   drawer.setAttribute("aria-hidden", "true");
   state._detailAsset = null;
   state._detailCat   = null;
+  state._detailRtmApp = null;
+  state._detailRtmBase = "";
+  state._detailMode = "api";
+}
+
+// ── RTM アプリの detail (public endpoint 固定 + resource path 編集) ──
+function renderRtmAppDetailBody(app) {
+  return `
+    <div class="detail-hero">
+      <h3 class="detail-hero-name">${escapeHtml(app.name || "(unnamed)")}</h3>
+      <p class="detail-hero-desc">Runtime Manager deployment</p>
+    </div>
+    <div class="detail-grid">
+      <div class="card-field"><span class="card-field-label">environment</span><span class="card-field-value">${escapeHtml(app.envName || "—")}</span></div>
+      <div class="card-field"><span class="card-field-label">status</span><span class="card-field-value">${escapeHtml(app.status || "—")}</span></div>
+      <div class="card-field"><span class="card-field-label">target</span><span class="card-field-value">${escapeHtml(app.target || "—")}</span></div>
+    </div>
+  `;
+}
+
+// deployment 詳細から public endpoint URL を取り出す (フィールド名のばらつきを吸収)。
+async function fetchRtmDeploymentUrl(token, base, orgId, envId, deploymentId) {
+  const url = `${base}/amc/application-manager/api/v2/organizations/${orgId}/environments/${envId}/deployments/${deploymentId}`;
+  const res = await fetch(`/proxy?url=${encodeURIComponent(url)}`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" }
+  });
+  if (!res.ok) throw new Error(`deployment HTTP ${res.status}`);
+  const d = await res.json();
+  const cands = [
+    d.application?.url,
+    d.applicationUrl,
+    d.publicUrl,
+    d.application?.deploymentSettings?.http?.inbound?.publicUrl,
+    d.target?.deploymentSettings?.http?.inbound?.publicUrl,
+    d.application?.endpoints?.[0]?.url,
+    d.endpoints?.[0]?.url,
+    Array.isArray(d.application?.urls) ? d.application.urls[0] : null
+  ];
+  return cands.find(u => typeof u === "string" && /^https?:\/\//i.test(u)) || "";
+}
+
+function rtmDefaultPath() { return state._detailProto === "mcp" ? "/mcp" : "/a2a"; }
+
+// public endpoint (固定) + resource path から接続先 URL を組む。
+function rtmFullUrl() {
+  const b = state._detailRtmBase || "";
+  const p = ($("#detailPathInput")?.value || "").trim();
+  if (b) {
+    let f = b.replace(/\/+$/, "");
+    if (p) f += (p.startsWith("/") ? p : "/" + p);
+    return f;
+  }
+  return /^https?:\/\//i.test(p) ? p : "";   // base 不明時は full URL 手入力を許可
+}
+
+// RTM detail のフッター (URL preview, connect/test の活性) を更新。
+function rtmRefreshFoot() {
+  const full = rtmFullUrl();
+  const valid = /^https?:\/\/.+/i.test(full);
+  const connectBtn = $("#detailConnect"), testBtn = $("#detailTest"), foot = $("#detailFootMeta");
+  if (connectBtn) connectBtn.disabled = !valid;
+  if (testBtn) testBtn.disabled = !valid;
+  if (foot) {
+    foot.classList.remove("is-ok", "is-error");
+    foot.textContent = valid ? full : (state._detailRtmBase ? "enter resource path" : "resolving public endpoint…");
+  }
+}
+
+async function openRtmAppDetail(app, cat, bg) {
+  state._detailRtmApp = app;
+  state._detailAsset  = null;
+  state._detailCat    = cat;
+  state._detailBg     = bg;
+  state._detailRtmBase = "";
+  state._detailProto = "a2a";
+
+  const drawer = $("#assetDetailDrawer");
+  drawer.classList.add("is-open");
+  drawer.setAttribute("aria-hidden", "false");
+  setDetailMode("rtm");
+  drawer.querySelectorAll(".instance-picker").forEach(n => n.remove());
+
+  $("#detailName").textContent = app.name || "(unnamed)";
+  $("#detailBody").innerHTML = renderRtmAppDetailBody(app);
+
+  // protocol セグメントを a2a に戻す
+  $("#detailProtoSeg")?.querySelectorAll(".seg-opt").forEach(b =>
+    b.classList.toggle("is-active", b.dataset.proto === "a2a"));
+  // auth はカタログの identity を既定にしつつ、 ここで変更可能。
+  renderDetailAuthRef(cat.authRef || "");
+
+  const baseEl    = $("#detailRtmBase");
+  const pathInput = $("#detailPathInput");
+  pathInput.value = app._userPath || rtmDefaultPath();
+  pathInput.placeholder = rtmDefaultPath();
+  pathInput.oninput = () => { state._detailRtmApp && (state._detailRtmApp._userPath = pathInput.value.trim()); rtmRefreshFoot(); };
+
+  baseEl.textContent = "resolving…";
+  $("#detailConnect").disabled = true;
+  $("#detailTest").disabled = true;
+  $("#detailFootMeta").textContent = "resolving public endpoint…";
+  try {
+    if (!cat.accessToken || Date.now() > (cat.tokenExpiresAt || 0)) await authenticateCatalog(cat);
+    const idn = identityById(cat.authRef || "");
+    const cpBase = idn ? controlPlaneBase(idn) : "https://anypoint.mulesoft.com";
+    const purl = await fetchRtmDeploymentUrl(cat.accessToken, cpBase, bg.bgId, app.envId, app.id);
+    if (state._detailRtmApp !== app) return;   // 別アプリに切り替わった
+    if (purl) {
+      state._detailRtmBase = purl;
+      baseEl.textContent = purl;
+    } else {
+      state._detailRtmBase = "";
+      baseEl.textContent = "(not found — paste full URL in resource path)";
+      pathInput.value = "";
+      pathInput.placeholder = "https://my-app.region.cloudhub.io/a2a";
+    }
+  } catch (e) {
+    if (state._detailRtmApp !== app) return;
+    state._detailRtmBase = "";
+    baseEl.textContent = `(failed: ${e?.message || e} — paste full URL below)`;
+    pathInput.value = "";
+    pathInput.placeholder = "https://my-app.region.cloudhub.io/a2a";
+  }
+  rtmRefreshFoot();
+}
+
+// protocol セグメント (A2A/MCP) 切替。
+function setRtmProto(proto) {
+  state._detailProto = proto;
+  $("#detailProtoSeg")?.querySelectorAll(".seg-opt").forEach(b =>
+    b.classList.toggle("is-active", b.dataset.proto === proto));
+  const pi = $("#detailPathInput");
+  if (pi) {
+    const v = pi.value.trim();
+    if (v === "" || v === "/a2a" || v === "/mcp") pi.value = rtmDefaultPath();  // 既定値なら入れ替え、 手入力は尊重
+    pi.placeholder = rtmDefaultPath();
+  }
+  rtmRefreshFoot();
+}
+
+// RTM アプリへ接続 (API と同じ経路。 A2A は well-known を付与、 MCP は endpoint 直)。
+function connectRtmApp(app, cat) {
+  const full = rtmFullUrl();
+  if (!/^https?:\/\/.+/i.test(full)) return;
+  const proto = state._detailProto === "mcp" ? "mcp" : "a2a";
+  const url = proto === "a2a"
+    ? (/\.well-known\/agent-card\.json$/.test(full) ? full : `${full.replace(/\/+$/, "")}/.well-known/agent-card.json`)
+    : full;
+  const authRef = $("#detailAuthRef")?.value || cat.authRef || "";
+  closeAssetDetail();
+  closeCatalogDrawer();
+  connect({
+    protoId: proto,
+    url,
+    name:    app.name || "RTM app",
+    authRef: authRef || undefined   // detail で選んだ identity (既定はカタログ)
+  });
+}
+
+// RTM アプリへ接続テスト (connect せず A2A AgentCard / MCP initialize を確認)。
+async function testRtmDetail() {
+  const cat  = state._detailCat;
+  const full = rtmFullUrl();
+  const foot = $("#detailFootMeta");
+  const btn  = $("#detailTest");
+  if (!cat || !/^https?:\/\/.+/i.test(full)) return;
+  const proto = state._detailProto === "mcp" ? "mcp" : "a2a";
+  const authRef = $("#detailAuthRef")?.value || cat.authRef || "";
+  const resolved = await resolveAuthForConnection({ authRef });
+  const auth = resolved.auth || "";
+  const authHeaders = resolved.authHeaders || null;
+  btn.disabled = true;
+  foot.classList.remove("is-ok", "is-error");
+  foot.textContent = "testing…";
+  const t0 = performance.now();
+  try {
+    if (proto === "mcp") {
+      const r = await testMcp(full, auth, authHeaders);
+      foot.textContent = `✓ MCP initialize OK · ${r.serverName || "(no name)"} · ${Math.round(performance.now() - t0)}ms`;
+    } else {
+      const r = await testA2a(full, auth, authHeaders);
+      foot.textContent = `✓ AgentCard OK · ${r.card?.name || "(no name)"} · ${r.card?.skills?.length || 0} skills · ${Math.round(performance.now() - t0)}ms`;
+    }
+    foot.classList.add("is-ok");
+  } catch (e) {
+    foot.textContent = `✗ ${e?.message || e}`;
+    foot.classList.add("is-error");
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function renderDetailBody(asset, card) {
@@ -1625,32 +2309,48 @@ function wireDrawer() {
     closeCatalogDrawer();
   });
   $("#detailBack").addEventListener("click", closeAssetDetail);
-  $("#detailConnect").addEventListener("click", connectAssetInstance);
+  $("#detailConnect").addEventListener("click", () => {
+    if (state._detailMode === "rtm") {
+      const app = state._detailRtmApp, cat = state._detailCat;
+      if (app && cat) connectRtmApp(app, cat);
+    } else {
+      connectAssetInstance();
+    }
+  });
+  $("#detailTest").addEventListener("click", testRtmDetail);
+  $("#drawerShowAllCb")?.addEventListener("change", (e) => {
+    state._rtmShowAll = e.target.checked;
+    const cat = state.catalogs.find(c => c.id === state._drawerCatalogId);
+    const bg = cat?.businessGroups?.find(b => b.id === state._drawerBgId);
+    if (bg) { renderRtmList(bg); applyDrawerFilter(); }
+  });
+  $("#detailProtoSeg")?.querySelectorAll(".seg-opt").forEach(b => {
+    b.addEventListener("click", () => setRtmProto(b.dataset.proto));
+  });
   $("#drawerRefresh").addEventListener("click", () => {
     const cat = state.catalogs.find(c => c.id === state._drawerCatalogId);
     if (!cat) return;
     const bg = cat.businessGroups?.find(b => b.id === state._drawerBgId);
     if (!bg) return;
-    bg.assets = null;
-    bg.assetsFetchedAt = null;
-    loadDrawerAssets(cat, bg);
+    // アクティブタブだけをハードリフレッシュ (キャッシュ破棄 → 再取得)。
+    if (state._drawerTab === "app") {
+      bg.rtmApps = null; bg.rtmAppsFetchedAt = null;
+      loadBgRtmApps(cat, bg);
+    } else {
+      bg.assets = null; bg.assetsFetchedAt = null;
+      loadDrawerAssets(cat, bg);
+    }
   });
-  $("#drawerDelete").addEventListener("click", async () => {
-    const cat = state.catalogs.find(c => c.id === state._drawerCatalogId);
-    if (!cat) return;
-    const bg = cat.businessGroups?.find(b => b.id === state._drawerBgId);
-    if (!bg) return;
-    const ok = await modalConfirm({
-      title:        `Remove "${bg.bgName || bg.input}" from "${cat.name}"?`,
-      confirmLabel: "Remove",
-      danger:       true
+  // API / APP タブ切り替え
+  $("#drawerTabs")?.querySelectorAll(".drawer-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      const cat = state.catalogs.find(c => c.id === state._drawerCatalogId);
+      const bg = cat?.businessGroups?.find(b => b.id === state._drawerBgId);
+      if (!cat || !bg || state._drawerTab === tab.dataset.tab) return;
+      showDrawerTab(cat, bg, tab.dataset.tab);
     });
-    if (!ok) return;
-    cat.businessGroups = cat.businessGroups.filter(x => x.id !== bg.id);
-    closeCatalogDrawer();
-    renderCatalogs();
-    dirty();
   });
+  // BG 削除はサイドバー BG ツリーの × (bc-remove) に集約。 drawer の削除ボタンは廃止。
   $("#drawerFilter").addEventListener("input", applyDrawerFilter);
   $("#drawerFilter").addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
@@ -1676,6 +2376,7 @@ const IDENTITY_KINDS = [
   { id:"bearer",          label:"Bearer / API Key", sub:"static token",       icon:"●" },
   { id:"oauth2_cc",       label:"OAuth2 CC",        sub:"client credentials", icon:"⚙" },
   { id:"oauth2_authcode", label:"OAuth2 Code",      sub:"browser login",      icon:"↳" },
+  { id:"oauth2_password", label:"OAuth2 Password",  sub:"username/password",  icon:"⊙" },
   { id:"jwt_bearer",      label:"JWT Bearer",       sub:"signed assertion",   icon:"⚷" },
 ];
 
@@ -1686,6 +2387,7 @@ const IDENTITY_PROVIDERS = [
     id: "anypoint", label: "Anypoint Platform",
     authUrl:  "https://anypoint.mulesoft.com/accounts/api/v2/oauth2/authorize",
     tokenUrl: "https://anypoint.mulesoft.com/accounts/api/v2/oauth2/token",
+    loginUrl: "https://anypoint.mulesoft.com/accounts/login",   // username/password 方式
     scopes:   "full"
   },
   { id: "custom", label: "Custom (manual)", authUrl: "", tokenUrl: "", scopes: "" }
@@ -1693,7 +2395,7 @@ const IDENTITY_PROVIDERS = [
 function providerById(id) { return IDENTITY_PROVIDERS.find(p => p.id === id) || IDENTITY_PROVIDERS.find(p => p.id === "custom"); }
 
 function kindBadge(kind) {
-  const m = { bearer:"bearer", oauth2_cc:"cc", oauth2_authcode:"code", jwt_bearer:"jwt" };
+  const m = { bearer:"bearer", oauth2_cc:"cc", oauth2_authcode:"code", oauth2_password:"pwd", jwt_bearer:"jwt" };
   return m[kind] || kind;
 }
 
@@ -1802,12 +2504,15 @@ function applyProviderPreset(clearOnCustom) {
   const locked = p.id !== "custom";
   // kind ごとの token/auth url 入力欄
   const tokenInputs = {
-    oauth2_cc: $("#idnTokenUrlCc"), oauth2_authcode: $("#idnTokenUrlCode"), jwt_bearer: $("#idnTokenUrlJwt")
+    oauth2_cc: $("#idnTokenUrlCc"), oauth2_authcode: $("#idnTokenUrlCode"),
+    jwt_bearer: $("#idnTokenUrlJwt"), oauth2_password: $("#idnTokenUrlPwd")
   };
   const tIn = tokenInputs[kind];
   const aIn = (kind === "oauth2_authcode") ? $("#idnAuthUrl") : null;
+  // password 方式は OAuth token endpoint ではなく login endpoint を使う。
+  const presetUrl = (kind === "oauth2_password" && p.loginUrl) ? p.loginUrl : p.tokenUrl;
   if (locked) {
-    if (tIn) tIn.value = p.tokenUrl;
+    if (tIn) tIn.value = presetUrl;
     if (aIn) aIn.value = p.authUrl;
     // scope はプリセットがあり、かつ空のときだけ補完 (既存値は尊重)
     const sc = $("#idnScopes");
@@ -1835,7 +2540,7 @@ function refreshIdentityDialog() {
 
   // provider セレクトは OAuth/JWT のときだけ表示 (bearer は不要)
   const provField = $("#idnProviderField");
-  const showProvider = (kind === "oauth2_cc" || kind === "oauth2_authcode" || kind === "jwt_bearer");
+  const showProvider = (kind === "oauth2_cc" || kind === "oauth2_authcode" || kind === "jwt_bearer" || kind === "oauth2_password");
   if (provField) provField.style.display = showProvider ? "" : "none";
   if (showProvider) { renderIdentityProviderSelect(); applyProviderPreset(); }
 
@@ -1848,7 +2553,8 @@ function detectProvider(editing) {
   if (!editing) return "anypoint";   // 新規は Anypoint を既定 (最頻ユースケース)
   if (editing.provider && providerById(editing.provider)) return editing.provider;
   const match = IDENTITY_PROVIDERS.find(p => p.id !== "custom" &&
-    (p.tokenUrl === editing.tokenUrl) && (!editing.authUrl || p.authUrl === editing.authUrl));
+    (p.tokenUrl === editing.tokenUrl || (p.loginUrl && p.loginUrl === editing.tokenUrl)) &&
+    (!editing.authUrl || p.authUrl === editing.authUrl));
   return match ? match.id : "custom";
 }
 
@@ -1880,6 +2586,13 @@ function openIdentityDialog(editing) {
   // jwt_bearer
   $("#idnAssertion").value  = editing?.assertion ? "•".repeat(12) : "";
   $("#idnTokenUrlJwt").value = editing?.tokenUrl || "";
+
+  // oauth2_password
+  $("#idnTokenUrlPwd").value     = editing?.tokenUrl || "";
+  $("#idnUsername").value        = editing?.username || "";
+  $("#idnPassword").value        = editing?.password ? "•".repeat(12) : "";
+  $("#idnClientIdPwd").value     = editing?.clientId || "";
+  $("#idnClientSecretPwd").value = editing?.clientSecret ? "•".repeat(12) : "";
 
   // scopes (共通 advanced)
   $("#idnScopes").value = editing?.scopes || "";
@@ -1930,6 +2643,14 @@ function buildTempIdentityFromForm() {
     idn.tokenUrl = $("#idnTokenUrlJwt").value.trim();
     const a = $("#idnAssertion").value.trim();
     idn.assertion = isMask(a) ? existing?.assertion : a;
+  } else if (kind === "oauth2_password") {
+    idn.tokenUrl = $("#idnTokenUrlPwd").value.trim();
+    idn.username = $("#idnUsername").value.trim();
+    const pw = $("#idnPassword").value;
+    idn.password = isMask(pw) ? existing?.password : (pw || undefined);
+    idn.clientId = $("#idnClientIdPwd").value.trim() || undefined;
+    const s = $("#idnClientSecretPwd").value;
+    idn.clientSecret = isMask(s) ? existing?.clientSecret : (s || undefined);
   }
   return idn;
 }
@@ -1946,6 +2667,8 @@ async function testIdentityDialog() {
   if (kind === "oauth2_cc" && !idn.clientId) { setIdentityTest("err", "client id を入力してください。"); return; }
   if (kind === "oauth2_authcode" && (!idn.clientId || !idn.authUrl)) { setIdentityTest("err", "client id と auth url を入力してください。"); return; }
   if (kind === "jwt_bearer" && !idn.assertion) { setIdentityTest("err", "assertion (署名済み JWT) を入力してください。"); return; }
+  if (kind === "oauth2_password" && !idn.username) { setIdentityTest("err", "username を入力してください。"); return; }
+  if (kind === "oauth2_password" && !idn.password) { setIdentityTest("err", "password を入力してください。"); return; }
 
   const btn = $("#idnTest");
   btn.disabled = true;
@@ -2030,6 +2753,21 @@ function submitIdentityDialog() {
     idn.tokenUrl  = tokenUrlInput;
     idn.provider = state.selectedIdentityProvider || "custom";
     idn.scopes = scopes || undefined;
+  } else if (kind === "oauth2_password") {
+    const tokenUrlInput = $("#idnTokenUrlPwd").value.trim();
+    const usernameInput = $("#idnUsername").value.trim();
+    const passwordInput = $("#idnPassword").value;
+    if (!tokenUrlInput) { $("#idnTokenUrlPwd").focus(); return; }
+    if (!usernameInput) { $("#idnUsername").focus(); return; }
+    if (!passwordInput) { $("#idnPassword").focus(); return; }
+    idn.tokenUrl = tokenUrlInput;
+    idn.username = usernameInput;
+    idn.password = isMask(passwordInput) ? existing?.password : passwordInput;
+    idn.clientId = $("#idnClientIdPwd").value.trim() || undefined;
+    const secretInput = $("#idnClientSecretPwd").value;
+    idn.clientSecret = isMask(secretInput) ? existing?.clientSecret : (secretInput || undefined);
+    idn.provider = state.selectedIdentityProvider || "custom";
+    idn.scopes = scopes || undefined;
   }
 
   if (!existing) {
@@ -2067,7 +2805,9 @@ function wireIdentityDialog() {
   const togglePairs = [
     { input: "#idnToken",           toggle: "#idnTokenToggle" },
     { input: "#idnClientSecretCc",  toggle: "#idnSecretToggleCc" },
-    { input: "#idnClientSecretCode", toggle: "#idnSecretToggleCode" }
+    { input: "#idnClientSecretCode", toggle: "#idnSecretToggleCode" },
+    { input: "#idnPassword",        toggle: "#idnPasswordToggle" },
+    { input: "#idnClientSecretPwd", toggle: "#idnSecretTogglePwd" }
   ];
   togglePairs.forEach(({ input, toggle }) => {
     const inp = $(input);
@@ -2221,24 +2961,62 @@ function renderCatalogs() {
 }
 
 // + ボタンから BG を追加する modal フロー
+// catalog の identity/token で business group 一覧を取得 (失敗時は throw)。
+// 認証失敗をモーダル側で表示するため、 ここでは握りつぶさず例外を投げる。
+// catalog の identity から「状態を見て」トークンを確保する。
+//  - 有効ならそのまま / 期限切れは更新 (cc/password/jwt/refresh_token はサイレント)
+//  - authcode で更新不可 → 対話的フロー (ユーザー起点の操作なのでここでは起動して良い)
+async function acquireCatalogToken(cat) {
+  const idn = identityById(cat.authRef || "");
+  if (!idn) throw new Error("no identity on this catalog");
+  let a;
+  try {
+    a = await ensureFreshAuth(cat.authRef);
+  } catch (e) {
+    if (e?.code === "REAUTH_REQUIRED") a = await reauthIdentity(cat.authRef);  // OAuth フロー起動
+    else throw e;
+  }
+  const token = a?.auth || idn.accessToken;
+  if (!token) throw new Error("authentication failed");
+  // catalog にも反映 (drawer 等の後続呼び出しで再利用)
+  if (idn.accessToken) { cat.accessToken = idn.accessToken; cat.tokenExpiresAt = idn.tokenExpiresAt; }
+  return token;
+}
+
+async function fetchCatalogBgList(cat) {
+  const idn = identityById(cat.authRef || "");
+  if (!idn) throw new Error("no identity on this catalog");
+  const token = await acquireCatalogToken(cat);
+  return await fetchBusinessGroupsForToken(token, controlPlaneBase(idn));
+}
+
 async function addBusinessGroupToCatalog(cat) {
-  const input = await modalPrompt({
-    title:        `Add business group to "${cat.name}"`,
-    label:        "business group name or ID",
-    placeholder:  "e.g. btd  or  0fc4eaf1-5697-4cef-9c1b-3b96e3a52ee2",
-    confirmLabel: "Add"
+  // 1 枚のモーダルで完結: org 一覧を select 表示 + 手入力テキスト併設。
+  // 認証/取得に失敗したらモーダル内にその旨を出し、 テキスト入力にフォールバック。
+  const picked = await modalBusinessGroup({
+    title: `Add business group to "${cat.name}"`,
+    loadGroups: async () => {
+      const groups = await fetchCatalogBgList(cat);
+      const added = new Set(cat.businessGroups.flatMap(b =>
+        [b.bgId, b.input].filter(Boolean).map(s => String(s).toLowerCase())));
+      return groups.filter(g =>
+        !added.has(String(g.id).toLowerCase()) && !added.has(String(g.name || "").toLowerCase()));
+    }
   });
-  if (!input) return;
+  if (!picked) return;                       // cancel
+  const input = picked.input;
+
   // 重複チェック
-  if (cat.businessGroups.some(x => x.input.toLowerCase() === input.toLowerCase())) {
+  if (cat.businessGroups.some(x =>
+        (x.input || "").toLowerCase() === input.toLowerCase() || (picked.bgId && x.bgId === picked.bgId))) {
     await modalAlert({ title: "Already added", message: `"${input}" is already registered in this catalog.` });
     return;
   }
   const bg = {
     id:    `bg-${++bgCounter}`,
     input,
-    bgId:  null,
-    bgName: null,
+    bgId:  picked.bgId || null,   // select 選択なら UUID 確定 → resolveBusinessGroupId をスキップ
+    bgName: picked.bgName || null,
     assets: null,
     assetsFetchedAt: null
   };
@@ -2262,7 +3040,7 @@ function renderCatAuthRefSelect(selectedId) {
   head.value = ""; head.textContent = "— select identity —";
   sel.appendChild(head);
   (state.identities || [])
-    .filter(idn => idn.kind === "oauth2_cc" || idn.kind === "oauth2_authcode")
+    .filter(idn => idn.kind === "oauth2_cc" || idn.kind === "oauth2_authcode" || idn.kind === "oauth2_password")
     .forEach(idn => {
       const o = document.createElement("option");
       o.value = idn.id;
@@ -2282,6 +3060,13 @@ function openCatalogDialog(editing) {
   $("#catName").value          = editing?.name || "";
   $("#catBusinessGroup").value = "";   // 編集時は既存 BGs に追加する形なので空 (初回のみ使用)
   renderCatAuthRefSelect(editing?.authRef || "");
+  resetCatBgField();
+  // RTM scan 欄を初期化
+  $("#catScanRtm").checked = false;
+  $("#catEnvField").hidden = true;
+  $("#catEnvList").innerHTML = "";
+  // 既に identity が選択済み (編集 or 直近選択) なら BG を即 dropdown 化。
+  if ($("#catAuthRef")?.value) loadCatBgForCurrent();
 
   setTimeout(() => $("#catName").focus(), 50);
 }
@@ -2294,7 +3079,12 @@ function closeCatalogDialog() {
 async function submitCatalogDialog() {
   const name     = $("#catName").value.trim();
   const authRef  = $("#catAuthRef")?.value || "";
-  const bgInput  = $("#catBusinessGroup").value.trim();
+  // BUSINESS GROUP: identity 選択時の dropdown を優先、 無ければ手入力テキスト。
+  const bgSel    = $("#catBgSelect");
+  const useBgSel = bgSel && !bgSel.hidden && bgSel.value && bgSel.value !== "__manual__";
+  const bgPickId = useBgSel ? bgSel.value : null;
+  const bgPickNm = useBgSel ? ((bgSel.selectedOptions[0]?.dataset.name || bgSel.selectedOptions[0]?.textContent || "").trim() || null) : null;
+  const bgInput  = useBgSel ? (bgPickNm || bgPickId) : $("#catBusinessGroup").value.trim();
 
   if (!name)    { $("#catName").focus(); return; }
   if (!authRef || authRef === "__new__") {
@@ -2341,13 +3131,18 @@ async function submitCatalogDialog() {
 
   // ダイアログで BG が入力された + まだ未登録 → 追加 + drawer を即開く
   if (bgInput && !cat.businessGroups.some(b => (b.input || "").toLowerCase() === bgInput.toLowerCase())) {
+    const { scanRtm, envs } = readCatRtmSelection();
     const bg = {
       id:    `bg-${++bgCounter}`,
       input: bgInput,
-      bgId:  null,
-      bgName: null,
+      bgId:  bgPickId,   // dropdown 選択なら UUID 確定 → resolveBusinessGroupId をスキップ
+      bgName: bgPickNm,
+      scanRtm,           // RTM アプリもスキャンするか
+      envs,              // scan 対象の environment [{id,name}]
       assets: null,
-      assetsFetchedAt: null
+      assetsFetchedAt: null,
+      rtmApps: null,
+      rtmAppsFetchedAt: null
     };
     cat.businessGroups.push(bg);
     state._catalogExpanded[cat.id] = true;
@@ -2372,15 +3167,30 @@ function wireCatalogDialog() {
   const authSel = $("#catAuthRef");
   if (authSel) {
     authSel.addEventListener("change", () => {
-      if (authSel.value !== "__new__") return;
-      authSel.value = "";
-      // catalog は OAuth2 CC を既定にして identity ダイアログを開く。保存後この select に反映。
-      state._authRefReturn = (newId) => { renderCatAuthRefSelect(newId); };
-      openIdentityDialog();
-      state.selectedIdentityKind = "oauth2_cc";
-      refreshIdentityDialog();
+      if (authSel.value === "__new__") {
+        authSel.value = "";
+        resetCatBgField();
+        // catalog は OAuth2 CC を既定にして identity ダイアログを開く。保存後この select に反映。
+        state._authRefReturn = (newId) => { renderCatAuthRefSelect(newId); loadCatBgForCurrent(); };
+        openIdentityDialog();
+        state.selectedIdentityKind = "oauth2_cc";
+        refreshIdentityDialog();
+        return;
+      }
+      loadCatBgForCurrent();   // identity 選択/解除で BG を dropdown 化
     });
   }
+  const bgSel = $("#catBgSelect");
+  if (bgSel) {
+    bgSel.addEventListener("change", () => {
+      const txt = $("#catBusinessGroup");
+      const manual = bgSel.value === "__manual__";
+      if (txt) { txt.hidden = !manual; if (manual) { txt.value = ""; txt.focus(); } }
+      if ($("#catScanRtm")?.checked) refreshCatEnvField();   // BG 変更で環境を取り直す
+    });
+  }
+  const scanRtm = $("#catScanRtm");
+  if (scanRtm) scanRtm.addEventListener("change", refreshCatEnvField);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2758,6 +3568,23 @@ function renderAuthRefSelect(selectedId) {
   neu.value = "__new__"; neu.textContent = "+ new identity…";
   sel.appendChild(neu);
   sel.value = (cur && (cur === "" || identityById(cur))) ? cur : "";
+}
+
+// RTM detail の auth セレクトを埋める (none + 全 identity)。
+function renderDetailAuthRef(selectedId) {
+  const sel = $("#detailAuthRef");
+  if (!sel) return;
+  sel.innerHTML = "";
+  const none = document.createElement("option");
+  none.value = ""; none.textContent = "none";
+  sel.appendChild(none);
+  (state.identities || []).forEach(idn => {
+    const o = document.createElement("option");
+    o.value = idn.id;
+    o.textContent = `${idn.name} · ${kindBadge(idn.kind)}`;
+    sel.appendChild(o);
+  });
+  sel.value = (selectedId && identityById(selectedId)) ? selectedId : "";
 }
 
 // ─── Rail ─────────────────────────────────────────────
@@ -4626,7 +5453,8 @@ function proxifyForTest(target) {
 }
 
 async function testMcp(endpoint, auth, authHeaders) {
-  const headers = { "Content-Type": "application/json", "Accept": "application/json" };
+  // Streamable HTTP は JSON も SSE も返しうるので両方 Accept する。
+  const headers = { "Content-Type": "application/json", "Accept": "application/json, text/event-stream" };
   if (auth) headers["Authorization"] = `Bearer ${auth}`;
   if (authHeaders) Object.assign(headers, authHeaders);
   const body = JSON.stringify({
@@ -4634,8 +5462,21 @@ async function testMcp(endpoint, auth, authHeaders) {
     params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "atelier-test", version: "1.0" } }
   });
   const res = await fetch(proxifyForTest(endpoint), { method: "POST", headers, body });
-  if (!res.ok) throw new Error(`HTTP ${res.status} on initialize`);
-  const data = await res.json();
+  const ctype = res.headers.get("content-type") || "";
+  const text = await res.text();
+  if (!res.ok) {
+    // サーバの本文 (例: {"code":"NOT_FOUND","message":"/mcp"}) を添えて原因を分かるように。
+    const snippet = text.replace(/\s+/g, " ").trim().slice(0, 160);
+    throw new Error(`HTTP ${res.status} on initialize${snippet ? ` · ${snippet}` : ""}`);
+  }
+  // SSE で返る場合は data: 行から JSON を取り出す。
+  let data;
+  if (ctype.includes("text/event-stream")) {
+    const line = text.split(/\r?\n/).find(l => l.startsWith("data:"));
+    data = line ? JSON.parse(line.slice(5).trim()) : {};
+  } else {
+    data = text ? JSON.parse(text) : {};
+  }
   if (data.error) throw new Error(`RPC error ${data.error.code}: ${data.error.message}`);
   const r = data.result || {};
   return {
@@ -4765,7 +5606,11 @@ async function connect({ protoId, url, name, auth, authRef, persona, channel, em
     url, name, persona, channel, emulate, mockTools, mockReply,
     auth: resolved.auth,
     authHeaders: resolved.authHeaders,
-    authRef
+    authRef,
+    // 送信前にトークン期限を見て自動更新するためのフック (authRef がある時のみ意味を持つ)。
+    // authcode で対話的再認証が必要なら REAUTH_REQUIRED を投げ、 window が再認証 UI を出す。
+    refreshAuth: (ref) => ensureFreshAuth(ref || authRef),
+    reauth:      (ref) => reauthIdentity(ref || authRef)
   });
 
   // ── 接続を先に試す: 失敗時はウインドウを作らず modal で通知 ──
@@ -4791,7 +5636,13 @@ async function connect({ protoId, url, name, auth, authRef, persona, channel, em
     instanceSuffix,
     restore: opts.restore,
     // ユーザが connect dialog で display name を明示入力した場合、 AgentCard.name で上書きしない
-    lockName: !!opts.lockName || !!(name && name.trim())
+    lockName: !!opts.lockName || !!(name && name.trim()),
+    // settings タブの Authorization を identity から選べるようにするためのフック
+    authApi: {
+      list:    () => state.identities || [],
+      badge:   (kind) => kindBadge(kind),
+      resolve: (authRef) => resolveAuthForConnection({ authRef })
+    }
   });
   win._wsId = ws.id;
   ws.windows.push(win);

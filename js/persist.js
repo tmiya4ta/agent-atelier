@@ -15,7 +15,7 @@ const SECRETS_KEY = "atelier:secrets:v1";
 const VERSION = 1;
 
 // 機微フィールドのキー名 (catalogs / window config / bookmarks / oauth state 共通)
-const SENSITIVE_FIELDS = ["auth", "token", "assertion", "clientSecret", "accessToken", "refreshToken", "tokenExpiresAt"];
+const SENSITIVE_FIELDS = ["auth", "token", "assertion", "password", "clientSecret", "accessToken", "refreshToken", "tokenExpiresAt"];
 
 // オブジェクトから secrets を分離して { sanitized, secrets } を返す。
 // secrets は元 obj を識別するキー (cat-id / bookmark-key / window-key) で索引する。

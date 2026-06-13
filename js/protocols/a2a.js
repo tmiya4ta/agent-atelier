@@ -144,6 +144,7 @@ export class A2AAdapter extends ProtocolAdapter {
 
   async send(text, opts = {}) {
     if (this.state !== "open") throw new Error("not connected");
+    await this._ensureFreshAuth();   // 期限切れトークンをここで更新
     this.turn += 1;
     const reqId = `req-${this.turn}`;
 
@@ -426,6 +427,9 @@ function collectMessages(result) {
   // Direct messages array (legacy)
   if (Array.isArray(result.messages)) return result.messages;
   if (result.message)                  return [result.message];
+  // result 自体が Message のケース ({ kind:"message", role, parts, ... })。
+  // message/send が task ではなく Message を直接返すサーバ (io.a2a 等) 対応。
+  if (result.kind === "message" || Array.isArray(result.parts)) return [result];
   // Task形式: { kind:"task", status:{ message, state }, artifacts, history }
   // 最新の応答は status.message に入るので最優先
   if (result.kind === "task") {

@@ -50,7 +50,10 @@ class Handler(SimpleHTTPRequestHandler):
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+        self.send_header("Access-Control-Allow-Headers",
+                         "Content-Type, Authorization, X-Requested-With, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID")
+        # MCP セッション等の応答ヘッダをブラウザ JS から読めるよう公開する
+        self.send_header("Access-Control-Expose-Headers", "Mcp-Session-Id, MCP-Protocol-Version")
         self.send_header("Access-Control-Max-Age", "86400")
 
     def do_OPTIONS(self):
@@ -88,8 +91,11 @@ class Handler(SimpleHTTPRequestHandler):
         body = self.rfile.read(length) if length else None
 
         req = urllib.request.Request(target, data=body, method=method)
-        # 必要なヘッダだけ転送 (Host/Origin等は付けない)
-        for h in ("Content-Type", "Authorization", "Accept", "X-Atelier-Stream"):
+        # 必要なヘッダだけ転送 (Host/Origin等は付けない)。
+        # Mcp-Session-Id / MCP-Protocol-Version / Last-Event-ID は MCP Streamable HTTP の
+        # セッション維持に必須 (initialize 後の tools/list 等で要求される)。
+        for h in ("Content-Type", "Authorization", "Accept", "X-Atelier-Stream",
+                  "Mcp-Session-Id", "MCP-Protocol-Version", "Last-Event-ID"):
             v = self.headers.get(h)
             if v: req.add_header(h, v)
 
@@ -100,6 +106,10 @@ class Handler(SimpleHTTPRequestHandler):
                 ct = resp.headers.get("Content-Type", "application/octet-stream")
                 self.send_header("Content-Type", ct)
                 self._cors()
+                # MCP セッション等の応答ヘッダをそのままブラウザへ返す
+                for h in ("Mcp-Session-Id", "MCP-Protocol-Version"):
+                    hv = resp.headers.get(h)
+                    if hv: self.send_header(h, hv)
                 self.send_header("Content-Length", str(len(data)))
                 self.send_header("X-Atelier-Proxied-Url", target)
                 # SimpleHTTPRequestHandler の end_headers 経由で CORS が二重に
@@ -111,6 +121,9 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_response(e.code)
             self.send_header("Content-Type", e.headers.get("Content-Type", "text/plain"))
             self._cors()
+            for h in ("Mcp-Session-Id", "MCP-Protocol-Version"):
+                hv = e.headers.get(h)
+                if hv: self.send_header(h, hv)
             self.send_header("Content-Length", str(len(data)))
             SimpleHTTPRequestHandler.end_headers(self)
             self.wfile.write(data)

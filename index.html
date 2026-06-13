@@ -265,9 +265,6 @@
   <!-- ───────────────  ASSET DRAWER  ─────────────── -->
   <aside class="asset-drawer" id="assetDrawer" aria-hidden="true">
     <header class="drawer-head">
-      <button class="drawer-back" id="drawerBack" aria-label="close">
-        <svg viewBox="0 0 16 16" width="14" height="14"><path d="M10 3 L4 8 L10 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button>
       <div class="drawer-title">
         <span class="drawer-eyebrow">catalog</span>
         <span class="drawer-name" id="drawerName">—</span>
@@ -276,12 +273,17 @@
         <button class="drawer-refresh" id="drawerRefresh" title="Hard refresh (bypass cache)" aria-label="hard refresh">
           <svg viewBox="0 0 16 16" width="14" height="14"><path d="M3 8 a5 5 0 1 0 1.5 -3.5 M3 3 v3 h3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
-        <button class="drawer-delete" id="drawerDelete" title="Remove this business group from the catalog" aria-label="delete">
-          <svg viewBox="0 0 16 16" width="13" height="13"><path d="M3 4 h10 M5.5 4 v-1 a1 1 0 0 1 1 -1 h3 a1 1 0 0 1 1 1 v1 M4 4 v10 a1 1 0 0 0 1 1 h6 a1 1 0 0 0 1 -1 v-10 M6.5 6.5 v6 M9.5 6.5 v6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <button class="drawer-back" id="drawerBack" aria-label="close" title="close">
+          <svg viewBox="0 0 16 16" width="14" height="14"><path d="M10 3 L4 8 L10 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
       </div>
     </header>
     <div class="drawer-meta" id="drawerMeta"></div>
+
+    <div class="drawer-tabs" id="drawerTabs" hidden role="tablist">
+      <button class="drawer-tab is-active" data-tab="api" role="tab">API <span class="drawer-tab-sub">Exchange</span></button>
+      <button class="drawer-tab" data-tab="app" role="tab">APP <span class="drawer-tab-sub">Runtime Mgr</span></button>
+    </div>
 
     <div class="drawer-filter">
       <svg class="drawer-filter-icon" viewBox="0 0 16 16" width="13" height="13"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.4"/><line x1="10.5" y1="10.5" x2="14" y2="14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
@@ -290,6 +292,11 @@
         <svg viewBox="0 0 16 16" width="11" height="11"><line x1="3" y1="3" x2="13" y2="13" stroke="currentColor" stroke-width="1.4"/><line x1="13" y1="3" x2="3" y2="13" stroke="currentColor" stroke-width="1.4"/></svg>
       </button>
     </div>
+
+    <label class="drawer-showall" id="drawerShowAll" hidden>
+      <input type="checkbox" id="drawerShowAllCb" />
+      <span id="drawerShowAllLabel">Show all</span>
+    </label>
 
     <div class="drawer-spinner" id="drawerSpinner" hidden>
       <div class="spinner"></div>
@@ -302,24 +309,40 @@
   <!-- ───────────────  ASSET DETAIL DRAWER (2nd level)  ─────────────── -->
   <aside class="asset-drawer asset-detail-drawer" id="assetDetailDrawer" aria-hidden="true">
     <header class="drawer-head">
-      <button class="drawer-back" id="detailBack" aria-label="back">
-        <svg viewBox="0 0 16 16" width="14" height="14"><path d="M10 3 L4 8 L10 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button>
       <div class="drawer-title">
         <span class="drawer-eyebrow">agent</span>
         <span class="drawer-name" id="detailName">—</span>
       </div>
+      <div class="drawer-head-actions">
+        <button class="drawer-back" id="detailBack" aria-label="back" title="back">
+          <svg viewBox="0 0 16 16" width="14" height="14"><path d="M10 3 L4 8 L10 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
     </header>
     <div class="drawer-body detail-body" id="detailBody"></div>
     <footer class="detail-foot">
-      <div class="detail-url-row">
+      <div class="detail-url-row" id="detailUrlRow">
         <label class="detail-url-label" for="detailUrlInput">instance url</label>
         <input type="text" id="detailUrlInput" class="detail-url-input"
                placeholder="https://...example.com/agent  (override or fill if template variable)"
                autocomplete="off" />
       </div>
+      <div class="detail-rtm-row" id="detailRtmRow" hidden>
+        <div class="seg-toggle detail-proto-seg" id="detailProtoSeg" role="radiogroup" aria-label="protocol">
+          <button type="button" class="seg-opt is-active" data-proto="a2a" role="radio" aria-checked="true">A2A</button>
+          <button type="button" class="seg-opt" data-proto="mcp" role="radio" aria-checked="false">MCP</button>
+        </div>
+        <label class="detail-url-label">public endpoint</label>
+        <div class="detail-rtm-base" id="detailRtmBase">—</div>
+        <label class="detail-url-label" for="detailPathInput">resource path</label>
+        <input type="text" id="detailPathInput" class="detail-url-input"
+               placeholder="/a2a" autocomplete="off" />
+        <label class="detail-url-label" for="detailAuthRef">auth</label>
+        <select id="detailAuthRef" class="detail-url-input detail-authref"></select>
+      </div>
+      <div class="detail-foot-meta" id="detailFootMeta"></div>
       <div class="detail-foot-actions">
-        <span class="detail-foot-meta" id="detailFootMeta"></span>
+        <button class="ghost-btn" id="detailTest" hidden>test</button>
         <button class="primary-btn" id="detailConnect">
           <span class="primary-btn-glyph">⏎</span>
           <span>Connect</span>
@@ -524,9 +547,28 @@
           <div class="field">
             <label class="field-label" for="catBusinessGroup">
               <span>business group</span>
-              <span class="field-hint">name or ID — optional (more can be added later)</span>
+              <span class="field-hint" id="catBgHint">name or ID — optional (more can be added later)</span>
             </label>
+            <select id="catBgSelect" class="dlg-authref" hidden aria-label="business group"></select>
             <input id="catBusinessGroup" type="text" placeholder="e.g. btd  or  0fc4eaf1-5697-4cef-9c1b-3b96e3a52ee2" autocomplete="off" />
+          </div>
+
+          <div class="field">
+            <label class="cat-check">
+              <input type="checkbox" id="catScanRtm" />
+              <span class="cat-check-body">
+                <span class="cat-check-label">Scan Runtime Manager apps</span>
+                <span class="cat-check-hint">この BG のデプロイ済みアプリも一覧に含める</span>
+              </span>
+            </label>
+          </div>
+
+          <div class="field" id="catEnvField" hidden>
+            <label class="field-label">
+              <span>environments</span>
+              <span class="field-hint" id="catEnvStatus">scan する環境を選択</span>
+            </label>
+            <div class="cat-env-list" id="catEnvList"></div>
           </div>
         </div>
       </div>
@@ -698,6 +740,59 @@
               <span class="field-hint">Token endpoint</span>
             </label>
             <input id="idnTokenUrlJwt" type="text" placeholder="https://auth.example.com/oauth/token" autocomplete="off" />
+          </div>
+
+          <!-- oauth2_password fields (Anypoint /accounts/login or generic ROPC) -->
+          <div class="field" data-only="oauth2_password">
+            <label class="field-label" for="idnTokenUrlPwd">
+              <span>login url</span>
+              <span class="field-hint">Anypoint: /accounts/login · custom: token endpoint</span>
+            </label>
+            <input id="idnTokenUrlPwd" type="text" placeholder="https://anypoint.mulesoft.com/accounts/login" autocomplete="off" />
+          </div>
+
+          <div class="field" data-only="oauth2_password">
+            <label class="field-label" for="idnUsername">
+              <span>username</span>
+              <span class="field-hint">Resource owner username</span>
+            </label>
+            <input id="idnUsername" type="text" placeholder="user@example.com" autocomplete="off" />
+          </div>
+
+          <div class="field" data-only="oauth2_password">
+            <label class="field-label" for="idnPassword">
+              <span>password</span>
+              <span class="field-hint">Resource owner password</span>
+            </label>
+            <div class="input-with-toggle">
+              <input id="idnPassword" type="password" placeholder="••••••••" autocomplete="off" />
+              <button type="button" class="input-toggle" id="idnPasswordToggle" aria-label="Show password" aria-pressed="false" title="Show / hide">
+                <svg class="ico-eye" viewBox="0 0 16 16" width="14" height="14"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+                <svg class="ico-eye-off" viewBox="0 0 16 16" width="14" height="14"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" fill="none" stroke="currentColor" stroke-width="1.3"/><line x1="2" y1="14" x2="14" y2="2" stroke="currentColor" stroke-width="1.4"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="field" data-only="oauth2_password">
+            <label class="field-label" for="idnClientIdPwd">
+              <span>client id</span>
+              <span class="field-hint">OAuth client_id (optional)</span>
+            </label>
+            <input id="idnClientIdPwd" type="text" placeholder="client_id" autocomplete="off" />
+          </div>
+
+          <div class="field" data-only="oauth2_password">
+            <label class="field-label" for="idnClientSecretPwd">
+              <span>client secret</span>
+              <span class="field-hint">OAuth client_secret (optional)</span>
+            </label>
+            <div class="input-with-toggle">
+              <input id="idnClientSecretPwd" type="password" placeholder="••••••••" autocomplete="off" />
+              <button type="button" class="input-toggle" id="idnSecretTogglePwd" aria-label="Show client secret" aria-pressed="false" title="Show / hide">
+                <svg class="ico-eye" viewBox="0 0 16 16" width="14" height="14"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>
+                <svg class="ico-eye-off" viewBox="0 0 16 16" width="14" height="14"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" fill="none" stroke="currentColor" stroke-width="1.3"/><line x1="2" y1="14" x2="14" y2="2" stroke="currentColor" stroke-width="1.4"/></svg>
+              </button>
+            </div>
           </div>
 
         </div>

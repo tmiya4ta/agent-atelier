@@ -41,6 +41,22 @@ export class ProtocolAdapter extends EventTarget {
   _emit(type, detail) { this.dispatchEvent(new CustomEvent(type, { detail })); }
   _setState(s)        { this.state = s; }
 
+  // 送信直前にトークン期限を確認し、 切れていれば更新して config.auth を差し替える。
+  // authcode 等で対話的再認証が必要なら "auth-required" を emit して例外を投げる
+  // (window 側が「再認証」トリガーを表示する)。
+  async _ensureFreshAuth() {
+    if (!this.config.authRef || typeof this.config.refreshAuth !== "function") return;
+    try {
+      const a = await this.config.refreshAuth(this.config.authRef);
+      if (a) { this.config.auth = a.auth; this.config.authHeaders = a.authHeaders; }
+    } catch (e) {
+      if (e && e.code === "REAUTH_REQUIRED") {
+        this._emit("auth-required", { authRef: this.config.authRef, name: e.idnName, kind: e.kind, message: e.message });
+      }
+      throw e;
+    }
+  }
+
   // ─── モックモード ──────────────────────────────────────────
   // adapter の send だけをローカル応答に乗っ取る (実通信なし)。
   // window / ScriptRunner / UI は無変更で、 typewriter・debug タブも本番同様に動く。

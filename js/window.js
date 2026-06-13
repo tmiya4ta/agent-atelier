@@ -5,13 +5,14 @@ let zCounter = 10;
 let idCounter = 0;
 
 export class AgentWindow {
-  constructor({ adapter, layer, onClose, onFocus, onChange, instanceSuffix, restore, lockName }) {
+  constructor({ adapter, layer, onClose, onFocus, onChange, instanceSuffix, restore, lockName, authApi }) {
     this.id = `aw-${++idCounter}`;
     this.adapter = adapter;
     this.layer    = layer;
     this.onClose  = onClose;
     this.onFocus  = onFocus;
     this.onChange = onChange;
+    this.authApi  = authApi || null;   // settings の Authorization を identity から選ぶ用
     this.instanceSuffix = instanceSuffix || "";   // 重複ウインドウ用 " #2" など
     this.restore  = restore || null;
 
@@ -307,6 +308,44 @@ export class AgentWindow {
       this._setStatus("idle");
       this._addSystemMessage(`Disconnected.`);
     });
+
+    // 認証セッション切れ (Authorization Code 等で対話的再認証が必要) → クールな再認証バナーを出す
+    this.adapter.addEventListener("auth-required", (e) => {
+      this._showReauthBanner(e.detail || {});
+    });
+  }
+
+  // 期限切れ → ユーザーに再認証を促す光るバナー。 クリックで OAuth フローを起動。
+  _showReauthBanner(detail) {
+    if (!this.el) return;
+    this.el.querySelector(".aw-reauth")?.remove();
+    const bar = document.createElement("div");
+    bar.className = "aw-reauth";
+    bar.innerHTML = `
+      <span class="aw-reauth-pulse" aria-hidden="true"></span>
+      <span class="aw-reauth-text">${escapeHtml(detail.name ? `"${detail.name}" ` : "")}session expired</span>
+      <button type="button" class="aw-reauth-btn">Re-authenticate <span class="arrow">→</span></button>`;
+    const btn = bar.querySelector(".aw-reauth-btn");
+    btn.addEventListener("click", async () => {
+      if (typeof this.adapter.config.reauth !== "function") return;
+      btn.disabled = true;
+      btn.textContent = "authenticating…";
+      try {
+        const a = await this.adapter.config.reauth(this.adapter.config.authRef);
+        if (a) { this.adapter.config.auth = a.auth; this.adapter.config.authHeaders = a.authHeaders; }
+        bar.classList.add("is-done");
+        this._addSystemMessage("Re-authenticated. You can retry now.");
+        setTimeout(() => bar.remove(), 900);
+        this.onChange?.();
+      } catch (err) {
+        btn.disabled = false;
+        btn.innerHTML = `Retry sign-in <span class="arrow">→</span>`;
+        this._addSystemMessage(`Re-authentication failed: ${err?.message || err}`);
+      }
+    });
+    // chat ペインの先頭に差し込む (無ければウインドウ本体に)
+    const host = this.el.querySelector(".pane-chat") || this.el.querySelector(".aw-body") || this.el;
+    host.insertBefore(bar, host.firstChild);
   }
 
   // ───────────────────────────────────────────
@@ -1110,6 +1149,24 @@ export class AgentWindow {
       ? "MCP では agent card は提供されないため、 接続先はそのまま Discovery URL です。"
       : "AgentCard の url フィールド。 メッセージはこの URL に POST されます (Discovery URL ではなく)。 Discovery URL と異なる場合があるので注意してください。";
 
+    // Authorization: identity から選べる場合は select、 そうでなければ readonly のマスク表示。
+    const cfg = this.adapter.config;
+    const curRef = cfg.authRef || "";
+    let authControl;
+    if (this.authApi) {
+      const ids = this.authApi.list();
+      const hasRawToken = !curRef && !!cfg.auth;
+      const opts = [`<option value=""${!curRef && !hasRawToken ? " selected" : ""}>none</option>`];
+      ids.forEach(idn => {
+        const sel = idn.id === curRef ? " selected" : "";
+        opts.push(`<option value="${escapeHtml(idn.id)}"${sel}>${escapeHtml(idn.name)} · ${escapeHtml(this.authApi.badge(idn.kind))}</option>`);
+      });
+      if (hasRawToken) opts.push(`<option value="__raw__" selected>(custom token)</option>`);
+      authControl = `<select class="set-input set-input-auth">${opts.join("")}</select>`;
+    } else {
+      authControl = `<input class="set-input" value="${cfg.auth ? "•".repeat(12) : ""}" placeholder="none" readonly />`;
+    }
+
     box.innerHTML = `
       <div class="set-section">
         <h4>Identity</h4>
@@ -1144,9 +1201,9 @@ export class AgentWindow {
         <div class="set-row" title="HTTP Authorization ヘッダに付ける bearer token。 connect ダイアログで指定したものが保存されています。">
           <div class="set-row-text">
             <div class="set-row-title">Authorization <span class="set-row-help" aria-hidden="true">?</span></div>
-            <div class="set-row-sub">Authorization: Bearer &lt;token&gt; ヘッダ (任意)</div>
+            <div class="set-row-sub">Auth (identity) を選択 / Bearer &lt;token&gt; ヘッダ</div>
           </div>
-          <input class="set-input" value="${this.adapter.config.auth ? "•".repeat(12) : ""}" placeholder="none" readonly />
+          ${authControl}
         </div>
       </div>
 
@@ -1187,6 +1244,30 @@ export class AgentWindow {
       nameInput.addEventListener("blur",   commit);
       nameInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter") { e.preventDefault(); nameInput.blur(); }
+      });
+    }
+
+    // Authorization (identity) 選択を反映: token を解決して adapter に適用 + 永続化。
+    const authSel = box.querySelector(".set-input-auth");
+    if (authSel && this.authApi) {
+      authSel.addEventListener("change", async () => {
+        const v = authSel.value;
+        if (v === "__raw__") return;   // 既存 token を維持
+        this.adapter.config.authRef = v || undefined;
+        if (!v) {
+          this.adapter.config.auth = undefined;
+          this.adapter.config.authHeaders = undefined;
+        } else {
+          try {
+            const resolved = await this.authApi.resolve(v);
+            this.adapter.config.auth = resolved.auth;
+            this.adapter.config.authHeaders = resolved.authHeaders;
+          } catch (e) {
+            console.warn("[settings] auth resolve failed:", e?.message || e);
+          }
+        }
+        this.onChange?.();
+        this._renderSettings();   // 表示を更新 (badge / custom token 表示の整理)
       });
     }
   }

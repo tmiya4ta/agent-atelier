@@ -88,6 +88,7 @@ export class MCPAdapter extends ProtocolAdapter {
 
   // ─── internal: JSON-RPC POST helper ───────────────────
   async _rpc(method, params, opts = {}) {
+    await this._ensureFreshAuth();   // 期限切れトークンをここで更新
     const id = opts.isNotification ? undefined : ++this.rpcId;
     const body = opts.isNotification
       ? { jsonrpc: "2.0", method, params }
