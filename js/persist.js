@@ -63,7 +63,7 @@ function getSecretEntry(scope, idKey) {
   const s = loadSecrets();
   return s[scope]?.[idKey] || null;
 }
-function clearSecrets() {
+export function clearSecrets() {
   try { sessionStorage.removeItem(SECRETS_KEY); } catch {}
 }
 

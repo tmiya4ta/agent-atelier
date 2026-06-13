@@ -5266,3 +5266,132 @@ body.is-dark .tool-result.is-error {
   box-shadow: none;
 }
 .aw-reauth.is-done .aw-reauth-pulse { background: #2c8a4d; animation: none; }
+
+/* ─── Auth gate (Sign in with Anypoint) ───────────────────────────── */
+.auth-gate {
+  position: fixed; inset: 0; z-index: 4000;
+  display: grid; place-items: center;
+  background: color-mix(in srgb, var(--paper) 78%, transparent);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  opacity: 1;
+  transition: opacity 0.24s ease;
+}
+.auth-gate[hidden] { display: none; }
+.auth-gate.is-closing { opacity: 0; pointer-events: none; }
+.auth-gate.is-closing .auth-gate-card { transform: scale(0.98); transition: transform 0.24s ease; }
+
+/* 認証中スピナー (別タブで Anypoint ログイン中) */
+.auth-gate-pending[hidden] { display: none; }
+.auth-gate-pending { padding: 8px 0 4px; }
+.auth-gate-spinner {
+  width: 34px; height: 34px; margin: 6px auto 16px;
+  border: 3px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.auth-gate-card {
+  width: min(420px, 90vw);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl, 16px);
+  box-shadow: 0 40px 80px -20px rgba(14,14,12,0.35), 0 0 0 1px rgba(14,14,12,0.06);
+  padding: 32px 30px;
+  text-align: center;
+  animation: dlg-up 0.32s cubic-bezier(.2,.8,.2,1);
+}
+.auth-gate-brand {
+  font-family: var(--f-display, var(--f-ui));
+  font-size: calc(26px * var(--fs-mul, 1.1) * var(--fs, 1));
+  font-weight: 600; color: var(--ink);
+  display: flex; flex-direction: column; gap: 2px; align-items: center;
+  margin-bottom: 18px;
+}
+.auth-gate-brand-sub {
+  font-family: var(--f-mono);
+  font-size: calc(9px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-4);
+}
+.auth-gate-title {
+  margin: 0 0 6px; font-weight: 600;
+  font-size: calc(16px * var(--fs-mul, 1.1) * var(--fs, 1)); color: var(--ink);
+}
+.auth-gate-lede {
+  margin: 0 0 20px; color: var(--ink-3);
+  font-size: calc(12.5px * var(--fs-mul, 1.1) * var(--fs, 1)); line-height: 1.5;
+}
+.auth-gate-cid { text-align: left; margin-bottom: 16px; }
+.auth-gate-cid label {
+  display: block; margin-bottom: 5px;
+  font-family: var(--f-mono);
+  font-size: calc(10px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3);
+}
+.auth-gate-cid input {
+  width: 100%; box-sizing: border-box;
+  padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--radius, 8px);
+  background: var(--panel); color: var(--ink); font-family: var(--f-mono);
+  font-size: calc(12px * var(--fs-mul, 1.1) * var(--fs, 1));
+}
+.auth-gate-cid input:focus { border-color: var(--accent); outline: none; }
+.auth-gate-hint {
+  display: block; margin-top: 5px; color: var(--ink-4);
+  font-size: calc(10px * var(--fs-mul, 1.1) * var(--fs, 1)); line-height: 1.4;
+}
+.auth-gate-btn {
+  width: 100%;
+  display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+  padding: 12px 16px; border: 0; border-radius: var(--radius, 8px);
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-ink) 100%);
+  color: #fff; cursor: pointer;
+  font-family: var(--f-ui); font-weight: 600;
+  font-size: calc(13px * var(--fs-mul, 1.1) * var(--fs, 1));
+  transition: filter 0.15s ease, transform 0.12s ease;
+}
+.auth-gate-btn:hover:not(:disabled) { filter: brightness(1.07); transform: translateY(-1px); }
+.auth-gate-btn:disabled { opacity: 0.7; cursor: default; }
+.auth-gate-skip {
+  margin-top: 12px; background: none; border: 0; cursor: pointer;
+  color: var(--ink-4); font-family: var(--f-ui);
+  font-size: calc(11px * var(--fs-mul, 1.1) * var(--fs, 1));
+}
+.auth-gate-skip:hover { color: var(--ink-3); text-decoration: underline; }
+.auth-gate-msg {
+  margin-top: 14px; min-height: 1em; color: var(--ink-3);
+  font-size: calc(11.5px * var(--fs-mul, 1.1) * var(--fs, 1)); line-height: 1.5;
+}
+
+/* カタログ rail アイコン: 未サインインで lock (押せない見た目) */
+.rail-ico.is-locked { opacity: 0.35; cursor: default; }
+.rail-ico.is-locked:hover { color: var(--ink-3); background: transparent; }
+
+/* 左レール下部のアカウントアバター (Claude.ai 風の丸イニシャル) */
+.rail-avatar {
+  margin-top: auto;                 /* レール最下部へ押し下げ */
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  border: 0;
+  display: grid; place-items: center;
+  background: linear-gradient(150deg, var(--accent) 0%, var(--accent-ink) 100%);
+  color: #fff;
+  font-family: var(--f-ui);
+  font-weight: 700;
+  font-size: calc(11px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0,22,74,0.18);
+  transition: transform 0.12s ease, filter 0.15s ease;
+}
+.rail-avatar[hidden] { display: none; }
+.rail-avatar:hover { filter: brightness(1.08); transform: translateY(-1px); }
+
+/* row-menu のヘッダ (アカウント名など 非操作) */
+.row-menu-header {
+  padding: 7px 12px 6px;
+  font-family: var(--f-mono);
+  font-size: calc(10px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink-3);
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}

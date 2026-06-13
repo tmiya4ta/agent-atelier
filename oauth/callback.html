@@ -78,14 +78,12 @@
       const $spin   = document.getElementById("spinner");
       const $eye    = document.getElementById("eyebrow");
 
-      if (!window.opener || window.opener.closed) {
-        $title.textContent = "Cannot post back to parent";
-        $title.classList.add("err");
-        $spin.remove();
-        $meta.textContent = JSON.stringify(payload);
-        return;
-      }
-      window.opener.postMessage(payload, location.origin);
+      // 元タブへ届ける手段を2系統:
+      //  1) localStorage (storage イベント) — IdP の COOP で window.opener が
+      //     切られても確実に届く。 別タブ運用の主経路。
+      //  2) opener.postMessage — popup 運用の従来経路 (best-effort)。
+      try { localStorage.setItem("atelier:oauth-callback", JSON.stringify(payload)); } catch (e) {}
+      try { if (window.opener && !window.opener.closed) window.opener.postMessage(payload, location.origin); } catch (e) {}
 
       if (payload.error) {
         $title.textContent = "Authentication failed";

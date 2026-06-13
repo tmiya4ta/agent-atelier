@@ -25,7 +25,7 @@ export function redirectUri() {
   return `${location.origin}${REDIRECT_PATH}`;
 }
 
-export async function runAuthCodeFlow(cat) {
+export async function runAuthCodeFlow(cat, opts = {}) {
   const { verifier, challenge } = await makePkce();
   const state = base64url(crypto.getRandomValues(new Uint8Array(16)));
 
@@ -45,23 +45,28 @@ export async function runAuthCodeFlow(cat) {
   console.info("[oauth] redirect_uri :", redirectUri());
   console.info("[oauth] scope        :", params.get("scope"));
 
-  // Popup
-  const w = 520, h = 720;
-  const left = Math.max(0, Math.floor((screen.width  - w) / 2));
-  const top  = Math.max(0, Math.floor((screen.height - h) / 2));
-  const popup = window.open(authUrl, "atelier-oauth",
-    `width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,location=yes,status=no`);
+  // opts.tab=true なら別タブ (features 無し)、 既定は中央ポップアップ。
+  let features = "";
+  if (!opts.tab) {
+    const w = 520, h = 720;
+    const left = Math.max(0, Math.floor((screen.width  - w) / 2));
+    const top  = Math.max(0, Math.floor((screen.height - h) / 2));
+    features = `width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,location=yes,status=no`;
+  }
+  const popup = window.open(authUrl, opts.tab ? "_blank" : "atelier-oauth", features);
 
   if (!popup) throw new Error("Popup blocked. Allow popups for this site.");
 
-  // Wait for postMessage from callback or popup close
+  // callback からの受信: postMessage と localStorage の両対応。
+  // 別タブ運用では IdP の COOP で window.opener が切られ postMessage が届かない
+  // ことがあるため、 callback は localStorage にも結果を書く (同一オリジンの
+  // storage イベントで元タブが拾う)。
+  const STORE_KEY = "atelier:oauth-callback";
   const code = await new Promise((resolve, reject) => {
     let done = false;
-    const finish = (fn) => { if (done) return; done = true; fn(); cleanup(); };
+    const finish = (fn) => { if (done) return; done = true; cleanup(); fn(); };
 
-    const onMsg = (e) => {
-      if (e.origin !== location.origin) return;
-      const d = e.data;
+    const handle = (d) => {
       if (!d || d.type !== "oauth-callback") return;
       try { popup.close(); } catch {}
       if (d.error)               return finish(() => reject(new Error(`${d.error}: ${d.error_description || ""}`)));
@@ -70,36 +75,67 @@ export async function runAuthCodeFlow(cat) {
       finish(() => resolve(d.code));
     };
 
+    const onMsg = (e) => { if (e.origin === location.origin) handle(e.data); };
+    const onStorage = (e) => {
+      if (e.key !== STORE_KEY || !e.newValue) return;
+      let d; try { d = JSON.parse(e.newValue); } catch { return; }
+      try { localStorage.removeItem(STORE_KEY); } catch {}
+      handle(d);
+    };
+
+    // tab/popup が閉じられても、 直前に書かれた結果があれば拾う猶予を持たせる。
     const checkClosed = setInterval(() => {
-      if (popup.closed) finish(() => reject(new Error("Authentication cancelled")));
-    }, 500);
+      if (!popup.closed) return;
+      try {
+        const pre = localStorage.getItem(STORE_KEY);
+        if (pre) { localStorage.removeItem(STORE_KEY); return handle(JSON.parse(pre)); }
+      } catch {}
+      finish(() => reject(new Error("Authentication cancelled")));
+    }, 600);
 
     const cleanup = () => {
       clearInterval(checkClosed);
       window.removeEventListener("message", onMsg);
+      window.removeEventListener("storage", onStorage);
     };
     window.addEventListener("message", onMsg);
+    window.addEventListener("storage", onStorage);
+    // 既に書き込み済みなら即拾う
+    try {
+      const pre = localStorage.getItem(STORE_KEY);
+      if (pre) { localStorage.removeItem(STORE_KEY); handle(JSON.parse(pre)); }
+    } catch {}
   });
 
   // Exchange code → token (via /proxy for CORS)
+  // Anypoint connected app (authorization_code) は client_secret 必須。
+  // token endpoint は client_secret_post / client_secret_basic を受けるが、
+  // proxy 越しでも確実な client_secret_post (body に secret) を使う。
+  if (!cat.clientSecret) {
+    throw new Error("client_secret required — Anypoint の Connected App は authorization code で client_secret が必須です");
+  }
   const body = new URLSearchParams({
     grant_type:    "authorization_code",
     code,
     redirect_uri:  redirectUri(),
     client_id:     cat.clientId,
+    client_secret: cat.clientSecret,
     code_verifier: verifier
   });
-  // Connected App が Web app タイプの場合のみ secret を渡す (SPA タイプは PKCE のみ)
-  if (cat.clientSecret) body.set("client_secret", cat.clientSecret);
 
   const res = await fetch(`/proxy?url=${encodeURIComponent(cat.tokenUrl)}`, {
     method:  "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body:    body.toString()
   });
-  const data = await res.json();
-  if (!res.ok || data.error) {
-    throw new Error(data.error_description || data.error || `HTTP ${res.status}`);
+  // token endpoint は失敗時 非JSON (Unauthorized 等) を返すことがあるので安全に parse。
+  const raw = await res.text();
+  let data = {};
+  try { data = raw ? JSON.parse(raw) : {}; } catch { data = {}; }
+  if (!res.ok || data.error || !data.access_token) {
+    const detail = data.error_description || data.error
+      || (raw && !data.access_token ? raw.replace(/<[^>]+>/g, "").trim().slice(0, 140) : "");
+    throw new Error(`token exchange HTTP ${res.status}${detail ? ` · ${detail}` : ""}`);
   }
   return data;
 }

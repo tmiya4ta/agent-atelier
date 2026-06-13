@@ -72,6 +72,19 @@ const ANYPOINT = {
   tokenUrl: "https://anypoint.mulesoft.com/accounts/api/v2/oauth2/token"
 };
 
+// 「Sign in with Anypoint」用 Connected App。 client_id をここに入れれば
+// ログインゲートはボタン 1 発になる (Google ログイン同様)。 空ならゲートに
+// client_id 入力欄が出る。 redirect URL は <origin>/oauth/callback.html を登録。
+const ANYPOINT_SIGNIN = {
+  clientId:     "",             // ← Connected App (Authorization Code) の client_id
+  clientSecret: "",             // ← Anypoint は authcode で client_secret 必須
+  authUrl:  ANYPOINT.authUrl,
+  tokenUrl: ANYPOINT.tokenUrl,
+  // openid/profile/email = userinfo, offline_access = refresh token, full = 各API
+  scopes:   "openid profile email offline_access full",
+  userinfoUrl: "https://anypoint.mulesoft.com/accounts/api/v2/oauth2/userinfo"
+};
+
 const state = {
   workspaces: [],     // [{ id, name, windows: [], events: 0, layer: <div> }]
   activeWs: null,
@@ -124,6 +137,13 @@ function openRowMenu(anchorEl, items) {
   menu.className = "row-menu";
   menu.id = "rowMenu";
   items.forEach(it => {
+    if (it.header) {
+      const h = document.createElement("div");
+      h.className = "row-menu-header";
+      h.textContent = it.label;
+      menu.appendChild(h);
+      return;
+    }
     const b = document.createElement("button");
     b.type = "button";
     b.className = "row-menu-item" + (it.danger ? " is-danger" : "");
@@ -246,6 +266,7 @@ function init() {
   wireScriptPanel();
   wireBackup();
   wireConnToggleAll();
+  wireAuthGate();
   applyZoom();   // 復元値を反映
   applySidebar();
   applySidePanelW();   // 復元値を反映
@@ -253,6 +274,9 @@ function init() {
   applyScriptPanel();   // 復元値を反映
   updateStatusLine();
   updateEmptyState();
+
+  // 起動時ログインゲート (Anypoint サインイン / skip でカタログ無効)
+  maybeShowAuthGate();
 
   // import 直後 (reload を挟む) は restore 後にウインドウを tile する
   if (sessionStorage.getItem("atelier:tileAfterImport")) {
@@ -381,6 +405,8 @@ function wireSideResize() {
 // SIDEBAR ACTIVITY BAR (rail + panel)
 // ═══════════════════════════════════════════════════════
 function selectSideCat(cat) {
+  // カタログは Anypoint サインインが前提。 未サインインなら押せない (no-op)。
+  if (cat === "catalogs" && !isSignedIn()) return;
   state.activeSideCat = cat;
   $$("#sideRail .rail-ico").forEach(b => {
     const on = b.dataset.cat === cat;
@@ -396,7 +422,208 @@ function wireSideRail() {
   $$("#sideRail .rail-ico").forEach(b => {
     b.addEventListener("click", () => selectSideCat(b.dataset.cat));
   });
-  selectSideCat(state.activeSideCat || "connections");
+  // 復元カテゴリが catalogs でも未サインインなら connections に退避
+  const start = (state.activeSideCat === "catalogs" && !isSignedIn()) ? "connections" : (state.activeSideCat || "connections");
+  selectSideCat(start);
+}
+
+// ═══════════════════════════════════════════════════════
+// AUTH GATE (Sign in with Anypoint)
+// ═══════════════════════════════════════════════════════
+// セッション identity = サインインで得た Anypoint authcode トークン。
+function sessionIdentity() {
+  return (state.identities || []).find(i => i._session && i.kind === "oauth2_authcode");
+}
+function isSignedIn() {
+  const idn = sessionIdentity();
+  return !!(idn && idn.accessToken && Date.now() < (idn.tokenExpiresAt || 0));
+}
+// skip はこの読み込み中だけ有効 (メモリ)。 リロードすれば未サインインなら再度ゲートが出る。
+function authSkipped() { return !!state._authSkipped; }
+
+function showAuthGate() {
+  const g = $("#authGate"); if (!g) return;
+  g.hidden = false;
+  $("#authGateCidWrap").hidden = !!ANYPOINT_SIGNIN.clientId;   // 設定済みなら入力欄不要
+  $("#authGateMsg").textContent = "";
+  if (ANYPOINT_SIGNIN.clientId) setTimeout(() => $("#authGateSignin")?.focus(), 50);
+  else                          setTimeout(() => $("#authGateCid")?.focus(), 50);
+}
+function hideAuthGate() {
+  const g = $("#authGate");
+  if (!g || g.hidden) return;
+  g.classList.add("is-closing");           // フェードアウト
+  setTimeout(() => {
+    g.hidden = true;
+    g.classList.remove("is-closing");
+    setAuthGatePending(false);             // 次回のため form ビューに戻す
+  }, 240);
+}
+// ゲートを「フォーム」⇄「認証中スピナー」で切り替える。
+function setAuthGatePending(on) {
+  const main = $("#authGateMain"), pend = $("#authGatePending");
+  if (main) main.hidden = on;
+  if (pend) pend.hidden = !on;
+}
+
+// 起動時の判定: サインイン済み or skip 済みならゲートを出さない。
+function maybeShowAuthGate() {
+  applyCatalogGate();
+  updateAuthStatus();
+  if (isSignedIn() || authSkipped()) { hideAuthGate(); return; }
+  showAuthGate();
+}
+
+async function doAnypointSignIn() {
+  const btn = $("#authGateSignin"), msg = $("#authGateMsg");
+  const clientId = (ANYPOINT_SIGNIN.clientId || $("#authGateCid")?.value || "").trim();
+  const clientSecret = (ANYPOINT_SIGNIN.clientSecret || $("#authGateSecret")?.value || "").trim();
+  if (!clientId) { msg.textContent = "Connected App の client_id を入力してください。"; $("#authGateCid")?.focus(); return; }
+  btn.disabled = true;
+  msg.textContent = "";
+  setAuthGatePending(true);   // フォーム → 認証中スピナーに切替 (戻ってきてもダサくない)
+  try {
+    const tmp = {
+      authUrl: ANYPOINT_SIGNIN.authUrl, tokenUrl: ANYPOINT_SIGNIN.tokenUrl,
+      clientId, clientSecret: clientSecret || undefined,
+      scopes: ANYPOINT_SIGNIN.scopes, redirectUri: redirectUri()
+    };
+    const data = await runAuthCodeFlow(tmp, { tab: true });   // 別タブで Anypoint へ
+    let idn = sessionIdentity();
+    if (!idn) {
+      idn = {
+        id: `idn-${++idnCounter}`, _session: true, kind: "oauth2_authcode",
+        name: "Anypoint (signed in)", provider: "anypoint",
+        authUrl: tmp.authUrl, tokenUrl: tmp.tokenUrl, clientId,
+        clientSecret: clientSecret || undefined, scopes: tmp.scopes,
+        redirectUri: tmp.redirectUri, createdAt: Date.now()
+      };
+      state.identities.push(idn);
+    } else {
+      idn.clientId = clientId;
+      if (clientSecret) idn.clientSecret = clientSecret;
+    }
+    idn.accessToken    = data.access_token;
+    idn.tokenExpiresAt = Date.now() + Math.max(60, (data.expires_in || 3600) - 60) * 1000;
+    if (data.refresh_token) idn.refreshToken = data.refresh_token;
+    idn.updatedAt = Date.now();
+    state._authSkipped = false;
+    dirty();
+    renderIdentities();
+    applyCatalogGate();
+    updateAuthStatus();
+    // token を得た時点でゲートを即フェードアウト (チラつき防止)。
+    hideAuthGate();
+    // userinfo (名前/イニシャル) は背景で取得 → アバターを後追い更新。
+    fetchAnypointUserinfo(idn).then((who) => {
+      if (who) { idn.name = `Anypoint · ${who}`; dirty(); renderIdentities(); updateAuthStatus(); }
+    });
+  } catch (e) {
+    setAuthGatePending(false);   // フォームに戻してエラー表示
+    msg.textContent = `サインイン失敗: ${e?.message || e}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Anypoint userinfo から表示名を取得 (best-effort)。
+async function fetchAnypointUserinfo(idn) {
+  try {
+    const res = await fetch(`/proxy?url=${encodeURIComponent(ANYPOINT_SIGNIN.userinfoUrl)}`, {
+      headers: { Authorization: `Bearer ${idn.accessToken}`, Accept: "application/json" }
+    });
+    if (!res.ok) return null;
+    const u = await res.json();
+    return u.name || u.preferred_username || u.email || u.username || null;
+  } catch { return null; }
+}
+
+function skipAuthGate() {
+  state._authSkipped = true;
+  hideAuthGate();
+  applyCatalogGate();
+}
+
+// 未サインイン時はカタログ機能を無効化 (rail アイコン lock + 追加ボタン無効)。
+function applyCatalogGate() {
+  const on = isSignedIn();
+  const railCat = document.querySelector('#sideRail .rail-ico[data-cat="catalogs"]');
+  if (railCat) {
+    railCat.classList.toggle("is-locked", !on);
+    railCat.title = on ? "Catalogs" : "Catalogs — sign in required";
+  }
+  const addBtn = $("#catalogAdd");
+  if (addBtn) addBtn.disabled = !on;
+  if (!on && state.activeSideCat === "catalogs") selectSideCat("connections");
+}
+
+function wireAuthGate() {
+  $("#authGateSignin")?.addEventListener("click", doAnypointSignIn);
+  $("#authGateSkip")?.addEventListener("click", skipAuthGate);
+  $("#authGateCancel")?.addEventListener("click", () => {
+    setAuthGatePending(false);   // 認証中表示をやめてフォームへ (別タブは閉じてOK)
+    $("#authGateMsg").textContent = "";
+  });
+  const av = $("#railAvatar");
+  if (av) av.addEventListener("click", () => {
+    const who = signedInName();
+    openRowMenu(av, [
+      { header: true, label: who },
+      { label: "Logout", danger: true, onClick: doLogout }
+    ]);
+  });
+}
+
+// サインイン中ユーザーの表示名 ("Anypoint · X" → "X")。
+function signedInName() {
+  const n = sessionIdentity()?.name || "";
+  return n.startsWith("Anypoint · ") ? n.slice("Anypoint · ".length) : (n || "Anypoint");
+}
+// 名前からイニシャル (最大2文字) を作る。
+function initialsOf(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+// サインイン状態を左レールのアバターに反映 (Claude.ai 風の丸イニシャル)。
+function updateAuthStatus() {
+  const av = $("#railAvatar"); if (!av) return;
+  const on = isSignedIn();
+  av.hidden = !on;
+  if (on) {
+    const who = signedInName();
+    av.textContent = initialsOf(who);
+    av.title = `${who} — account`;
+  }
+}
+
+// logout: 認証情報をすべてリセット (identities / token / sessionStorage secrets)。
+async function doLogout() {
+  const ok = await modalConfirm({
+    title: "Sign out?",
+    message: "サインアウトして、保存されている認証情報 (identity / トークン / client_secret) をすべて消去します。",
+    confirmLabel: "Sign out",
+    danger: true
+  });
+  if (!ok) return;
+  // identity を全削除
+  state.identities = [];
+  // catalogs / bookmarks にキャッシュされた token も消す
+  (state.catalogs || []).forEach(c => { delete c.accessToken; delete c.tokenExpiresAt; });
+  (state.bookmarks || []).forEach(b => { delete b.auth; });
+  // sessionStorage の secret ストアを破棄
+  persist.clearSecrets();
+  state._sessionIdentityId = null;
+  state._authSkipped = false;
+  dirty();
+  renderIdentities();
+  renderCatalogs();
+  renderBookmarks();
+  updateAuthStatus();
+  applyCatalogGate();
+  showAuthGate();   // 再ログインを促す
 }
 
 // ═══════════════════════════════════════════════════════
