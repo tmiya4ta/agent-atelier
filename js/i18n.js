@@ -50,6 +50,9 @@ export const STRINGS = {
     "empty.f3.title":  "Inspect everything",
     "empty.f3.text":   "Live JSON-RPC traffic and AgentCard inspection",
 
+    // ── chat ──
+    "chat.thinking":    "Processing, please wait…",
+
     // ── rail ──
     "rail.connections": "connections",
     "rail.events":      "events",
@@ -306,6 +309,7 @@ export const STRINGS = {
 
   ja: {
     // ── 段階的に翻訳予定 (空 key は en にフォールバック) ──
+    "chat.thinking":    "処理中です。しばらくお待ちください。",
     "rail.connections": "接続",
     "rail.events":      "イベント",
     "rail.workspaces":  "ワークスペース",

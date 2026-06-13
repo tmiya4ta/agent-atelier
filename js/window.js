@@ -1,8 +1,22 @@
 // AgentWindow — フローティングウインドウ
 // 1接続=1ウインドウ。Chat / Agent Card / Debug / Settings の4タブ。
+import { t } from "./i18n.js";
 
 let zCounter = 10;
 let idCounter = 0;
+
+// MCP tool のカテゴリ別グリフ (read / write / other)
+const TOOL_GLYPH = {
+  read:  `<svg viewBox="0 0 16 16" width="13" height="13"><circle cx="3" cy="4" r="1" fill="currentColor"/><circle cx="3" cy="8" r="1" fill="currentColor"/><circle cx="3" cy="12" r="1" fill="currentColor"/><path d="M6 4h7M6 8h7M6 12h7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`,
+  write: `<svg viewBox="0 0 16 16" width="13" height="13"><path d="M10.5 2.5 L13.5 5.5 L6 13 L3 13 L3 10 Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><line x1="9" y1="4" x2="12" y2="7" stroke="currentColor" stroke-width="1.3"/></svg>`,
+  other: `<svg viewBox="0 0 16 16" width="13" height="13"><circle cx="8" cy="8" r="3.4" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="8" r="1" fill="currentColor"/></svg>`
+};
+function toolCategory(name) {
+  const verb = String(name || "").split(/[_\-]/)[0].toLowerCase();
+  if (/^(list|get|find|resolve|search|read|fetch|query|describe)$/.test(verb)) return "read";
+  if (/^(update|create|delete|set|add|remove|write|put|post|patch|insert|upsert)$/.test(verb)) return "write";
+  return "other";
+}
 
 export class AgentWindow {
   constructor({ adapter, layer, onClose, onFocus, onChange, instanceSuffix, restore, lockName, authApi }) {
@@ -912,9 +926,11 @@ export class AgentWindow {
     }
   }
 
-  // 停止ボタン押下: 進行中の adapter 送信を中断し、 typing 表示を消す。
+  // 停止ボタン押下: 進行中の adapter 送信を中断し、 実行中シナリオも止め、 typing 表示を消す。
   _stopInflight() {
     if (typeof this.adapter.abort === "function") this.adapter.abort();
+    // 実行中のシナリオ (ScriptRunner / loop) も停止する。 app 側が listen。
+    document.dispatchEvent(new CustomEvent("atelier:stop-scenario"));
     this._showTyping(false);
     this._setBusy(false);
     this._addSystemMessage("⏹ 停止しました");
@@ -923,8 +939,8 @@ export class AgentWindow {
   _showTyping(on) {
     if (on) this._setBusy(true); else this._setBusy(false);
     const stream = this.el.querySelector(".chat-stream");
-    let t = stream.querySelector(".msg-typing");
-    if (on && !t) {
+    let typingEl = stream.querySelector(".msg-typing");
+    if (on && !typingEl) {
       const author = this.name || this.adapter.agentCard?.name || "agent";
       const node = document.createElement("div");
       node.className = "msg msg-agent msg-typing";
@@ -934,13 +950,13 @@ export class AgentWindow {
           <span class="msg-author">${escapeHtml(author)}</span>
         </div>
         <div class="msg-body">
-          <span class="msg-typing-dots"><span></span><span></span><span></span></span>
+          <span class="msg-thinking">${escapeHtml(t("chat.thinking"))}</span>
         </div>
       `;
       stream.appendChild(node);
       this._scrollChat();
-    } else if (!on && t) {
-      t.remove();
+    } else if (!on && typingEl) {
+      typingEl.remove();
     }
   }
 
@@ -1369,14 +1385,36 @@ export class AgentWindow {
       list.innerHTML = '<div class="tools-empty">no tools</div>';
       return;
     }
+    // ヘッダ: 件数 + read-only 数のサマリ
+    const roCount = tools.filter(t => /READ-ONLY/i.test(t.description || "")).length;
+    const head = document.createElement("div");
+    head.className = "tools-head";
+    head.innerHTML =
+      `<span class="tools-head-count">${tools.length} tools</span>` +
+      (roCount ? `<span class="tools-head-ro">${roCount} read-only</span>` : "");
+    list.appendChild(head);
+
     for (const t of tools) {
+      const cat  = toolCategory(t.name);
+      const schema = t.inputSchema || t.input_schema || {};
+      const argc = Object.keys(schema.properties || {}).length;
+      const ro   = /READ-ONLY/i.test(t.description || "");
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "tool-item";
+      btn.className = "tool-item tool-cat-" + cat;
       btn.dataset.tool = t.name;
       btn.innerHTML = `
-        <span class="tool-item-name">${escapeHtml(t.name)}</span>
-        <span class="tool-item-desc">${escapeHtml(t.description || "")}</span>
+        <span class="tool-ico" aria-hidden="true">${TOOL_GLYPH[cat]}</span>
+        <span class="tool-item-main">
+          <span class="tool-item-name">${escapeHtml(t.name)}</span>
+          <span class="tool-item-desc">${escapeHtml(t.description || "")}</span>
+        </span>
+        <span class="tool-item-tags">
+          ${argc ? `<span class="tool-tag">${argc} arg${argc === 1 ? "" : "s"}</span>`
+                 : `<span class="tool-tag is-noargs">no args</span>`}
+          ${ro ? `<span class="tool-tag is-ro">read-only</span>` : ""}
+        </span>
+        <span class="tool-go" aria-hidden="true">→</span>
       `;
       list.appendChild(btn);
     }

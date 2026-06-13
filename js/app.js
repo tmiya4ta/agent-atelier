@@ -4474,6 +4474,15 @@ function dispatchScriptContextAction(act) {
   }
 }
 
+// 実行中シナリオを止める (loop も runner も)。 window の Stop ボタン等から呼ばれる。
+function stopRunningScenario() {
+  if (!state._script) return;
+  state._script.loopShouldStop = true;
+  state._script.runner?.stop?.();
+}
+// ウィンドウの Stop ボタン → シナリオも停止
+document.addEventListener("atelier:stop-scenario", stopRunningScenario);
+
 function wireScriptPanel() {
   $("#scriptCollapse").addEventListener("click", closeScriptPanel);
   $("#scriptRun").addEventListener("click",  runScript);
