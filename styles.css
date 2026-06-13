@@ -569,13 +569,17 @@ body.is-resizing-side .sidebar { transition: none !important; }
   transition: color 0.15s ease, background 0.15s ease;
 }
 .rail-ico:hover { color: var(--ink); background: var(--panel-soft); }
-.rail-ico.is-active { color: var(--ink-navy-2); background: var(--panel-soft); }
+.rail-ico.is-active {
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
 /* アクティブ時の左端アクセントバー */
 .rail-ico.is-active::before {
   content: "";
-  position: absolute; left: -7px; top: 7px; bottom: 7px;
-  width: 2.5px; border-radius: 2px;
-  background: var(--ink-navy-2);
+  position: absolute; left: -7px; top: 6px; bottom: 6px;
+  width: 3px; border-radius: 2px;
+  background: var(--accent);
 }
 
 /* ─── 右パネル ─── */
@@ -1610,7 +1614,7 @@ body.is-resizing-side .sidebar { transition: none !important; }
 .identity-list { display: flex; flex-direction: column; gap: 3px; }
 .catalog-item {
   display: grid;
-  grid-template-columns: 1fr auto auto auto;
+  grid-template-columns: 1fr auto auto auto auto;
   align-items: center;
   gap: 6px;
   padding: 6px 8px 6px 10px;
@@ -1948,6 +1952,7 @@ body.is-resizing-side .sidebar { transition: none !important; }
   text-align: left;
   border: 1px solid transparent;
 }
+.bc-dot { flex: 0 0 auto; }
 .bc-remove {
   display: grid; place-items: center;
   width: 16px; height: 16px;
@@ -2007,6 +2012,21 @@ body.is-resizing-side .sidebar { transition: none !important; }
   box-shadow: 0 0 0 1px var(--accent), 0 1px 2px rgba(0,22,74,.08);
 }
 /* ウインドウが開いていない bookmark — 灰色っぽくして「閉じている」とわかるように */
+/* 開いているウインドウがある接続: 白くハイライト + アクセントの縦バー */
+.conn-group.is-open {
+  background: var(--panel);
+  border-color: #BFE7F5;
+  box-shadow: 0 1px 0 rgba(0,22,74,.04);
+}
+.conn-group.is-open::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 6px; bottom: 6px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
 .conn-group.is-disconnected {
   background: var(--panel-soft);
   box-shadow: none;
@@ -2091,6 +2111,24 @@ body.is-resizing-side .sidebar { transition: none !important; }
 .catalog-item:hover .row-kebab,
 .script-item:hover  .row-kebab { opacity: 0.7; }
 .row-kebab:hover { background: var(--panel); color: var(--ink) !important; opacity: 1 !important; }
+
+/* 編集 (鉛筆): [+] と同じくらい主張する枠付きボタン */
+.row-edit {
+  display: grid; place-items: center;
+  width: 22px; height: 22px;
+  color: var(--ink-navy);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+.row-edit:hover {
+  color: var(--paper);
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-ink) 100%);
+  border-color: var(--accent);
+}
+.row-edit svg { display: block; }
 
 /* 行メニュー popover (Edit / Delete 等) */
 .row-menu {
@@ -2502,6 +2540,24 @@ body.is-resizing-side .sidebar { transition: none !important; }
 .conn-proto-badge[data-proto="slack"]  { color: #B07A1A; }
 .conn-proto-badge[data-proto="openai"] { color: var(--ok); }
 
+/* identity 行: 種別バッジを先頭に色分け表示 (Connections の proto バッジと同様) */
+.catalog-item.idn-item { grid-template-columns: auto 1fr auto auto; }
+.idn-kind-badge {
+  font-family: var(--f-mono);
+  font-size: calc(8.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--ink-4);
+  min-width: 30px;
+  text-align: left;
+}
+.idn-kind-badge[data-kind="cc"]     { color: var(--accent-ink); }
+.idn-kind-badge[data-kind="pwd"]    { color: #B07A1A; }
+.idn-kind-badge[data-kind="code"]   { color: var(--ok); }
+.idn-kind-badge[data-kind="jwt"]    { color: #8A5CF6; }
+.idn-kind-badge[data-kind="bearer"] { color: var(--ink-3); }
+
 /* ── mock (simulated) connection — 本物と一目で区別する ── */
 /* 行を薄い破線で囲い、左に "sim" のドット。本物のライブ接続と取り違えないように。 */
 .agent-item.is-mock {
@@ -2511,6 +2567,12 @@ body.is-resizing-side .sidebar { transition: none !important; }
 }
 .agent-item.is-mock:hover {
   border-color: color-mix(in srgb, var(--ink-4) 60%, transparent);
+}
+/* 開いている mock(sim) 接続も白くハイライト (is-mock の背景より優先) */
+.agent-item.is-mock.is-open {
+  background: var(--panel);
+  border-color: #BFE7F5;
+  box-shadow: 0 1px 0 rgba(0,22,74,.04);
 }
 /* mock のバッジは下線(破線)+ desaturate して "本物ではない" を示す */
 .conn-proto-badge.is-mock {
@@ -4128,6 +4190,8 @@ body.is-dark .tk-mock-text { color: #C8A85A; }
 .modal-bg-status.is-error { color: var(--err, #b14250); }
 .modal-bg-select { margin-bottom: 12px; }
 .modal-bg-or { margin-top: 2px; }
+.modal-bg-signin { display: inline-flex; align-items: center; gap: 7px; margin: 4px 0; }
+.modal-bg-signin .cat-bg-signin-dot { background: #fff; }
 
 .modal-foot {
   display: flex; align-items: center; justify-content: flex-end;
@@ -4636,6 +4700,20 @@ body.is-dark {
   --shadow-sm: 0 1px 0 rgba(0,0,0,.20), 0 1px 2px rgba(0,0,0,.30);
   --shadow-md: 0 10px 24px -8px rgba(0,0,0,.45), 0 2px 4px rgba(0,0,0,.30), 0 0 0 1px rgba(0,0,0,.25);
   --shadow-lg: 0 30px 60px -15px rgba(0,0,0,.55), 0 10px 20px -10px rgba(0,0,0,.35), 0 0 0 1px rgba(0,0,0,.30);
+}
+
+/* dark: [+] / 鉛筆 アイコンが --ink-navy でほぼ黒く見えないので明るく */
+body.is-dark .bookmark-new,
+body.is-dark .row-edit {
+  color: var(--ink-2);
+  background: var(--panel-soft);
+  border-color: var(--line);
+}
+body.is-dark .bookmark-new:hover,
+body.is-dark .row-edit:hover {
+  color: #fff;
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-ink) 100%);
+  border-color: var(--accent);
 }
 
 /* hardcoded アクセント淡 #BFE7F5 を一括で上書き (border-color のみ) */

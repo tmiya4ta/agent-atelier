@@ -229,12 +229,14 @@ export function modalPrompt({ title, label, placeholder, defaultValue, confirmLa
 }
 
 // modalBusinessGroup — business group を「1 枚で」選ばせる/入力させるモーダル。
-//   await modalBusinessGroup({ title, loadGroups })
+//   await modalBusinessGroup({ title, loadGroups, signIn })
 //     loadGroups: async () => [{id,name}]   (throw すると失敗扱い)
-//   挙動: 開いた直後にロード表示 → 成功なら select + 手入力テキスト併設、
-//         取得 0 件 or 失敗ならその旨を出してテキスト入力にフォールバック。
+//     signIn:     async () => void          (任意。 loadGroups が code:"REAUTH_REQUIRED" を
+//                                            投げたら「Sign in」ボタンを出し、 押下でこれを実行→再ロード)
+//   挙動: ロード表示 → 成功なら select + 手入力併設 / 0件 or 失敗はテキスト /
+//         認証必要なら Sign in ボタン (ユーザー操作で OAuth ポップアップを通す)。
 //   返り値: { input, bgId, bgName } または null (cancel)。
-export function modalBusinessGroup({ title, loadGroups } = {}) {
+export function modalBusinessGroup({ title, loadGroups, signIn } = {}) {
   return new Promise((resolve) => {
     const wrap = document.createElement("div");
     wrap.className = "modal-backdrop";
@@ -246,6 +248,7 @@ export function modalBusinessGroup({ title, loadGroups } = {}) {
         </header>
         <div class="modal-body">
           <p class="modal-msg modal-bg-status">Loading business groups…</p>
+          <button type="button" class="primary-btn modal-bg-signin" hidden><span class="cat-bg-signin-dot"></span> Sign in to load business groups <span class="arrow">→</span></button>
           <select class="modal-input modal-bg-select" aria-label="business group" hidden></select>
           <label class="modal-label modal-bg-or" hidden>or enter name / ID manually</label>
           <input class="modal-input modal-bg-text" type="text" autocomplete="off"
@@ -262,10 +265,11 @@ export function modalBusinessGroup({ title, loadGroups } = {}) {
     document.body.appendChild(wrap);
     requestAnimationFrame(() => wrap.classList.add("is-open"));
 
-    const status = wrap.querySelector(".modal-bg-status");
-    const sel    = wrap.querySelector(".modal-bg-select");
-    const orLbl  = wrap.querySelector(".modal-bg-or");
-    const text   = wrap.querySelector(".modal-bg-text");
+    const status   = wrap.querySelector(".modal-bg-status");
+    const signinEl = wrap.querySelector(".modal-bg-signin");
+    const sel      = wrap.querySelector(".modal-bg-select");
+    const orLbl    = wrap.querySelector(".modal-bg-or");
+    const text     = wrap.querySelector(".modal-bg-text");
 
     const close = (result) => {
       wrap.classList.remove("is-open");
@@ -298,8 +302,24 @@ export function modalBusinessGroup({ title, loadGroups } = {}) {
     document.addEventListener("keydown", onKey, true);
     _stackKeyHandler = onKey;
 
-    // 非同期で org 一覧をロード
-    (async () => {
+    const showSignIn = () => {
+      status.hidden = true;
+      sel.hidden = true; orLbl.hidden = true; text.hidden = true;
+      signinEl.hidden = false; signinEl.disabled = false;
+      signinEl.querySelector(".arrow")?.removeAttribute("hidden");
+    };
+    const fallbackToText = (msg, isErr) => {
+      signinEl.hidden = true;
+      status.hidden = false;
+      status.classList.toggle("is-error", !!isErr);
+      status.textContent = msg;
+      text.hidden = false; text.focus();
+    };
+
+    async function runLoad() {
+      status.hidden = false; status.classList.remove("is-error");
+      status.textContent = "Loading business groups…";
+      signinEl.hidden = true; sel.hidden = true; orLbl.hidden = true; text.hidden = true;
       try {
         const groups = (typeof loadGroups === "function") ? await loadGroups() : [];
         if (!wrap.isConnected) return;
@@ -310,22 +330,41 @@ export function modalBusinessGroup({ title, loadGroups } = {}) {
           sel.appendChild(head);
           groups.forEach(g => {
             const o = document.createElement("option");
-            o.value = g.id; o.textContent = g.name || g.id; o.dataset.name = g.name || "";
+            o.value = g.id; o.dataset.name = g.name || "";
+            o.textContent = (g.name || g.id) + (g.disabled ? "  (added)" : "");
+            if (g.disabled) o.disabled = true;
             sel.appendChild(o);
           });
           status.hidden = true;
           sel.hidden = false; orLbl.hidden = false; text.hidden = false;
           sel.focus();
         } else {
-          status.textContent = "No selectable business groups found — enter name / ID.";
-          text.hidden = false; text.focus();
+          fallbackToText("No selectable business groups found — enter name / ID.", false);
         }
       } catch (e) {
         if (!wrap.isConnected) return;
-        status.classList.add("is-error");
-        status.textContent = `Couldn't load business groups (${e?.message || e}). Enter name / ID manually.`;
-        text.hidden = false; text.focus();
+        if (e?.code === "REAUTH_REQUIRED" && typeof signIn === "function") {
+          status.hidden = false; status.classList.remove("is-error");
+          status.textContent = e.message || "Sign in to load your business groups.";
+          showSignIn();
+        } else {
+          fallbackToText(`Couldn't load business groups (${e?.message || e}). Enter name / ID manually.`, true);
+        }
       }
-    })();
+    }
+
+    signinEl.addEventListener("click", async () => {
+      signinEl.disabled = true;
+      signinEl.innerHTML = `<span class="cat-bg-signin-dot"></span> signing in…`;
+      try {
+        await signIn();                 // ユーザー操作起点なので OAuth ポップアップが通る
+        await runLoad();
+      } catch (e) {
+        signinEl.disabled = false;
+        signinEl.innerHTML = `Retry sign-in <span class="arrow">→</span>`;
+      }
+    });
+
+    runLoad();
   });
 }

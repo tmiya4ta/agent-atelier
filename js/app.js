@@ -113,6 +113,8 @@ function bookmarkKey(protoId, url) { return `${protoId}::${url || ""}`; }
 
 // 行末の常時表示ケバブ (⋮) ボタン — 全リスト共通。クリックで openRowMenu。
 const KEBAB_BTN_HTML = `<button class="row-kebab" title="More" aria-label="more actions"><svg viewBox="0 0 14 14" width="12" height="12"><circle cx="7" cy="3" r="1.2" fill="currentColor"/><circle cx="7" cy="7" r="1.2" fill="currentColor"/><circle cx="7" cy="11" r="1.2" fill="currentColor"/></svg></button>`;
+// 編集 (鉛筆) ボタン — 各リスト行に付け、 クリックで編集ダイアログを開く。
+const PENCIL_BTN_HTML = `<button class="row-edit" title="Edit" aria-label="edit"><svg viewBox="0 0 16 16" width="11" height="11"><path d="M10.5 2.5 L13.5 5.5 L6 13 L3 13 L3 10 Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><line x1="9" y1="4" x2="12" y2="7" stroke="currentColor" stroke-width="1.3"/></svg></button>`;
 
 // アンカー要素の近くに小さなメニューを出す。items = [{label, danger?, onClick}]。
 // 外側クリック / Esc / スクロールで閉じる。
@@ -698,7 +700,7 @@ function renderBookmarks() {
     li.className = "agent-item conn-group"
       + (canExpand ? " is-expandable" : "")
       + (expanded && canExpand ? " is-expanded" : "")
-      + (wins.length === 0 ? " is-disconnected" : "");
+      + (wins.length > 0 ? " is-open" : " is-disconnected");
     li.title = wins.length
       ? `${host}  ·  ${wins.length} window(s)`
       : `${host}  ·  no open window — click + to open`;
@@ -756,6 +758,7 @@ function renderBookmarks() {
       <button class="bookmark-new" title="${wins.length ? 'Open another window to the same agent' : 'Open a window'}" aria-label="new window">
         <svg viewBox="0 0 14 14" width="10" height="10"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
+      ${PENCIL_BTN_HTML}
       ${KEBAB_BTN_HTML}
     `;
     const doDelete = async () => {
@@ -773,6 +776,11 @@ function renderBookmarks() {
       renderBookmarks();
     };
     li.addEventListener("click", async (e) => {
+      if (e.target.closest(".row-edit")) {
+        e.stopPropagation();
+        openDialog({ editBookmark: b });
+        return;
+      }
       if (e.target.closest(".row-kebab")) {
         e.stopPropagation();
         openRowMenu(e.target.closest(".row-kebab"), [
@@ -2411,15 +2419,14 @@ function renderIdentities() {
 
   state.identities.forEach(idn => {
     const li = document.createElement("li");
-    li.className = "catalog-item";
+    li.className = "catalog-item idn-item";
     li.dataset.idnId = idn.id;
-    li.title = `${idn.name} · ${kindBadge(idn.kind)}`;
+    const badge = kindBadge(idn.kind);
+    li.title = `${idn.name} · ${badge}`;
     li.innerHTML = `
+      <span class="idn-kind-badge" data-kind="${escapeHtml(badge)}" title="${escapeHtml(badge)}">${escapeHtml(badge)}</span>
       <span class="catalog-name">${escapeHtml(idn.name)}</span>
-      <span class="catalog-meta">
-        <span class="catalog-status-dot"></span>
-        <span style="font-family:var(--f-mono);font-size:calc(9px * var(--fs,1));color:var(--ink-3);background:var(--paper);border:1px solid var(--line);padding:1px 5px;border-radius:3px;letter-spacing:0.04em;">${escapeHtml(kindBadge(idn.kind))}</span>
-      </span>
+      ${PENCIL_BTN_HTML}
       ${KEBAB_BTN_HTML}
     `;
     const doDelete = async () => {
@@ -2438,6 +2445,11 @@ function renderIdentities() {
       dirty();
     };
     li.addEventListener("click", (e) => {
+      if (e.target.closest(".row-edit")) {
+        e.stopPropagation();
+        openIdentityDialog(idn);
+        return;
+      }
       if (e.target.closest(".row-kebab")) {
         e.stopPropagation();
         openRowMenu(e.target.closest(".row-kebab"), [
@@ -2858,12 +2870,12 @@ function renderCatalogs() {
     li.innerHTML = `
       <span class="catalog-name" title="Click to toggle">${escapeHtml(c.name)}</span>
       <span class="catalog-meta">
-        <span class="catalog-status-dot ${statusCls}" title="${escapeHtml(c.status || "idle")}"></span>
         <span class="bm-count" title="${c.businessGroups.length} BG">${c.businessGroups.length}</span>
       </span>
       <button class="bookmark-new" title="Add business group" aria-label="add bg">
         <svg viewBox="0 0 14 14" width="10" height="10"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
+      ${PENCIL_BTN_HTML}
       ${KEBAB_BTN_HTML}
     `;
     const doDelete = async () => {
@@ -2880,6 +2892,11 @@ function renderCatalogs() {
       dirty();
     };
     li.addEventListener("click", async (e) => {
+      if (e.target.closest(".row-edit")) {
+        e.stopPropagation();
+        openCatalogDialog(c);
+        return;
+      }
       if (e.target.closest(".row-kebab")) {
         e.stopPropagation();
         openRowMenu(e.target.closest(".row-kebab"), [
@@ -2921,9 +2938,14 @@ function renderCatalogs() {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "bookmark-child" + (isActive ? " is-active" : "");
+        // BG ごとのステータス: 読込済み=connected(緑) / catalog error=赤 / 未読込=idle
+        const bgLoaded = Array.isArray(bg.assets) || Array.isArray(bg.rtmApps);
+        const bgStatusCls = c.status === "error" ? "is-error" : (bgLoaded ? "is-connected" : "");
+        const bgStatusTitle = c.status === "error" ? "error" : (bgLoaded ? "loaded" : "not loaded yet");
         btn.title = `${bg.bgName || bg.input}${bg.bgId ? " · " + bg.bgId : ""}`;
         btn.innerHTML = `
           <span class="bc-branch">${isLast ? "└─" : "├─"}</span>
+          <span class="catalog-status-dot bc-dot ${bgStatusCls}" title="${bgStatusTitle}"></span>
           <span class="bc-name">${escapeHtml(bg.bgName || bg.input)}</span>
           <button class="bc-remove" title="Remove this business group" aria-label="remove bg">
             <svg viewBox="0 0 12 12" width="8" height="8"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/><line x1="9.5" y1="2.5" x2="2.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/></svg>
@@ -2966,19 +2988,15 @@ function renderCatalogs() {
 // catalog の identity から「状態を見て」トークンを確保する。
 //  - 有効ならそのまま / 期限切れは更新 (cc/password/jwt/refresh_token はサイレント)
 //  - authcode で更新不可 → 対話的フロー (ユーザー起点の操作なのでここでは起動して良い)
+// catalog の identity から「状態を見て」トークンを確保する。
+//  - 有効ならそのまま / 期限切れは更新 (cc/password/jwt/refresh_token はサイレント)
+//  - authcode で更新不可 → REAUTH_REQUIRED を投げる (呼び出し側がユーザー操作で sign-in)
 async function acquireCatalogToken(cat) {
   const idn = identityById(cat.authRef || "");
   if (!idn) throw new Error("no identity on this catalog");
-  let a;
-  try {
-    a = await ensureFreshAuth(cat.authRef);
-  } catch (e) {
-    if (e?.code === "REAUTH_REQUIRED") a = await reauthIdentity(cat.authRef);  // OAuth フロー起動
-    else throw e;
-  }
+  const a = await ensureFreshAuth(cat.authRef);   // REAUTH_REQUIRED はそのまま伝播
   const token = a?.auth || idn.accessToken;
   if (!token) throw new Error("authentication failed");
-  // catalog にも反映 (drawer 等の後続呼び出しで再利用)
   if (idn.accessToken) { cat.accessToken = idn.accessToken; cat.tokenExpiresAt = idn.tokenExpiresAt; }
   return token;
 }
@@ -2999,9 +3017,14 @@ async function addBusinessGroupToCatalog(cat) {
       const groups = await fetchCatalogBgList(cat);
       const added = new Set(cat.businessGroups.flatMap(b =>
         [b.bgId, b.input].filter(Boolean).map(s => String(s).toLowerCase())));
-      return groups.filter(g =>
-        !added.has(String(g.id).toLowerCase()) && !added.has(String(g.name || "").toLowerCase()));
-    }
+      // 追加済みは除外せず disabled で残す (org 一覧は常に dropdown 表示)。
+      return groups.map(g => ({
+        ...g,
+        disabled: added.has(String(g.id).toLowerCase()) || added.has(String(g.name || "").toLowerCase())
+      }));
+    },
+    // authcode で要認証のときモーダルが出す「Sign in」用 (ユーザー操作で OAuth ポップアップ)
+    signIn: () => reauthIdentity(cat.authRef)
   });
   if (!picked) return;                       // cancel
   const input = picked.input;
