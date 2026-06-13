@@ -1135,9 +1135,15 @@ async function fetchPasswordGrantToken(idn) {
       method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString()
     });
   }
-  const data = await res.json();
-  if (!res.ok || data.error) {
-    throw new Error(data.error_description || data.error || data.message || `HTTP ${res.status}`);
+  // Anypoint /accounts/login は失敗時に JSON でなく text/html を返すので、
+  // 安全に parse する (parse 失敗時は本文テキストをエラーに添える)。
+  const raw = await res.text();
+  let data = {};
+  try { data = raw ? JSON.parse(raw) : {}; } catch { data = {}; }
+  if (!res.ok || data.error || !data.access_token) {
+    const detail = data.error_description || data.error || data.message
+      || (raw && !data.access_token ? raw.replace(/<[^>]+>/g, "").trim().slice(0, 120) : "");
+    throw new Error(`HTTP ${res.status}${detail ? ` · ${detail}` : ""}`);
   }
   idn.accessToken    = data.access_token;
   idn.tokenExpiresAt = Date.now() + Math.max(60, (data.expires_in || 3600) - 60) * 1000;
