@@ -49,9 +49,9 @@ class Handler(SimpleHTTPRequestHandler):
     # ─── CORS ─────
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers",
-                         "Content-Type, Authorization, X-Requested-With, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID")
+                         "Content-Type, Authorization, X-Requested-With, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID, X-Clouderby-Session-Id")
         # MCP セッション等の応答ヘッダをブラウザ JS から読めるよう公開する
         self.send_header("Access-Control-Expose-Headers", "Mcp-Session-Id, MCP-Protocol-Version")
         self.send_header("Access-Control-Max-Age", "86400")
@@ -69,6 +69,16 @@ class Handler(SimpleHTTPRequestHandler):
     def do_POST(self):
         if self.path.startswith("/proxy?") or self.path == "/proxy":
             return self._proxy("POST")
+        self.send_response(404); self._cors(); self.end_headers()
+
+    def do_PUT(self):
+        if self.path.startswith("/proxy?") or self.path == "/proxy":
+            return self._proxy("PUT")
+        self.send_response(404); self._cors(); self.end_headers()
+
+    def do_DELETE(self):
+        if self.path.startswith("/proxy?") or self.path == "/proxy":
+            return self._proxy("DELETE")
         self.send_response(404); self._cors(); self.end_headers()
 
     def end_headers(self):
@@ -95,7 +105,8 @@ class Handler(SimpleHTTPRequestHandler):
         # Mcp-Session-Id / MCP-Protocol-Version / Last-Event-ID は MCP Streamable HTTP の
         # セッション維持に必須 (initialize 後の tools/list 等で要求される)。
         for h in ("Content-Type", "Authorization", "Accept", "X-Atelier-Stream",
-                  "Mcp-Session-Id", "MCP-Protocol-Version", "Last-Event-ID"):
+                  "Mcp-Session-Id", "MCP-Protocol-Version", "Last-Event-ID",
+                  "X-Clouderby-Session-Id"):
             v = self.headers.get(h)
             if v: req.add_header(h, v)
 

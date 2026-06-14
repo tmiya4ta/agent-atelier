@@ -5,8 +5,9 @@
 import { PROTOCOLS, getProtocol }           from "./protocols/index.js";
 import { mockUrl }                          from "./protocols/mock.js";
 import { AgentWindow }                      from "./window.js";
+import { DbWindow }                         from "./dbwindow.js";
 import * as persist                         from "./persist.js";
-import { modalConfirm, modalAlert, modalPrompt, modalChoice, modalBusinessGroup, modalExport } from "./modal.js";
+import { modalConfirm, modalAlert, modalPrompt, modalChoice, modalBusinessGroup, modalExport, modalImportScope } from "./modal.js";
 import { encryptText, decryptText }          from "./cryptobox.js";
 import { runAuthCodeFlow, redirectUri }     from "./oauth.js";
 import { parseScript, parseMocks, ScriptRunner }        from "./script.js";
@@ -475,8 +476,11 @@ function restoreFromSaved(saved) {
         channel: hydrated.config?.channel,
         emulate:   hydrated.config?.emulate,
         mockTools: hydrated.config?.mockTools,
-        mockReply: hydrated.config?.mockReply
-      }, { restore: { pos: hydrated.pos, activeTab: hydrated.activeTab }, skipDirty: true });
+        mockReply: hydrated.config?.mockReply,
+        database:  hydrated.config?.database,
+        user:      hydrated.config?.user,
+        password:  hydrated.config?.password
+      }, { restore: { pos: hydrated.pos, activeTab: hydrated.activeTab, pinned: hydrated.pinned, sql: hydrated.sql }, skipDirty: true });
     });
   });
   // アクティブWSを最後にスイッチ
@@ -616,12 +620,12 @@ function wireWsTabs() {
 }
 
 // 「コネクション登録」エントリの追加 / 上書き。 ウインドウの open/close と独立。
-function upsertBookmark({ protoId, url, name, auth, authRef, persona, channel, emulate, mockTools, mockReply }) {
+function upsertBookmark({ protoId, url, name, auth, authRef, persona, channel, emulate, mockTools, mockReply, database, user, password }) {
   if (!protoId || !url) return;
   const key = bookmarkKey(protoId, url);
   state.bookmarks = state.bookmarks || [];
   const idx = state.bookmarks.findIndex(b => b.key === key);
-  const entry = { key, protoId, url, name, auth, authRef, persona, channel, emulate, mockTools, mockReply };
+  const entry = { key, protoId, url, name, auth, authRef, persona, channel, emulate, mockTools, mockReply, database, user, password };
   if (idx >= 0) {
     // 既存はユーザーが付けた display name 等を尊重しつつ最新値で更新
     const prev = state.bookmarks[idx];
@@ -786,7 +790,7 @@ function renderBookmarks() {
         e.stopPropagation();
         openRowMenu(e.target.closest(".row-kebab"), [
           { label: "Edit",        onClick: () => openDialog({ editBookmark: b }) },
-          { label: "New window",  onClick: () => connect({ protoId: b.protoId, url: b.url, name: displayName, auth: b.auth, authRef: b.authRef, persona: b.persona, channel: b.channel, emulate: b.emulate, mockTools: b.mockTools, mockReply: b.mockReply }, { lockName: true }) },
+          { label: "New window",  onClick: () => connect({ protoId: b.protoId, url: b.url, name: displayName, auth: b.auth, authRef: b.authRef, persona: b.persona, channel: b.channel, emulate: b.emulate, mockTools: b.mockTools, mockReply: b.mockReply, database: b.database, user: b.user, password: b.password }, { lockName: true }) },
           { label: "Delete", danger: true, onClick: doDelete }
         ]);
         return;
@@ -803,7 +807,10 @@ function renderBookmarks() {
           channel: b.channel,
           emulate:   b.emulate,
           mockTools: b.mockTools,
-          mockReply: b.mockReply
+          mockReply: b.mockReply,
+          database:  b.database,
+          user:      b.user,
+          password:  b.password
         }, { lockName: true });
         return;
       }
@@ -813,7 +820,8 @@ function renderBookmarks() {
         connect({
           protoId: b.protoId, url: b.url, name: displayName,
           auth: b.auth, authRef: b.authRef, persona: b.persona, channel: b.channel,
-          emulate: b.emulate, mockTools: b.mockTools, mockReply: b.mockReply
+          emulate: b.emulate, mockTools: b.mockTools, mockReply: b.mockReply,
+          database: b.database, user: b.user, password: b.password
         }, { lockName: true });
         return;
       }
@@ -3499,6 +3507,10 @@ function applyProtoSpecificFields() {
   const isSlack = proto === "slack";
   const isMcp   = proto === "mcp";
   const isMock  = proto === "mock";
+  const isDb    = proto === "db";
+  // DB (clouderby) 専用フィールド (database / user / password) の表示制御
+  const dbFields = $("#dlgDbFields");
+  if (dbFields) dbFields.hidden = !isDb;
   // CHANNEL は Slack 専用。 ただし A2A/MCP/Slack は本体高さを揃えたい
   // (中央寄せ時に protocol 切替で上下に動かないように) ので、 Slack 以外でも
   // 行の領域だけ確保して中身を不可視にする。 Mock はフォーム構成が大きく
@@ -3538,10 +3550,14 @@ function applyProtoSpecificFields() {
   const isEditing = !!state._editingBookmarkKey;
   if (urlLabel && isMock && isEditing) urlLabel.textContent = "agent id";
   if (urlHint  && isMock && isEditing) urlHint.textContent  = "mock connection key (readonly)";
+  // DB: url 欄は clouderby サーバの base URL。auth(identity)/channel/test/advanced は不要。
+  if (urlLabel && isDb) urlLabel.textContent = "server url";
+  if (urlHint  && isDb) urlHint.textContent  = "clouderby (JDBC over HTTP) base URL";
+  if (urlPrefix && isDb) urlPrefix.textContent = "url";
   if (nameField) nameField.hidden = isMock && !isEditing;
-  if (authField) authField.hidden = isMock;
-  if (testBtn)   testBtn.hidden   = isMock;
-  if (advanced)  advanced.hidden  = isMock;
+  if (authField) authField.hidden = isMock || isDb;   // DB は inline user/password を使う
+  if (testBtn)   testBtn.hidden   = isMock || isDb;
+  if (advanced)  advanced.hidden  = isMock || isDb;
 
   // placeholder の切替
   const urlInput  = $("#dlgUrl");
@@ -3558,6 +3574,9 @@ function applyProtoSpecificFields() {
     } else if (isMcp) {
       urlInput.placeholder = "https://example.com/mcp   (MCP JSON-RPC endpoint)";
       urlInput.title = "Point at the MCP server's JSON-RPC endpoint (e.g., https://atelier-mcp-mdm-znutqp.pnwfdv.jpn-e1.cloudhub.io/mcp).";
+    } else if (isDb) {
+      urlInput.placeholder = "https://mule-clouderby-xxxx.cloudhub.io   (clouderby base URL)";
+      urlInput.title = "clouderby (JDBC over HTTP) サーバの base URL。/sessions /queries /metadata を提供するエンドポイント。";
     } else {
       urlInput.placeholder = "https://api.example.com";
       urlInput.title = "Base URL is fine — Atelier appends /.well-known/agent-card.json automatically (falls back to /.well-known/agent.json for the legacy spec).";
@@ -4727,87 +4746,54 @@ function wireBackup() {
 }
 
 // ─── shared import dispatcher ───────────────────────────
-// scope を聞く。 repository フローと同じ「Import 1 ボタン + "Scenarios only" チェック」に統一。
-//   チェック ON → scenarios のみ merge / OFF → everything 置換 (reload)。
-// 戻り値: "scripts" | "all" | null(キャンセル)。
-async function chooseImportScope() {
-  const result = await modalChoice({
-    title:   "What to import?",
-    message: "Pick the scope of this import.",
-    choices: [
-      { id: "import", label: "Import", description: "Apply this snapshot" }
-    ],
-    extras: [
-      { id: "scriptsOnly", label: "Scenarios only", description: "Merge scenarios only — keep current connections, no reload", defaultChecked: true }
-    ]
-  });
-  if (!result) return null;
-  return result.extras?.scriptsOnly ? "scripts" : "all";
-}
-
+// scope (+ 暗号化なら passphrase) は modalImportScope で 1 枚にまとめて聞く。
 // Returns true if import happened (so caller can persist URL history etc.).
 async function applyImport(text, sourceLabel, presetScope) {
-  // 暗号化ファイル (Secret 込み export) なら passphrase で復号してから取り込む。
   let forceKeepSecrets = false;
-  try {
-    const head = JSON.parse(text);
-    if (head && head.encrypted) {
-      const pass = await modalPrompt({
-        title:        "Passphrase",
-        label:        "This file is encrypted. Enter the passphrase used when it was exported.",
-        placeholder:  "passphrase",
-        confirmLabel: "Decrypt & import"
-      });
-      if (!pass) return false;
-      try { text = await decryptText(pass, head); forceKeepSecrets = true; }
+  let head = null, encrypted = false;
+  try { head = JSON.parse(text); encrypted = !!(head && head.encrypted); } catch {}
+
+  // scope 選択。 暗号化ファイルなら同じダイアログ内で passphrase も入力させる
+  // (ダイアログを 1 枚に減らす)。 repository フローは presetScope 済みなので省略。
+  let scope = presetScope;
+  if (!scope) {
+    const r = await modalImportScope({ encrypted });
+    if (!r) return false;
+    scope = r.scope;
+    if (encrypted) {
+      try { text = await decryptText(r.passphrase, head); forceKeepSecrets = true; }
       catch { await modalAlert({ title: "Decryption failed", message: "Wrong passphrase or the file is corrupted." }); return false; }
     }
-  } catch {}
-  // presetScope が渡されたら scope ダイアログを省略 (repository フローが
-  // "Scenarios only" チェックボックスで既に決めているケース)。
-  const scope = presetScope || await chooseImportScope();
-  if (!scope) return false;
-  if (scope === "all") {
-    const ok = await modalConfirm({
-      title:        "Replace everything?",
-      message:      `Replace current connections, catalogs and scenarios with ${sourceLabel}? The page will reload.`,
-      confirmLabel: "Replace",
-      danger:       true
+  } else if (encrypted) {
+    // presetScope だが暗号化 (まれ) → passphrase だけ単独で聞く
+    const pass = await modalPrompt({
+      title: "Passphrase", label: "This file is encrypted. Enter the passphrase used when it was exported.",
+      placeholder: "passphrase", confirmLabel: "Decrypt & import"
     });
-    if (!ok) return false;
-    // 暗号化ファイルを復号した場合は passphrase 入力時点で復元の意思があるので keepSecrets。
-    // 平文に includesSecrets がある (旧/手動) 場合だけ確認する。
-    let keepSecrets = forceKeepSecrets;
-    if (!keepSecrets) {
-      try {
-        const parsed = JSON.parse(text);
-        if (parsed && parsed.includesSecrets) {
-          keepSecrets = await modalConfirm({
-            title:        "Restore credentials too?",
-            message:      "This file contains client secrets / access tokens. Restore them?\n(Secrets are kept in sessionStorage, not written to disk in plain text.)",
-            confirmLabel: "Restore credentials",
-            cancelLabel:  "Settings only (no secrets)",
-            danger:       true
-          });
-        }
-      } catch {}
-    }
+    if (!pass) return false;
+    try { text = await decryptText(pass, head); forceKeepSecrets = true; }
+    catch { await modalAlert({ title: "Decryption failed", message: "Wrong passphrase or the file is corrupted." }); return false; }
+  }
+  if (scope === "all") {
+    // scope chooser (or repository の "Scenarios only" チェック) が既に確認を兼ねるので、
+    // 追加の「Replace everything?」確認は出さない。 暗号化を復号した自分のバックアップは
+    // secret も復元し安全検査をスキップ。 それ以外は危険検出時のみ確認する。
     try {
-      persist.importJson(text, { keepSecrets });
+      persist.importJson(text, { keepSecrets: forceKeepSecrets, allowOverride: forceKeepSecrets });
     } catch (e) {
       if (e.code === "IMPORT_UNSAFE") {
         const proceed = await modalConfirm({
-          title:        "Snapshot に注意点があります",
-          message:      "次の項目が検出されました。 信頼できる発行元の snapshot か確認してください:\n\n  - " +
+          title:        "Snapshot has warnings",
+          message:      "The following were detected — make sure this snapshot is from a source you trust:\n\n  - " +
                         (e.warnings || []).join("\n  - ") +
-                        "\n\nそれでも import しますか？",
-          confirmLabel: "import を続行",
+                        "\n\nImport anyway?",
+          confirmLabel: "Import anyway",
           danger:       true
         });
         if (!proceed) return false;
-        persist.importJson(text, { allowOverride: true, keepSecrets });
+        persist.importJson(text, { allowOverride: true, keepSecrets: forceKeepSecrets });
       } else {
-        await modalAlert({ title: "Import に失敗しました", message: String(e.message || e) });
+        await modalAlert({ title: "Import failed", message: String(e.message || e) });
         return false;
       }
     }
@@ -5401,6 +5387,10 @@ function openDialog(opts = {}) {
   $("#dlgUrl").value  = editB ? (editB.url || "") : "";
   $("#dlgName").value = editB ? (editB.name || "") : "";
   if ($("#dlgChannel")) $("#dlgChannel").value = editB ? (editB.channel || "") : "";
+  // DB (clouderby) fields
+  if ($("#dlgDbDatabase")) $("#dlgDbDatabase").value = editB ? (editB.database || "") : "";
+  if ($("#dlgDbUser"))     $("#dlgDbUser").value     = editB ? (editB.user || "") : "";
+  if ($("#dlgDbPassword")) $("#dlgDbPassword").value = editB ? (editB.password || "") : "";
 
   // 編集モードの見た目: title / CTA / proto と url をロック
   const eyebrow = document.querySelector("#connectDialog .dialog-eyebrow");
@@ -5588,6 +5578,10 @@ async function submitDialog() {
   const name = isMock ? raw : $("#dlgName").value.trim();
   const authRef = $("#dlgAuthRef")?.value || "";
   const channel = $("#dlgChannel")?.value.trim().replace(/^#/, "") || "";
+  const isDb     = state.selectedProto === "db";
+  const dbDatabase = $("#dlgDbDatabase")?.value.trim() || undefined;
+  const dbUser     = $("#dlgDbUser")?.value.trim() || undefined;
+  const dbPassword = $("#dlgDbPassword")?.value || undefined;   // password は trim しない
   if (!raw) {
     $("#dlgUrl").focus();
     return;
@@ -5607,6 +5601,11 @@ async function submitDialog() {
       b.name = newName;
       b.authRef = cleanAuthRef;
       if (state.selectedProto === "slack") b.channel = channel || "general";
+      if (isDb) {
+        b.database = dbDatabase || "default";
+        b.user     = dbUser;
+        if (dbPassword) b.password = dbPassword;   // 空入力なら既存 password を保持
+      }
       // 開いているウインドウを新しい auth/name で再接続
       const wins = state.workspaces.flatMap(w => w.windows)
         .filter(w => w.protoId === b.protoId && w.adapter.config.url === b.url);
@@ -5616,6 +5615,11 @@ async function submitDialog() {
         win.adapter.config.authRef = cleanAuthRef;
         win.adapter.config.auth = resolved.auth;
         win.adapter.config.authHeaders = resolved.authHeaders;
+        if (isDb && win.adapter.client) {
+          // clouderby クライアントの接続情報を更新してセッション張り直し
+          Object.assign(win.adapter.config, { database: b.database, user: b.user, password: b.password });
+          Object.assign(win.adapter.client, { database: b.database, user: b.user, password: b.password, sessionId: null });
+        }
         try { await win.adapter.connect(); } catch (e) { console.warn("reconnect after edit failed:", e); }
       }
     }
@@ -5635,7 +5639,10 @@ async function submitDialog() {
     name: name || hostFromUrl(url) || "Untitled",
     authRef: cleanAuthRef,
     emulate,
-    channel: state.selectedProto === "slack" ? (channel || "general") : undefined
+    channel: state.selectedProto === "slack" ? (channel || "general") : undefined,
+    database: isDb ? (dbDatabase || "default") : undefined,
+    user:     isDb ? dbUser : undefined,
+    password: isDb ? dbPassword : undefined
   });
   btn.disabled = false;
 
@@ -5645,7 +5652,7 @@ async function submitDialog() {
 }
 
 // ─── Connect ────────────────────────────────────────
-async function connect({ protoId, url, name, auth, authRef, persona, channel, emulate, mockTools, mockReply }, opts = {}) {
+async function connect({ protoId, url, name, auth, authRef, persona, channel, emulate, mockTools, mockReply, database, user, password }, opts = {}) {
   const proto = getProtocol(protoId);
   if (!proto || !proto.AdapterClass) {
     await modalAlert({
@@ -5673,6 +5680,7 @@ async function connect({ protoId, url, name, auth, authRef, persona, channel, em
   const resolved = await resolveAuthForConnection({ authRef, auth });
   const adapter = new proto.AdapterClass({
     url, name, persona, channel, emulate, mockTools, mockReply,
+    database, user, password,   // DB (clouderby) 用 — password は secret 扱い (sessionStorage)
     auth: resolved.auth,
     authHeaders: resolved.authHeaders,
     authRef,
@@ -5696,29 +5704,43 @@ async function connect({ protoId, url, name, auth, authRef, persona, channel, em
     }
   }
 
-  const win = new AgentWindow({
-    adapter,
-    layer: ws.layer,
-    onClose: removeWindow,
-    onFocus: () => {},
-    onChange: () => { dirty(); renderBookmarks(); },  // display name 変更等を左サイドバーに即反映
-    instanceSuffix,
-    restore: opts.restore,
-    // ユーザが connect dialog で display name を明示入力した場合、 AgentCard.name で上書きしない
-    lockName: !!opts.lockName || !!(name && name.trim()),
-    // settings タブの Authorization を identity から選べるようにするためのフック
-    authApi: {
-      list:    () => state.identities || [],
-      badge:   (kind) => kindBadge(kind),
-      resolve: (authRef) => resolveAuthForConnection({ authRef })
-    }
-  });
+  let win;
+  if (protoId === "db") {
+    // DB は chat ではなく SQL ワークスペース。chrome は共通だが別 window クラス。
+    win = new DbWindow({
+      adapter,
+      layer: ws.layer,
+      onClose: removeWindow,
+      onFocus: () => {},
+      onChange: () => { dirty(); renderBookmarks(); },
+      instanceSuffix,
+      restore: opts.restore
+    });
+  } else {
+    win = new AgentWindow({
+      adapter,
+      layer: ws.layer,
+      onClose: removeWindow,
+      onFocus: () => {},
+      onChange: () => { dirty(); renderBookmarks(); },  // display name 変更等を左サイドバーに即反映
+      instanceSuffix,
+      restore: opts.restore,
+      // ユーザが connect dialog で display name を明示入力した場合、 AgentCard.name で上書きしない
+      lockName: !!opts.lockName || !!(name && name.trim()),
+      // settings タブの Authorization を identity から選べるようにするためのフック
+      authApi: {
+        list:    () => state.identities || [],
+        badge:   (kind) => kindBadge(kind),
+        resolve: (authRef) => resolveAuthForConnection({ authRef })
+      }
+    });
+  }
   win._wsId = ws.id;
   ws.windows.push(win);
 
   // bookmark 登録: 同じ proto+url が無ければ追加、 あれば最新の name/authRef/etc に更新
   upsertBookmark({
-    protoId, url, name, auth, authRef, persona, channel, emulate, mockTools, mockReply
+    protoId, url, name, auth, authRef, persona, channel, emulate, mockTools, mockReply, database, user, password
   });
 
   renderTabs();

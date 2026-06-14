@@ -5,6 +5,7 @@ import { A2AAdapter }   from "./a2a.js";
 import { SlackAdapter } from "./slack.js";
 import { MCPAdapter }   from "./mcp.js";
 import { MockAdapter }  from "./mock.js";
+import { DbAdapter }    from "./db.js";
 
 export const PROTOCOLS = [
   {
@@ -29,6 +30,14 @@ export const PROTOCOLS = [
     sub: "model context",
     description: "Model Context Protocol · JSON-RPC 2.0 over HTTP",
     AdapterClass: MCPAdapter,
+    status: "ready"
+  },
+  {
+    id: "db",
+    label: "DB",
+    sub: "sql · jdbc/http",
+    description: "Database client · clouderby (JDBC over HTTP) · SQL editor + result grid",
+    AdapterClass: DbAdapter,
     status: "ready"
   },
   {

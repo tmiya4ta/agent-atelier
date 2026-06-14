@@ -86,7 +86,9 @@ function snapshotWindow(win) {
       channel: cfg.channel,
       emulate:   cfg.emulate,    // mock が装うプロトコル (a2a/mcp)
       mockTools: cfg.mockTools,  // mock(mcp) のツール定義
-      mockReply: cfg.mockReply   // mock 手入力時の定型応答 (担当範囲 + 振り先)
+      mockReply: cfg.mockReply,  // mock 手入力時の定型応答 (担当範囲 + 振り先)
+      database:  cfg.database,    // DB (clouderby) — 非 secret
+      user:      cfg.user         // DB user — 非 secret (password は上で sessionStorage 行き)
     },
     pos: {
       left:   win.el.style.left,
@@ -96,6 +98,8 @@ function snapshotWindow(win) {
       zIndex: win.el.style.zIndex
     },
     activeTab: win.el.querySelector(".aw-tab.is-active")?.dataset.tab || "chat",
+    // DB window はエディタ内容を復元時に戻す
+    sql: typeof win.currentSql === "function" ? win.currentSql() : undefined,
     pinned: !!win.pinned
   };
 }
