@@ -2,8 +2,11 @@
 
 **Atelier** は、複数のエージェントを 1 つの画面でまとめて扱うためのワークベンチです。
 ブラウザ上にフローティングウィンドウを並べ、**A2A / MCP / Slack** の各サーバへ同時に接続できます。
-接続 1 つにつき、ウィンドウ 1 つ。各ウィンドウではチャット・Agent Card・デバッグ（生の RPC フレーム）・設定を
-タブで切り替えながら、複数のエージェントを行き来して操作できます。プロトコルは A2A を中核に据えています。
+さらに **SQL データベース（clouderby = JDBC over HTTP）** にも接続でき、SQL エディタ + 結果グリッド +
+スキーマツリーの **DB ワークベンチ**として使えます。
+接続 1 つにつき、ウィンドウ 1 つ。エージェントウィンドウではチャット・Agent Card・デバッグ（生の RPC
+フレーム）・設定をタブで切り替えながら操作でき、DB ウィンドウでは SQL を実行して結果を表で確認できます。
+プロトコルは A2A を中核に据えています。
 
 ![Atelier — 複数のエージェントウィンドウを並べた画面（保険シナリオの 6 部門を表示）](docs/img/ws-departments.png)
 
@@ -69,7 +72,8 @@ python3 server/dev-server.py --port 8000
 |---|---|
 | **マルチウィンドウ** | フローティングウィンドウを drag / resize / tile / ピン留め。1 接続 1 ウィンドウ |
 | **ワークスペース** | 複数の作業空間をタブで切替（`⌘T` 追加、`⌘⇧[` / `⌘⇧]` 移動） |
-| **マルチプロトコル** | A2A / MCP / Slack を同一画面で。プラガブルな adapter 層（`js/protocols/`） |
+| **マルチプロトコル** | A2A / MCP / Slack / Mock を同一画面で。プラガブルな adapter 層（`js/protocols/`） |
+| **DB ワークベンチ** | clouderby（JDBC over HTTP）に接続。スキーマツリー + SQL エディタ + 結果グリッド。Anypoint からデプロイ済みアプリを選んで URL 自動入力（Anypoint UI 不要）。`test` で接続確認 |
 | **Connections** sidebar | ライブウィンドウを proto+URL で group 化、`+` で同じ agent の別ウィンドウ |
 | **Catalogs** sidebar | Anypoint Platform OAuth（Client Credentials / PKCE）で Exchange の agent asset を探索・接続 |
 | **Scripts** sidebar + Script Panel | 会話 DSL を複数管理・編集・実行。auto-loop、シンタックスハイライト、補完チップ |
@@ -84,12 +88,41 @@ python3 server/dev-server.py --port 8000
 
 `js/protocols/index.js` のレジストリで管理。新規プロトコルはここに 1 エントリ追加すれば UI に自動反映されます。
 
+表示順は 1 段目 A2A / MCP / Slack / Mock、2 段目 DB。
+
 | ID | ラベル | 状態 | 概要 |
 |---|---|---|---|
 | `a2a` | A2A | ✅ ready | Google Agent2Agent。JSON-RPC over HTTP + `agent-card.json` discovery。SSE ストリーミング対応 |
 | `mcp` | MCP | ✅ ready | Model Context Protocol。Streamable HTTP（JSON / SSE）。tools タブで動的フォーム実行 |
 | `slack` | Slack | ✅ ready | Slack 互換 Web API（`chat.postMessage` / `auth.test`）、mrkdwn レンダリング |
-| `openai` | OpenAI | 🚧 planned | OpenAI Assistants API（未実装） |
+| `mock` | Mock | ✅ ready | オフラインのデモ用 persona。実通信せず台本（Script Panel）を再生 |
+| `db` | DB | ✅ ready | SQL データベースクライアント。clouderby（JDBC over HTTP）ドライバ。SQL エディタ + 結果グリッド + スキーマツリー。Anypoint アプリ探索で URL 自動入力 |
+
+---
+
+## DB ワークベンチ（clouderby）
+
+`DB` コネクションは [clouderby](https://github.com/tmiya4ta/mule-clouderby)（JDBC over HTTP プロトコル）の
+サーバに接続し、ブラウザ上で SQL を実行できます。CORS が無いため `/proxy` 経由でアクセスし、`X-Clouderby-Session-Id`
+でセッションを引き回します。
+
+![DB ワークベンチ — スキーマツリー + SQL エディタ + 結果グリッド](docs/img/db-workbench.png)
+
+- **スキーマツリー**（左）: テーブル一覧 → 展開で列メタ（型 / PK）。`▷` で `SELECT *` を即実行。
+- **SQL エディタ + 結果グリッド**: `⌘/Ctrl+Enter` で実行。行番号・NULL 表示・型ヘッダ付きの表。DML/DDL は件数表示、SQL エラーは赤表示。
+- **認証情報はメモリのみ**: `user`/`password` は `sessionStorage` だけに保持し、localStorage / ディスクには書きません（暗号化 Export には任意で含められます）。
+
+### Anypoint からアプリを選んで接続（Anypoint UI 不要）
+
+接続ダイアログで **DISCOVER VIA ANYPOINT** に identity を選ぶと、その組織のデプロイ済みアプリ一覧から
+clouderby サーバを選ぶだけで **server url が自動入力**されます（Business Group / Environment は単一なら自動、
+複数のときだけ選択）。手入力したい場合は **— or enter manually —** の下に URL を直接入力できます。
+`test` ボタンでセッションを張って接続確認（認証 + 疎通 + テーブル数）も可能です。
+
+![DB 接続ダイアログ — Anypoint アプリ探索で server url を自動入力](docs/img/dialog-new-connection.png)
+
+> identity が `client_credentials` / `password` grant ならブラウザ完結でトークンを取得でき、redirect URI の
+> 登録は不要です（`authcode` の場合のみ Connected App に `…/oauth/callback.html` を登録）。
 
 ---
 
@@ -126,17 +159,21 @@ agent-atelier/
 ├── js/
 │   ├── app.js              state / workspace / sidebar / dialog / script / connect の中核
 │   ├── window.js           AgentWindow (drag/resize, タブ, chat/debug/card/settings 描画)
+│   ├── dbwindow.js         DbWindow (DB 用ウィンドウ: スキーマツリー + SQL エディタ + 結果グリッド)
 │   ├── script.js           DSL パーサ + ScriptRunner
 │   ├── persist.js          localStorage 永続化 (secrets は sessionStorage に分離)
 │   ├── oauth.js            PKCE Authorization Code flow (Anypoint)
+│   ├── cryptobox.js        パスフレーズ暗号化 Export/Import (AES-GCM + PBKDF2)
 │   ├── i18n.js             STRINGS = { en, ja }, t(key), setLang
-│   ├── modal.js            modalConfirm / modalAlert / modalPrompt
+│   ├── modal.js            modalConfirm / modalAlert / modalPrompt / modalExport ほか
 │   └── protocols/
 │       ├── base.js         ProtocolAdapter 基底クラス + イベント定義
 │       ├── a2a.js          A2A adapter (card discovery, message/send, SSE)
 │       ├── mcp.js          MCP adapter (initialize, tools/list, tools/call)
 │       ├── slack.js        Slack adapter
 │       ├── mock.js         オフラインのデモ用 persona adapter
+│       ├── db.js           DbAdapter (DB コネクション。connect=session 確立 / query)
+│       ├── db/clouderby.js clouderby (JDBC over HTTP) クライアント
 │       └── index.js        PROTOCOLS レジストリ
 ├── oauth/callback.html     PKCE redirect target (postMessage で opener に返す)
 ├── server/                 dev サーバ (Node/Python) + mock A2A + CDP テストヘルパ
