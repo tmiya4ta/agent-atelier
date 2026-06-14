@@ -3597,11 +3597,17 @@ function applyProtoSpecificFields() {
   const dlgBody = document.querySelector("#connectDialog .dialog-body");
   if (dlgBody) {
     dlgBody.style.minHeight = "";                 // いったん外して自然高さを測る
-    // 基準は「畳んだ非mock」の高さ。 ADVANCED 展開中は測らない (肥大化防止)。
-    const advOpen = advanced && advanced.open && !advanced.hidden;
-    if (!isMock && !advOpen) state._dlgBaseBodyH = dlgBody.offsetHeight;
-    if (state._dlgBaseBodyH) dlgBody.style.minHeight = state._dlgBaseBodyH + "px";
+    // DB は探索 UI で高さが大きく変わる → min-height で固定せず、body 内部スクロール
+    // (.dialog max-height) に任せる。下端が切れないよう上寄せ (centerConnectDialog)。
+    if (!isDb) {
+      // 基準は「畳んだ非mock」の高さ。 ADVANCED 展開中は測らない (肥大化防止)。
+      const advOpen = advanced && advanced.open && !advanced.hidden;
+      if (!isMock && !advOpen) state._dlgBaseBodyH = dlgBody.offsetHeight;
+      if (state._dlgBaseBodyH) dlgBody.style.minHeight = state._dlgBaseBodyH + "px";
+    }
   }
+  // proto 切替で縦位置を取り直す (DB は上寄せ・他は中央)。
+  if (!$("#connectDialog").hidden) centerConnectDialog();
 }
 
 // connect ダイアログの auth セレクトを identities で埋める。
@@ -5654,6 +5660,12 @@ function centerConnectDialog() {
   const dlg = bd.querySelector(".dialog");
   if (!dlg) return;
   dlg.style.marginTop = "";   // 現在(畳んだ)高さを測るため一旦リセット
+  // DB は探索 UI で縦に伸びる → 中央寄せだと下端が切れるので上寄せ固定。
+  // 高さは .dialog max-height + .dialog-body 内部スクロールで viewport に収める。
+  if (state.selectedProto === "db") {
+    dlg.style.marginTop = Math.max(16, Math.round(bd.clientHeight * 0.04)) + "px";
+    return;
+  }
   const top = Math.max(24, Math.round((bd.clientHeight - dlg.offsetHeight) / 2));
   dlg.style.marginTop = top + "px";
 }
