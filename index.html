@@ -1083,22 +1083,37 @@ clear
      <div class="auth-gate-main" id="authGateMain">
       <div class="auth-gate-brand">Atelier<span class="auth-gate-brand-sub">agent workbench</span></div>
       <h2 class="auth-gate-title">Sign in to continue</h2>
-      <p class="auth-gate-lede">Connect your Anypoint account to browse catalogs &amp; agents.</p>
+      <p class="auth-gate-lede">Unlock with your authenticator app — or skip to continue without sign-in (no catalogs).</p>
 
-      <div class="auth-gate-cid" id="authGateCidWrap" hidden>
-        <label for="authGateCid">Connected App client_id</label>
-        <input id="authGateCid" type="text" placeholder="Anypoint Connected App client_id" autocomplete="off" />
-        <label for="authGateSecret" style="margin-top:10px;">client_secret <span style="text-transform:none;letter-spacing:0;color:var(--ink-4);">(confidential app のみ)</span></label>
-        <input id="authGateSecret" type="password" placeholder="client_secret (任意)" autocomplete="off" />
-        <span class="auth-gate-hint">Authorization Code grant / redirect URL = この画面のURL + /oauth/callback.html</span>
-      </div>
-
-      <button class="auth-gate-btn" id="authGateSignin">
-        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M3 8 h8 M8 4 l4 4 l-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <span>Sign in with Anypoint</span>
+      <button class="auth-gate-btn" id="authGateTotpBtn">
+        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.4" d="M2 2h4v4H2zM10 2h4v4h-4zM2 10h4v4H2z"/><path fill="currentColor" d="M10 10h2v2h-2zM12 12h2v2h-2zM13 10h1v1h-1z"/></svg>
+        <span>Use authenticator app (TOTP)</span>
       </button>
+
       <button class="auth-gate-skip" id="authGateSkip">skip — continue without sign-in (no catalogs)</button>
       <div class="auth-gate-msg" id="authGateMsg" aria-live="polite"></div>
+     </div>
+
+     <!-- TOTP sub-view (enroll / verify) -->
+     <div class="auth-gate-totp" id="authGateTotp" hidden>
+      <div class="auth-gate-brand">Atelier<span class="auth-gate-brand-sub">authenticator</span></div>
+      <!-- enroll -->
+      <div id="totpEnroll" hidden>
+        <h2 class="auth-gate-title">Set up authenticator</h2>
+        <p class="auth-gate-lede">Scan the QR with Google Authenticator / 1Password / Authy, then enter the 6-digit code.</p>
+        <div class="totp-qr" id="totpQr"></div>
+        <div class="totp-key" id="totpKey" title="manual entry key"></div>
+      </div>
+      <!-- verify (already enrolled) -->
+      <div id="totpVerify" hidden>
+        <h2 class="auth-gate-title">Enter code</h2>
+        <p class="auth-gate-lede">Open your authenticator app and enter the current 6-digit code.</p>
+      </div>
+      <input id="totpCode" class="totp-input" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="123456" />
+      <button class="auth-gate-btn" id="totpSubmit"><span>Unlock</span></button>
+      <button class="auth-gate-skip" id="totpReset" hidden>reset authenticator</button>
+      <button class="auth-gate-skip" id="totpBack">← back</button>
+      <div class="auth-gate-msg" id="totpMsg" aria-live="polite"></div>
      </div>
 
      <div class="auth-gate-pending" id="authGatePending" hidden>

@@ -5271,8 +5271,7 @@ body.is-dark .tool-result.is-error {
 .auth-gate {
   position: fixed; inset: 0; z-index: 4000;
   display: grid; place-items: center;
-  background: color-mix(in srgb, var(--paper) 78%, transparent);
-  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  background: var(--paper);          /* 不透明: 背後のアプリは透けない */
   opacity: 1;
   transition: opacity 0.24s ease;
 }
@@ -5290,7 +5289,9 @@ body.is-dark .tool-result.is-error {
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
+/* ダイアログ箱ではなく、 1 画面に直接埋め込むレイアウト (背景透過・枠/影なし) */
 .auth-gate-card {
+  position: relative; z-index: 1;
   width: min(420px, 90vw);
   background: var(--panel);
   border: 1px solid var(--line);
@@ -5360,6 +5361,51 @@ body.is-dark .tool-result.is-error {
   margin-top: 14px; min-height: 1em; color: var(--ink-3);
   font-size: calc(11.5px * var(--fs-mul, 1.1) * var(--fs, 1)); line-height: 1.5;
 }
+
+/* セカンダリのサインインボタン (GitHub / Google / TOTP) */
+.auth-gate-btn2 {
+  width: 100%; margin-top: 8px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+  padding: 10px 16px; border: 1px solid var(--line, #ddd); border-radius: var(--radius, 8px);
+  background: var(--panel, #fff); color: var(--ink-2, #333); cursor: pointer;
+  font-family: var(--f-ui); font-weight: 600;
+  font-size: calc(13px * var(--fs-mul, 1.1) * var(--fs, 1));
+  transition: background 0.15s ease, transform 0.12s ease, border-color 0.15s ease;
+}
+.auth-gate-btn2:hover { background: var(--hover, #f4f6f8); transform: translateY(-1px); }
+body.is-dark .auth-gate-btn2 { background: var(--panel); color: var(--ink-2); }
+
+/* "or" 区切り */
+.auth-gate-or {
+  display: flex; align-items: center; gap: 10px;
+  margin: 14px 2px 10px; color: var(--ink-4);
+  font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1)); text-transform: uppercase; letter-spacing: 0.08em;
+}
+.auth-gate-or::before, .auth-gate-or::after { content: ""; flex: 1; height: 1px; background: var(--line, #e3e3e3); }
+
+/* TOTP サブビュー */
+.auth-gate-totp { display: flex; flex-direction: column; align-items: center; }
+.totp-qr {
+  margin: 4px auto 10px; min-height: 176px; width: 176px;
+  display: flex; align-items: center; justify-content: center;
+  background: #fff; border: 1px solid var(--line, #e3e3e3); border-radius: 8px; padding: 6px;
+  color: var(--ink-4); font-size: 11px; text-align: center;
+}
+.totp-qr canvas { display: block; border-radius: 4px; }
+.totp-key {
+  font-family: var(--f-mono, monospace); letter-spacing: 0.12em;
+  font-size: calc(13px * var(--fs, 1)); color: var(--ink-2);
+  background: var(--hover, #f4f6f8); border-radius: 6px; padding: 7px 10px; margin-bottom: 12px;
+  user-select: all;
+}
+.totp-input {
+  width: 100%; box-sizing: border-box; text-align: center;
+  font-family: var(--f-mono, monospace); font-size: calc(22px * var(--fs, 1)); letter-spacing: 0.3em;
+  padding: 10px 12px; margin-bottom: 12px;
+  border: 1px solid var(--line, #ddd); border-radius: var(--radius, 8px);
+  background: var(--panel, #fff); color: var(--ink-1, #111);
+}
+.totp-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* カタログ rail アイコン: 未サインインで lock (押せない見た目) */
 .rail-ico.is-locked { opacity: 0.35; cursor: default; }

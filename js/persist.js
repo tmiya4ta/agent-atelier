@@ -192,6 +192,23 @@ export function clear() {
   clearSecrets();
 }
 
+// ─── 暗号化同期 (TOTP) 用スナップショット ─────────────
+// localStorage の state(secret 抜き) と sessionStorage の secrets を **両方** 束ねる。
+// この束を呼び出し側 (sync.js) がクライアント暗号化してサーバへ置く → secret も持ち運べる。
+export function snapshotForSync() {
+  let st = null, sec = null;
+  try { st  = JSON.parse(localStorage.getItem(KEY) || "null"); } catch {}
+  try { sec = JSON.parse(sessionStorage.getItem(SECRETS_KEY) || "null"); } catch {}
+  return { v: VERSION, state: st, secrets: sec };
+}
+// 同期から復元: 両ストアへ書き戻す。 呼び出し側で reload して再 hydrate する想定。
+export function restoreFromSync(obj) {
+  if (!obj || !obj.state) return false;
+  try { localStorage.setItem(KEY, JSON.stringify(obj.state)); } catch {}
+  try { if (obj.secrets) sessionStorage.setItem(SECRETS_KEY, JSON.stringify(obj.secrets)); } catch {}
+  return true;
+}
+
 // debounced save — 連続的な変更 (ドラッグ等) でも安く済ませる
 let _timer = null;
 export function scheduleSave(state, ms = 80) {
