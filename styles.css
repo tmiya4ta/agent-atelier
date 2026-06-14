@@ -5708,3 +5708,54 @@ body.is-dark .auth-gate-btn2 { background: var(--panel); color: var(--ink-2); }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .dbw-status.is-error { color: var(--warn); }
+
+/* caret(列開閉)をクリック可能に */
+.dbw-caret { cursor: pointer; border-radius: 3px; padding: 0 1px; }
+.dbw-caret:hover { background: var(--line-2); color: var(--ink-2); }
+
+/* SQL autocomplete ドロップダウン (.dbw-editor は position:relative) */
+.dbw-editor { position: relative; }
+.dbw-ac {
+  position: absolute; z-index: 50;
+  min-width: 180px; max-width: 340px; max-height: 220px; overflow: auto;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 5px; box-shadow: 0 8px 24px -8px rgba(0,22,74,.28), 0 0 0 1px rgba(0,22,74,.04);
+  padding: 3px;
+}
+.dbw-ac-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 8px; border-radius: 4px; cursor: pointer;
+  font-family: var(--f-mono);
+  font-size: calc(11.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink-2); white-space: nowrap;
+}
+.dbw-ac-item.is-active { background: var(--accent-soft); }
+.dbw-ac-item:hover { background: var(--hover, var(--line-3)); }
+.dbw-ac-kind {
+  flex: 0 0 16px; text-align: center;
+  font-size: calc(9px * var(--fs-mul, 1.1) * var(--fs, 1));
+  border-radius: 3px; line-height: 15px;
+}
+.dbw-ac-table { color: #6D49C7; background: #EEE9FB; }
+.dbw-ac-col   { color: var(--accent-ink); background: var(--accent-soft); }
+.dbw-ac-kw    { color: var(--ink-3); background: var(--line-2); }
+.dbw-ac-label { overflow: hidden; text-overflow: ellipsis; }
+
+/* テーブルプレビューのページングバー */
+.dbw-pager {
+  flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  padding: 6px 10px; border-top: 1px solid var(--line);
+  background: var(--panel-soft);
+  font-family: var(--f-mono);
+  font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink-3);
+}
+.dbw-pg-btn {
+  border: 1px solid var(--line); background: var(--panel);
+  border-radius: 4px; padding: 3px 12px; cursor: pointer;
+  font: inherit; color: var(--ink-2);
+}
+.dbw-pg-btn:hover:not(:disabled) { background: var(--hover, var(--line-3)); border-color: var(--accent); color: var(--accent-ink); }
+.dbw-pg-btn:disabled { opacity: .4; cursor: default; }
+.dbw-pg-info { min-width: 90px; text-align: center; }
