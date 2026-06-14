@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!--
+      暗号化設定の同期ストア (/sync)
+      ──────────────────────────────
+      クライアント (atelier) が TOTP 秘密由来の鍵で **暗号化済み** の設定 blob を保存/取得する。
+      サーバは暗号文しか持たず中身を読めない (ゼロ知識風)。
+        - accountId : hex(SHA-256("acct|"+secret))  ストアのキー (公開)
+        - apiKey    : hex(SHA-256("api|"+secret))   読み書き認可。 サーバは hash(apiKey) を保持し照合
+        - blob      : AES-GCM 暗号文 (base64)。 サーバは復号鍵を持たない
+      Object Store v2 (persistent) に { apiKeyHash, blob, updatedAt } を格納。
+    -->
+
+    <os:object-store name="syncStore" persistent="true" entryTtl="365" entryTtlUnit="DAYS" maxEntries="100000"/>
+
+    <flow name="sync-flow">
+        <http:listener config-ref="http-listener-config" path="/sync" allowedMethods="GET,POST,PUT,OPTIONS">
+            <http:response statusCode="#[vars.st default 200]">
+                <http:headers><![CDATA[#[vars.cors default {}]]]></http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.st default 500]">
+                <http:body>#[payload]</http:body>
+                <http:headers><![CDATA[#[vars.cors default {}]]]></http:headers>
+            </http:error-response>
+        </http:listener>
+
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="cors"><![CDATA[%dw 2.0
+output application/java
+---
+{
+    "Access-Control-Allow-Origin":  "*",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, X-Sync-Key",
+    "Cache-Control":                "no-store"
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <try>
+        <choice>
+            <!-- CORS preflight -->
+            <when expression="#[attributes.method == 'OPTIONS']">
+                <ee:transform>
+                    <ee:message><ee:set-payload><![CDATA[%dw 2.0 output text/plain --- ""]]></ee:set-payload></ee:message>
+                    <ee:variables><ee:set-variable variableName="st"><![CDATA[%dw 2.0 output application/java --- 204]]></ee:set-variable></ee:variables>
+                </ee:transform>
+            </when>
+
+            <!-- 取得 -->
+            <when expression="#[attributes.method == 'GET']">
+                <ee:transform>
+                    <ee:variables>
+                        <ee:set-variable variableName="acct"><![CDATA[%dw 2.0 output application/java --- (attributes.queryParams.account default "") as String]]></ee:set-variable>
+                        <ee:set-variable variableName="apiKeyHash"><![CDATA[%dw 2.0
+import dw::Crypto
+import toHex from dw::core::Binaries
+output application/java
+---
+lower(toHex(Crypto::hashWith(((attributes.headers default {})."x-sync-key" default "") as String as Binary, "SHA-256")))]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <os:contains key="#[vars.acct]" objectStore="syncStore"/>
+                <choice>
+                    <when expression="#[payload == true]">
+                        <os:retrieve key="#[vars.acct]" objectStore="syncStore"/>
+                        <ee:transform>
+                            <ee:message>
+                                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var rec = (if (payload is String) read(payload, "application/json") else payload)
+---
+if (rec.apiKeyHash == vars.apiKeyHash) { blob: rec.blob, updatedAt: rec.updatedAt }
+else { error: "unauthorized" }]]></ee:set-payload>
+                            </ee:message>
+                            <ee:variables>
+                                <ee:set-variable variableName="st"><![CDATA[%dw 2.0
+output application/java
+var rec = (if (payload is String) read(payload, "application/json") else payload)
+---
+if (rec.apiKeyHash == vars.apiKeyHash) 200 else 403]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                    </when>
+                    <otherwise>
+                        <ee:transform>
+                            <ee:message><ee:set-payload><![CDATA[%dw 2.0 output application/json --- { error: "not found" }]]></ee:set-payload></ee:message>
+                            <ee:variables><ee:set-variable variableName="st"><![CDATA[%dw 2.0 output application/java --- 404]]></ee:set-variable></ee:variables>
+                        </ee:transform>
+                    </otherwise>
+                </choice>
+            </when>
+
+            <!-- 保存 (POST/PUT) -->
+            <otherwise>
+                <ee:transform>
+                    <ee:variables>
+                        <ee:set-variable variableName="body"><![CDATA[%dw 2.0 output application/java --- payload]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <ee:transform>
+                    <ee:variables>
+                        <ee:set-variable variableName="acct"><![CDATA[%dw 2.0 output application/java --- (vars.body.accountId default "") as String]]></ee:set-variable>
+                        <ee:set-variable variableName="apiKeyHash"><![CDATA[%dw 2.0
+import dw::Crypto
+import toHex from dw::core::Binaries
+output application/java
+---
+lower(toHex(Crypto::hashWith(((vars.body.apiKey default "") as String) as Binary, "SHA-256")))]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <!-- 既存があれば apiKeyHash 照合 (他人の上書き防止) -->
+                <os:contains key="#[vars.acct]" objectStore="syncStore"/>
+                <set-variable variableName="exists" value="#[payload == true]"/>
+                <choice>
+                    <when expression="#[vars.exists]">
+                        <os:retrieve key="#[vars.acct]" objectStore="syncStore"/>
+                        <ee:transform>
+                            <ee:variables>
+                                <ee:set-variable variableName="ownerOk"><![CDATA[%dw 2.0
+output application/java
+var rec = (if (payload is String) read(payload, "application/json") else payload)
+---
+rec.apiKeyHash == vars.apiKeyHash]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                    </when>
+                    <otherwise>
+                        <set-variable variableName="ownerOk" value="#[true]"/>
+                    </otherwise>
+                </choice>
+                <choice>
+                    <when expression="#[(vars.acct == '') or (not vars.ownerOk)]">
+                        <ee:transform>
+                            <ee:message><ee:set-payload><![CDATA[%dw 2.0 output application/json --- { error: (if (vars.acct == "") "missing accountId" else "unauthorized") }]]></ee:set-payload></ee:message>
+                            <ee:variables><ee:set-variable variableName="st"><![CDATA[%dw 2.0 output application/java --- (if (vars.acct == "") 400 else 403)]]></ee:set-variable></ee:variables>
+                        </ee:transform>
+                    </when>
+                    <otherwise>
+                        <os:store key="#[vars.acct]" objectStore="syncStore">
+                            <os:value><![CDATA[#[%dw 2.0
+output application/json
+---
+{ apiKeyHash: vars.apiKeyHash, blob: (vars.body.blob default ""), updatedAt: now() as String }]]]></os:value>
+                        </os:store>
+                        <ee:transform>
+                            <ee:message><ee:set-payload><![CDATA[%dw 2.0 output application/json --- { ok: true, updatedAt: now() as String }]]></ee:set-payload></ee:message>
+                            <ee:variables><ee:set-variable variableName="st"><![CDATA[%dw 2.0 output application/java --- 200]]></ee:set-variable></ee:variables>
+                        </ee:transform>
+                    </otherwise>
+                </choice>
+            </otherwise>
+        </choice>
+            <error-handler>
+                <on-error-continue type="ANY">
+                    <ee:transform>
+                        <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ error: "sync error", errType: (error.errorType.identifier default ""), errNs: (error.errorType.namespace default ""), detail: (error.description default "unknown") }]]></ee:set-payload></ee:message>
+                        <ee:variables><ee:set-variable variableName="st"><![CDATA[%dw 2.0 output application/java --- 500]]></ee:set-variable></ee:variables>
+                    </ee:transform>
+                </on-error-continue>
+            </error-handler>
+        </try>
+    </flow>
+
+</mule>

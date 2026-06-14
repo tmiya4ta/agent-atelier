@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!--
+      HTTP Forward Proxy (Firefox の「手動プロキシ → HTTP Proxy」で使える)
+      ─────────────────────────────────────────────────────────────
+      Firefox は http:// サイトに対し `GET http://host/path`(絶対 URI)を proxy に送る。
+      それを catch-all listener (/*) で受け、 host+path から target を復元して forward する。
+
+      制約: https:// は Firefox が `CONNECT host:443`(生 TCP トンネル)を要求する。
+            Mule の HTTP listener はトンネルを張れないので CONNECT は 405 を返す
+            (= https サイトは本 proxy では通らない。 これは Mule の構造上の限界)。
+
+      SSRF allowlist ガード (dw::SsrfGuard) を通し、 許可 host のみ転送する。
+    -->
+
+    <http:request-config name="fwd-request-config">
+        <http:request-connection protocol="HTTP" host="localhost" port="80"/>
+    </http:request-config>
+
+    <flow name="forward-proxy-flow">
+        <http:listener config-ref="http-listener-config" path="/*"
+                       allowedMethods="GET,POST,PUT,DELETE,PATCH,HEAD,OPTIONS">
+            <http:response statusCode="#[vars.st default 200]">
+                <http:headers><![CDATA[#[vars.hdrs default {}]]]></http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.st default 502]">
+                <http:body>#[payload]</http:body>
+                <http:headers><![CDATA[#[vars.hdrs default { 'Content-Type': 'text/plain; charset=utf-8' }]]]></http:headers>
+            </http:error-response>
+        </http:listener>
+
+        <!-- target URL 復元 + forward header 準備 + SSRF ガード -->
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="target"><![CDATA[%dw 2.0
+output application/java
+var uri  = (attributes.requestUri default "/") as String
+var host = ((attributes.headers default {}).host default "") as String
+var lc   = lower(uri)
+---
+// Firefox は絶対 URI を送ることが多いが、 host+path のみのケースもあるので両対応
+if ((lc startsWith "http://") or (lc startsWith "https://")) uri
+else "http://" ++ host ++ uri]]></ee:set-variable>
+
+                <ee:set-variable variableName="fwdHeaders"><![CDATA[%dw 2.0
+output application/java
+var h = attributes.headers default {}
+// hop-by-hop / proxy 固有ヘッダは除去 (RFC 7230)
+var drop = ["host","proxy-connection","connection","keep-alive","proxy-authorization","te","trailer","transfer-encoding","upgrade","content-length"]
+---
+h filterObject ((v, k) -> not (drop contains lower(k as String)))]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <!-- guard は別 transform にする: 同一 transform 内では vars.target が未確定のため -->
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="guard"><![CDATA[%dw 2.0
+import dw::SsrfGuard
+output application/java
+---
+SsrfGuard::check(vars.target, (p('proxy.allowHosts') default "") splitBy ",")]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <choice>
+            <!-- SSRF 拒否 -->
+            <when expression="#[vars.guard.deny default true]">
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ error: "forward proxy denied", reason: (vars.guard.reason default "blocked"), host: (vars.guard.host default ""), target: (vars.target default "") }]]></ee:set-payload>
+                    </ee:message>
+                    <ee:variables>
+                        <ee:set-variable variableName="st"><![CDATA[%dw 2.0 output application/java --- 403]]></ee:set-variable>
+                        <ee:set-variable variableName="hdrs"><![CDATA[%dw 2.0 output application/java --- { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" }]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </when>
+
+            <!-- forward -->
+            <otherwise>
+                <try>
+                    <http:request method="#[attributes.method]"
+                                  url="#[vars.target]"
+                                  config-ref="fwd-request-config"
+                                  followRedirects="false"
+                                  responseTimeout="60000">
+                        <http:headers>#[vars.fwdHeaders]</http:headers>
+                        <http:response-validator>
+                            <http:success-status-code-validator values="0..599"/>
+                        </http:response-validator>
+                    </http:request>
+
+                    <ee:transform>
+                        <ee:variables>
+                            <ee:set-variable variableName="st"><![CDATA[%dw 2.0 output application/java --- attributes.statusCode default 200]]></ee:set-variable>
+                            <ee:set-variable variableName="hdrs"><![CDATA[%dw 2.0
+output application/java
+var rh = attributes.headers default {}
+var drop = ["connection","keep-alive","proxy-authenticate","proxy-connection","te","trailer","transfer-encoding","upgrade"]
+---
+rh filterObject ((v, k) -> not (drop contains lower(k as String)))]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+
+                    <error-handler>
+                        <on-error-continue type="ANY">
+                            <ee:transform>
+                                <ee:message>
+                                    <ee:set-payload><![CDATA[%dw 2.0 output text/plain --- "forward proxy error: " ++ (error.description default "unknown") ++ " (target: " ++ (vars.target default "") ++ ")"]]></ee:set-payload>
+                                </ee:message>
+                                <ee:variables>
+                                    <ee:set-variable variableName="st"><![CDATA[%dw 2.0 output application/java --- 502]]></ee:set-variable>
+                                    <ee:set-variable variableName="hdrs"><![CDATA[%dw 2.0 output application/java --- { "Content-Type": "text/plain; charset=utf-8" }]]></ee:set-variable>
+                                </ee:variables>
+                            </ee:transform>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+            </otherwise>
+        </choice>
+    </flow>
+
+</mule>
