@@ -354,10 +354,14 @@ export class DbWindow {
   // ───────────────────────────────────────────
   _onSqlKeydown(e) {
     if (this._ac.open && this._ac.items.length) {
-      if (e.key === "ArrowDown") { e.preventDefault(); this._ac.idx = (this._ac.idx + 1) % this._ac.items.length; this._acRender(); return; }
-      if (e.key === "ArrowUp")   { e.preventDefault(); this._ac.idx = (this._ac.idx - 1 + this._ac.items.length) % this._ac.items.length; this._acRender(); return; }
+      const n = this._ac.items.length;
+      // 矢印キー + Emacs 風 Ctrl-N(下)/Ctrl-P(上)/Ctrl-G(閉じる) で候補移動
+      const down = e.key === "ArrowDown" || (e.ctrlKey && (e.key === "n" || e.key === "N"));
+      const up   = e.key === "ArrowUp"   || (e.ctrlKey && (e.key === "p" || e.key === "P"));
+      if (down) { e.preventDefault(); this._ac.idx = (this._ac.idx + 1) % n; this._acRender(); return; }
+      if (up)   { e.preventDefault(); this._ac.idx = (this._ac.idx - 1 + n) % n; this._acRender(); return; }
       if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); this._acAccept(this._ac.items[this._ac.idx]); return; }
-      if (e.key === "Escape") { e.preventDefault(); this._acClose(); return; }
+      if (e.key === "Escape" || (e.ctrlKey && (e.key === "g" || e.key === "G"))) { e.preventDefault(); this._acClose(); return; }
     }
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); this._run(); return; }
     if (e.key === " " && (e.ctrlKey || e.metaKey)) { e.preventDefault(); this._acUpdate(true); return; }  // 明示的に補完を開く
