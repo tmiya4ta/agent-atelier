@@ -4384,7 +4384,7 @@ body.is-dark .tk-mock-text { color: #C8A85A; }
   justify-content: flex-start;/* 縦は上寄せ。 実際の位置は marginTop で調整 */
   overflow-y: auto;
 }
-#connectDialog .dialog { margin: 0 0 3vh; flex: 0 0 auto; }
+#connectDialog .dialog { margin: 0 0 6vh; flex: 0 0 auto; }
 
 .dialog {
   width: min(560px, 92vw);
@@ -4392,9 +4392,6 @@ body.is-dark .tk-mock-text { color: #C8A85A; }
   border-radius: var(--radius-xl);
   box-shadow: 0 40px 80px -20px rgba(14,14,12,0.30), 0 0 0 1px rgba(14,14,12,0.08);
   overflow: hidden;
-  /* 縦に伸びるフォーム (DB 探索等) でも viewport 内に収め、本体だけ内部スクロール */
-  display: flex; flex-direction: column;
-  max-height: 92vh;
   animation: dlg-up 0.32s cubic-bezier(.2,.8,.2,1);
 }
 @keyframes dlg-up { from { opacity: 0; transform: translateY(12px) scale(0.98);} to { opacity: 1; transform: translateY(0) scale(1);} }
@@ -4425,7 +4422,18 @@ body.is-dark .tk-mock-text { color: #C8A85A; }
 }
 .dialog-title em { color: var(--accent); }
 
-.dialog-body { padding: 22px; display: flex; flex-direction: column; gap: 18px; overflow-y: auto; min-height: 0; }
+.dialog-body { padding: 22px; display: flex; flex-direction: column; gap: 18px; }
+
+/* DB(clouderby): アプリ探索 と 手入力 url の区切り */
+.dlg-or {
+  display: flex; align-items: center; gap: 10px;
+  color: var(--ink-4); letter-spacing: .04em;
+  font-family: var(--f-mono);
+  font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+}
+.dlg-or::before, .dlg-or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+#dlgDbManual { display: flex; flex-direction: column; gap: 18px; }
+#dlgDbManual .field-row { grid-template-columns: 1fr; }   /* name を全幅 (auth は db で非表示) */
 .field { display: flex; flex-direction: column; gap: 7px; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .field-label {

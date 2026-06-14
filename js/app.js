@@ -3517,13 +3517,33 @@ function applyProtoSpecificFields() {
     const disc = $("#dlgClouderbyDiscover");
     if (disc) disc.hidden = driver !== "clouderby";
   }
+  // server url + display name の配置:
+  //   DB → discover の下 (— or — / アプリから選ぶ or 手入力)、他 proto → 元位置。
+  {
+    const urlFld   = $("#dlgUrl")?.closest(".field");
+    const nameRow  = $("#dlgName")?.closest(".field-row");
+    const manual   = $("#dlgDbManual");
+    const orDiv    = $("#dlgDbOr");
+    const body     = document.querySelector("#connectDialog .dialog-body");
+    if (isDb && manual && urlFld && nameRow) {
+      if (urlFld.parentElement !== manual)  manual.appendChild(urlFld);
+      if (nameRow.parentElement !== manual) manual.appendChild(nameRow);
+      // 「— or —」は discover(clouderby)がある時だけ
+      if (orDiv) orDiv.hidden = (($("#dlgDbDriver")?.value || "clouderby") !== "clouderby");
+    } else if (urlFld && nameRow && body) {
+      // 元位置へ戻す (url → mock-kind の前、name-row → slack-channel の前)
+      if (urlFld.parentElement !== body)  body.insertBefore(urlFld, $("#dlgMockKindField") || null);
+      if (nameRow.parentElement !== body) body.insertBefore(nameRow, $("#dlgSlackChannelField") || null);
+      if (orDiv) orDiv.hidden = true;
+    }
+  }
   // CHANNEL は Slack 専用。 ただし A2A/MCP/Slack は本体高さを揃えたい
   // (中央寄せ時に protocol 切替で上下に動かないように) ので、 Slack 以外でも
   // 行の領域だけ確保して中身を不可視にする。 Mock はフォーム構成が大きく
   // 違うので完全に畳む。
   const channelField = $("#dlgSlackChannelField");
   if (channelField) {
-    channelField.hidden = isMock;                          // Mock では行ごと畳む
+    channelField.hidden = isMock || isDb;                  // Mock / DB では行ごと畳む
     channelField.style.visibility = isSlack ? "" : "hidden"; // A2A/MCP は領域だけ確保
   }
   // mock の「装うプロトコル」選択 (A2A / MCP)。
@@ -3597,8 +3617,8 @@ function applyProtoSpecificFields() {
   const dlgBody = document.querySelector("#connectDialog .dialog-body");
   if (dlgBody) {
     dlgBody.style.minHeight = "";                 // いったん外して自然高さを測る
-    // DB は探索 UI で高さが大きく変わる → min-height で固定せず、body 内部スクロール
-    // (.dialog max-height) に任せる。下端が切れないよう上寄せ (centerConnectDialog)。
+    // DB はフィールド数が大きく変わるので高さ基準に含めない (他 proto を db の
+    // 高さに引きずられて間延びさせないため)。 db 自身は自然高さ + 中央寄せ。
     if (!isDb) {
       // 基準は「畳んだ非mock」の高さ。 ADVANCED 展開中は測らない (肥大化防止)。
       const advOpen = advanced && advanced.open && !advanced.hidden;
@@ -3606,8 +3626,9 @@ function applyProtoSpecificFields() {
       if (state._dlgBaseBodyH) dlgBody.style.minHeight = state._dlgBaseBodyH + "px";
     }
   }
-  // proto 切替で縦位置を取り直す (DB は上寄せ・他は中央)。
-  if (!$("#connectDialog").hidden) centerConnectDialog();
+  // proto 切替で高さが変わる (db はフィールド数が多い) ので、 全 proto 共通に
+  // 中央寄せを取り直す (db も他と同じ中央寄せ・はみ出す時だけ backdrop スクロール)。
+  if (!$("#connectDialog").hidden) requestAnimationFrame(centerConnectDialog);
 }
 
 // connect ダイアログの auth セレクトを identities で埋める。
@@ -5660,12 +5681,6 @@ function centerConnectDialog() {
   const dlg = bd.querySelector(".dialog");
   if (!dlg) return;
   dlg.style.marginTop = "";   // 現在(畳んだ)高さを測るため一旦リセット
-  // DB は探索 UI で縦に伸びる → 中央寄せだと下端が切れるので上寄せ固定。
-  // 高さは .dialog max-height + .dialog-body 内部スクロールで viewport に収める。
-  if (state.selectedProto === "db") {
-    dlg.style.marginTop = Math.max(16, Math.round(bd.clientHeight * 0.04)) + "px";
-    return;
-  }
   const top = Math.max(24, Math.round((bd.clientHeight - dlg.offsetHeight) / 2));
   dlg.style.marginTop = top + "px";
 }
