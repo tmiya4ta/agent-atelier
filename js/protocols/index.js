@@ -7,6 +7,7 @@ import { MCPAdapter }   from "./mcp.js";
 import { MockAdapter }  from "./mock.js";
 import { DbAdapter }    from "./db.js";
 
+// 表示順: 1 段目 A2A / MCP / Slack / Mock、2 段目 DB (grid は 4 列)。
 export const PROTOCOLS = [
   {
     id: "a2a",
@@ -14,14 +15,6 @@ export const PROTOCOLS = [
     sub: "agent2agent",
     description: "Google Agent2Agent · JSON-RPC over HTTP",
     AdapterClass: A2AAdapter,
-    status: "ready"
-  },
-  {
-    id: "slack",
-    label: "Slack",
-    sub: "web api · mrkdwn",
-    description: "Slack 互換 Web API (chat.postMessage)",
-    AdapterClass: SlackAdapter,
     status: "ready"
   },
   {
@@ -33,11 +26,11 @@ export const PROTOCOLS = [
     status: "ready"
   },
   {
-    id: "db",
-    label: "DB",
-    sub: "sql · jdbc/http",
-    description: "Database client · clouderby (JDBC over HTTP) · SQL editor + result grid",
-    AdapterClass: DbAdapter,
+    id: "slack",
+    label: "Slack",
+    sub: "web api · mrkdwn",
+    description: "Slack 互換 Web API (chat.postMessage)",
+    AdapterClass: SlackAdapter,
     status: "ready"
   },
   {
@@ -49,12 +42,12 @@ export const PROTOCOLS = [
     status: "ready"
   },
   {
-    id: "openai",
-    label: "OpenAI",
-    sub: "assistants",
-    description: "OpenAI Assistants API — coming soon",
-    AdapterClass: null,
-    status: "planned"
+    id: "db",
+    label: "DB",
+    sub: "sql · jdbc/http",
+    description: "Database client · clouderby (JDBC over HTTP) · SQL editor + result grid",
+    AdapterClass: DbAdapter,
+    status: "ready"
   }
 ];
 
