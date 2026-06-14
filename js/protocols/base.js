@@ -33,7 +33,7 @@ export class ProtocolAdapter extends EventTarget {
     }
   }
 
-  // protocol identifier ("a2a", "mcp", "openai", "mock")
+  // protocol identifier ("a2a", "mcp", "slack", "mock", "db")
   static get id() { return "base"; }
   static get label() { return "Base"; }
 

@@ -46,7 +46,7 @@ export const STRINGS = {
     "empty.f1.title":  "Multi-window",
     "empty.f1.text":   "Multiple concurrent sessions in floating windows",
     "empty.f2.title":  "Protocol-agnostic",
-    "empty.f2.text":   "Switch between A2A / Slack / MCP / OpenAI adapters",
+    "empty.f2.text":   "Switch between A2A / MCP / Slack / Mock / DB adapters",
     "empty.f3.title":  "Inspect everything",
     "empty.f3.text":   "Live JSON-RPC traffic and AgentCard inspection",
 
