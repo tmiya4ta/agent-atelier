@@ -297,6 +297,70 @@ export function modalExport({ title, defaultValue } = {}) {
   });
 }
 
+// modalImportScope — Import の scope 選択。 暗号化ファイル時は同じダイアログに
+// passphrase 欄を同居させ、 ダイアログを 1 枚に減らす。
+//   返り値: { scope: "all"|"scripts", passphrase } または null (cancel)。
+export function modalImportScope({ encrypted } = {}) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement("div");
+    wrap.className = "modal-backdrop modal-top";
+    wrap.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true">
+        <header class="modal-head">
+          <span class="modal-eyebrow">choose</span>
+          <h3 class="modal-title">What to import?</h3>
+        </header>
+        <div class="modal-body">
+          <label class="modal-check">
+            <input type="checkbox" id="impScripts" />
+            <span class="modal-check-main">
+              <span class="modal-check-label">Scenarios only</span>
+              <span class="modal-check-desc">Merge scenarios only — keep current connections, no reload.</span>
+            </span>
+          </label>
+          ${encrypted ? `
+          <div class="modal-passwrap is-open">
+            <label class="modal-label">passphrase (encrypted file)</label>
+            <input class="modal-input" id="impPass" type="password" autocomplete="off" placeholder="decryption passphrase" />
+            <span class="modal-hint">This file is encrypted. Enter the passphrase used when it was exported.</span>
+          </div>` : ``}
+        </div>
+        <footer class="modal-foot">
+          <div class="modal-foot-actions">
+            <button type="button" class="ghost-btn modal-cancel">Cancel</button>
+            <button type="button" class="primary-btn modal-confirm"><span>Import</span><span class="arrow">→</span></button>
+          </div>
+        </footer>
+      </div>
+    `;
+    document.body.appendChild(wrap);
+    requestAnimationFrame(() => wrap.classList.add("is-open"));
+    const q = (s) => wrap.querySelector(s);
+    const passEl = q("#impPass");
+    const close = (result) => {
+      wrap.classList.remove("is-open");
+      setTimeout(() => wrap.remove(), 220);
+      if (_stackKeyHandler === onKey) { document.removeEventListener("keydown", onKey, true); _stackKeyHandler = null; }
+      resolve(result);
+    };
+    const submit = () => {
+      const scope = q("#impScripts").checked ? "scripts" : "all";
+      const passphrase = encrypted ? (passEl.value || "") : "";
+      if (encrypted && !passphrase) { passEl.focus(); return; }
+      close({ scope, passphrase });
+    };
+    q(".modal-confirm").addEventListener("click", submit);
+    q(".modal-cancel").addEventListener("click", () => close(null));
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(null); }
+      else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); submit(); }
+    };
+    document.addEventListener("keydown", onKey, true);
+    _stackKeyHandler = onKey;
+    setTimeout(() => { (encrypted ? passEl : q("#impScripts"))?.focus(); }, 50);
+  });
+}
+
 // modalBusinessGroup — business group を「1 枚で」選ばせる/入力させるモーダル。
 //   await modalBusinessGroup({ title, loadGroups, signIn })
 //     loadGroups: async () => [{id,name}]   (throw すると失敗扱い)
