@@ -355,13 +355,14 @@ export class DbWindow {
   _onSqlKeydown(e) {
     if (this._ac.open && this._ac.items.length) {
       const n = this._ac.items.length;
-      // 矢印キー + Emacs 風 Ctrl-N(下)/Ctrl-P(上)/Ctrl-G(閉じる) で候補移動
-      const down = e.key === "ArrowDown" || (e.ctrlKey && (e.key === "n" || e.key === "N"));
-      const up   = e.key === "ArrowUp"   || (e.ctrlKey && (e.key === "p" || e.key === "P"));
+      // 候補移動: 矢印 + Tab(次)/Shift-Tab(前)。Ctrl-N/P はブラウザ予約 (New Window/Print) で
+      // ページから奪えないため使わない。確定は Enter、閉じるは Esc。
+      const down = e.key === "ArrowDown" || (e.key === "Tab" && !e.shiftKey);
+      const up   = e.key === "ArrowUp"   || (e.key === "Tab" && e.shiftKey);
       if (down) { e.preventDefault(); this._ac.idx = (this._ac.idx + 1) % n; this._acRender(); return; }
       if (up)   { e.preventDefault(); this._ac.idx = (this._ac.idx - 1 + n) % n; this._acRender(); return; }
-      if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); this._acAccept(this._ac.items[this._ac.idx]); return; }
-      if (e.key === "Escape" || (e.ctrlKey && (e.key === "g" || e.key === "G"))) { e.preventDefault(); this._acClose(); return; }
+      if (e.key === "Enter")  { e.preventDefault(); this._acAccept(this._ac.items[this._ac.idx]); return; }
+      if (e.key === "Escape") { e.preventDefault(); this._acClose(); return; }
     }
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); this._run(); return; }
     if (e.key === " " && (e.ctrlKey || e.metaKey)) { e.preventDefault(); this._acUpdate(true); return; }  // 明示的に補完を開く
