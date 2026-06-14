@@ -5651,6 +5651,40 @@ body.is-dark .auth-gate-btn2 { background: var(--panel); color: var(--ink-2); }
 }
 .dbw-sqlerror pre { margin: 0; white-space: pre-wrap; word-break: break-word; color: var(--ink-2); }
 
+/* ── connect dialog: clouderby Anypoint app picker ── */
+.dbpick-filter { margin-bottom: 6px; }
+.dbpick-list {
+  max-height: 168px; overflow: auto;
+  border: 1px solid var(--line); border-radius: 4px;
+  background: var(--panel-soft);
+}
+.dbpick-item {
+  display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 4px 8px;
+  width: 100%; text-align: left; cursor: pointer;
+  padding: 6px 10px; border: 0; border-bottom: 1px solid var(--line-3);
+  background: none; font: inherit; color: var(--ink-2);
+}
+.dbpick-item:last-child { border-bottom: 0; }
+.dbpick-item:hover { background: var(--hover, var(--line-3)); }
+.dbpick-item.is-active { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.dbpick-name {
+  font-family: var(--f-mono); font-size: calc(11.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dbpick-meta {
+  grid-column: 1 / 2; color: var(--ink-4);
+  font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dbpick-tag {
+  grid-row: 1 / 3; grid-column: 2; align-self: center;
+  color: #6D49C7; background: #EEE9FB; border: 1px solid #D9CCF4;
+  border-radius: 3px; padding: 1px 6px;
+  font-size: calc(9px * var(--fs-mul, 1.1) * var(--fs, 1)); white-space: nowrap;
+}
+.dbpick-empty { padding: 10px 12px; color: var(--ink-4); font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1)); }
+#dlgDbAppHint.is-error { color: var(--warn); }
+
 /* status bar */
 .dbw-status {
   flex: 0 0 auto;

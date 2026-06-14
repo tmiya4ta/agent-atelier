@@ -3508,9 +3508,15 @@ function applyProtoSpecificFields() {
   const isMcp   = proto === "mcp";
   const isMock  = proto === "mock";
   const isDb    = proto === "db";
-  // DB (clouderby) 専用フィールド (database / user / password) の表示制御
+  // DB 専用フィールド (type / discover / database / user / password) の表示制御
   const dbFields = $("#dlgDbFields");
   if (dbFields) dbFields.hidden = !isDb;
+  if (isDb) {
+    // driver ごとの便利 UI を出し分け (今は clouderby のみ Anypoint アプリ探索)
+    const driver = $("#dlgDbDriver")?.value || "clouderby";
+    const disc = $("#dlgClouderbyDiscover");
+    if (disc) disc.hidden = driver !== "clouderby";
+  }
   // CHANNEL は Slack 専用。 ただし A2A/MCP/Slack は本体高さを揃えたい
   // (中央寄せ時に protocol 切替で上下に動かないように) ので、 Slack 以外でも
   // 行の領域だけ確保して中身を不可視にする。 Mock はフォーム構成が大きく
@@ -3617,6 +3623,199 @@ function renderAuthRefSelect(selectedId) {
   neu.value = "__new__"; neu.textContent = "+ new identity…";
   sel.appendChild(neu);
   sel.value = (cur && (cur === "" || identityById(cur))) ? cur : "";
+}
+
+// ═══ DB (clouderby) — Anypoint アプリ探索 ════════════════
+// identity を選ぶと、その Anypoint org の deployed アプリ一覧を出し、選ぶと
+// clouderby サーバの public URL を #dlgUrl に自動入力する (Anypoint UI を踏まない)。
+// BG/Env は単一なら自動、複数なら select。前回選択を identity ごとに記憶。
+function populateDbAuthRef(selectedId) {
+  const sel = $("#dlgDbAuthRef");
+  if (!sel) return;
+  const cur = selectedId !== undefined ? selectedId : sel.value;
+  sel.innerHTML = "";
+  const none = document.createElement("option");
+  none.value = ""; none.textContent = "— none (enter url manually) —";
+  sel.appendChild(none);
+  (state.identities || []).forEach(idn => {
+    const o = document.createElement("option");
+    o.value = idn.id; o.textContent = `${idn.name} · ${kindBadge(idn.kind)}`;
+    sel.appendChild(o);
+  });
+  const neu = document.createElement("option");
+  neu.value = "__new__"; neu.textContent = "+ new identity…";
+  sel.appendChild(neu);
+  sel.value = (cur && identityById(cur)) ? cur : "";
+}
+
+function dbDiscoverReset() {
+  ["dlgDbScopeRow", "dlgDbBgField", "dlgDbEnvField", "dlgDbAppField", "dlgDbSignInField"]
+    .forEach(id => { const e = document.getElementById(id); if (e) e.hidden = true; });
+  const list = $("#dlgDbAppList"); if (list) list.innerHTML = "";
+  state._dbApps = [];
+  state._dbDisc = null;
+}
+
+function dbAppHint(text, isError) {
+  const h = $("#dlgDbAppHint");
+  if (h) { h.textContent = text; h.classList.toggle("is-error", !!isError); }
+}
+
+// kind を問わず Anypoint API 用の bearer token を返す (bearer は静的 token)。
+async function dbDiscoverToken(idn) {
+  if (idn.kind === "bearer") return idn.token || idn.accessToken || null;
+  return await ensureIdentityToken(idn);
+}
+
+// 競合ガード: identity/BG/Env のどれかが変わるたびに世代を進め、各 await 後に
+// 自分の世代が最新でなければ結果を破棄する (自動カスケードと手動選択の奪い合い対策)。
+function dbBumpGen() { return (state._dbGen = (state._dbGen || 0) + 1); }
+const dbStale = (gen) => gen !== state._dbGen;
+
+// identity 選択時のエントリ。silent token が無い authcode は sign-in ボタンを出す。
+async function dbDiscoverStart() {
+  dbDiscoverReset();
+  const gen = dbBumpGen();
+  const idn = identityById($("#dlgDbAuthRef")?.value || "");
+  if (!idn) return;
+  const silentKind = idn.kind === "oauth2_cc" || idn.kind === "oauth2_password" || idn.kind === "bearer";
+  const tokenReady = !!idn.token || (idn.accessToken && Date.now() < (idn.tokenExpiresAt || 0));
+  if (!silentKind && !tokenReady) {
+    $("#dlgDbAppField").hidden = false;
+    $("#dlgDbSignInField").hidden = false;
+    dbAppHint("sign in to load deployed apps");
+    return;
+  }
+  await dbLoadScopeAndApps(idn, gen);
+}
+
+async function dbDiscoverSignIn() {
+  const idn = identityById($("#dlgDbAuthRef")?.value || "");
+  if (!idn) return;
+  const gen = dbBumpGen();
+  try {
+    await ensureIdentityToken(idn);   // authcode → OAuth ポップアップ
+    if (dbStale(gen)) return;
+    $("#dlgDbSignInField").hidden = true;
+    await dbLoadScopeAndApps(idn, gen);
+  } catch (e) { if (!dbStale(gen)) dbAppHint(`sign in failed: ${e?.message || e}`, true); }
+}
+
+async function dbLoadScopeAndApps(idn, gen) {
+  const base = controlPlaneBase(idn);
+  let token;
+  try { token = await dbDiscoverToken(idn); }
+  catch (e) { if (!dbStale(gen)) { $("#dlgDbAppField").hidden = false; dbAppHint(`token error: ${e?.message || e}`, true); } return; }
+  if (dbStale(gen)) return;
+  if (!token) { $("#dlgDbAppField").hidden = false; dbAppHint("no token", true); return; }
+  state._dbDisc = { idn, token, base };
+  $("#dlgDbAppField").hidden = false;
+  dbAppHint("loading business groups…");
+  let bgs;
+  try { bgs = await fetchBusinessGroupsForToken(token, base); }
+  catch (e) { if (!dbStale(gen)) dbAppHint(`business groups failed: ${e?.message || e}`, true); return; }
+  if (dbStale(gen)) return;
+  state._dbDisc.bgs = bgs;
+  const mem = (state._dbDiscMem ||= {})[idn.id] || {};
+  const scopeRow = $("#dlgDbScopeRow"), bgField = $("#dlgDbBgField"), bgSel = $("#dlgDbBg");
+  if (bgs.length <= 1) {
+    bgField.hidden = true;
+    await dbLoadEnvs(bgs[0]?.id, gen);
+  } else {
+    scopeRow.hidden = false; bgField.hidden = false;
+    bgSel.innerHTML = "";
+    bgs.forEach(g => { const o = document.createElement("option"); o.value = g.id; o.textContent = g.name; bgSel.appendChild(o); });
+    bgSel.value = (mem.bgId && bgs.find(g => g.id === mem.bgId)) ? mem.bgId : bgs[0].id;
+    await dbLoadEnvs(bgSel.value, gen);
+  }
+}
+
+async function dbDiscoverBgChanged() {
+  const orgId = $("#dlgDbBg")?.value;
+  if (orgId) await dbLoadEnvs(orgId, dbBumpGen());
+}
+
+async function dbLoadEnvs(orgId, gen) {
+  const d = state._dbDisc; if (!d || !orgId) return;
+  d.orgId = orgId;
+  const mem = (state._dbDiscMem ||= {})[d.idn.id] || {};
+  dbAppHint("loading environments…");
+  let envs;
+  try { envs = await fetchEnvironmentsForOrg(d.token, d.base, orgId); }
+  catch (e) { if (!dbStale(gen)) dbAppHint(`environments failed: ${e?.message || e}`, true); return; }
+  if (dbStale(gen)) return;
+  d.envs = envs;
+  const scopeRow = $("#dlgDbScopeRow"), envField = $("#dlgDbEnvField"), envSel = $("#dlgDbEnv");
+  if (envs.length <= 1) {
+    envField.hidden = true;
+    if ($("#dlgDbBgField").hidden) scopeRow.hidden = true;
+    if (!envs[0]) { dbAppHint("no environments", true); return; }
+    await dbLoadApps(envs[0], orgId, gen);
+  } else {
+    scopeRow.hidden = false; envField.hidden = false;
+    envSel.innerHTML = "";
+    envs.forEach(e => { const o = document.createElement("option"); o.value = e.id; o.textContent = e.name + (e.isProduction ? " (prod)" : ""); envSel.appendChild(o); });
+    envSel.value = (mem.envId && envs.find(e => e.id === mem.envId)) ? mem.envId : envs[0].id;
+    await dbLoadApps(envs.find(e => e.id === envSel.value) || envs[0], orgId, gen);
+  }
+}
+
+async function dbDiscoverEnvChanged() {
+  const d = state._dbDisc; if (!d) return;
+  const env = (d.envs || []).find(e => e.id === $("#dlgDbEnv")?.value);
+  if (env) await dbLoadApps(env, d.orgId, dbBumpGen());
+}
+
+async function dbLoadApps(env, orgId, gen) {
+  const d = state._dbDisc; if (!d || !env) return;
+  d.env = env; d.orgId = orgId;
+  (state._dbDiscMem ||= {})[d.idn.id] = { bgId: orgId, envId: env.id };   // 記憶
+  dbAppHint(`loading apps in ${env.name}…`);
+  let apps;
+  try { apps = await fetchRtmDeployments(d.token, d.base, orgId, env); }
+  catch (e) { if (!dbStale(gen)) dbAppHint(`apps failed: ${e?.message || e}`, true); return; }
+  if (dbStale(gen)) return;
+  // clouderby/derby 名を上位、その後 名前順
+  const score = (n) => /clouder|derby/i.test(n || "") ? 0 : 1;
+  apps.sort((a, b) => score(a.name) - score(b.name) || String(a.name).localeCompare(String(b.name)));
+  state._dbApps = apps;
+  state._dbPicked = null;
+  dbAppHint(apps.length ? `${apps.length} apps · pick one` : "no deployed apps here", !apps.length);
+  renderDbAppList();
+}
+
+function renderDbAppList() {
+  const list = $("#dlgDbAppList"); if (!list) return;
+  const q = ($("#dlgDbAppFilter")?.value || "").toLowerCase();
+  const apps = (state._dbApps || []).filter(a => !q || String(a.name).toLowerCase().includes(q));
+  list.innerHTML = "";
+  if (!apps.length) { list.innerHTML = `<div class="dbpick-empty">${(state._dbApps || []).length ? "no match" : "—"}</div>`; return; }
+  apps.forEach(a => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "dbpick-item" + (state._dbPicked === a.id ? " is-active" : "");
+    const cb = /clouder|derby/i.test(a.name || "");
+    row.innerHTML = `<span class="dbpick-name">${escapeHtml(a.name)}</span>` +
+      `<span class="dbpick-meta">${escapeHtml(a.envName || "")}${a.status ? " · " + escapeHtml(a.status) : ""}${a.target ? " · " + escapeHtml(a.target) : ""}</span>` +
+      (cb ? `<span class="dbpick-tag">clouderby?</span>` : "");
+    row.addEventListener("click", () => pickDbApp(a));
+    list.appendChild(row);
+  });
+}
+
+async function pickDbApp(app) {
+  const d = state._dbDisc; if (!d) return;
+  state._dbPicked = app.id;
+  renderDbAppList();
+  dbAppHint(`resolving "${app.name}" endpoint…`);
+  try {
+    const url = await fetchRtmDeploymentUrl(d.token, d.base, d.orgId, app.envId || d.env.id, app.id);
+    if (!url) { dbAppHint("no public endpoint on this app", true); return; }
+    $("#dlgUrl").value = url.replace(/\/+$/, "");
+    if (!$("#dlgName").value.trim()) $("#dlgName").value = app.name;
+    clearDialogTest();
+    dbAppHint(`✓ ${url}`);
+  } catch (e) { dbAppHint(`endpoint failed: ${e?.message || e}`, true); }
 }
 
 // RTM detail の auth セレクトを埋める (none + 全 identity)。
@@ -5340,6 +5539,25 @@ function wireDialog() {
     });
   }
 
+  // ── DB (clouderby): type 切替 + Anypoint アプリ探索 ──
+  $("#dlgDbDriver")?.addEventListener("change", () => applyProtoSpecificFields());
+  const dbAuth = $("#dlgDbAuthRef");
+  if (dbAuth) {
+    dbAuth.addEventListener("change", () => {
+      if (dbAuth.value === "__new__") {
+        dbAuth.value = "";
+        state._authRefReturn = (newId) => { populateDbAuthRef(newId); dbDiscoverStart(); };
+        openIdentityDialog();
+        return;
+      }
+      dbDiscoverStart();
+    });
+  }
+  $("#dlgDbBg")?.addEventListener("change", () => dbDiscoverBgChanged());
+  $("#dlgDbEnv")?.addEventListener("change", () => dbDiscoverEnvChanged());
+  $("#dlgDbAppFilter")?.addEventListener("input", () => renderDbAppList());
+  $("#dlgDbSignIn")?.addEventListener("click", () => dbDiscoverSignIn());
+
   // mock の「装うプロトコル」セグメントトグル (A2A / MCP)
   const mockKind = $("#dlgMockKind");
   if (mockKind) {
@@ -5391,6 +5609,12 @@ function openDialog(opts = {}) {
   if ($("#dlgDbDatabase")) $("#dlgDbDatabase").value = editB ? (editB.database || "") : "";
   if ($("#dlgDbUser"))     $("#dlgDbUser").value     = editB ? (editB.user || "") : "";
   if ($("#dlgDbPassword")) $("#dlgDbPassword").value = editB ? (editB.password || "") : "";
+  if ($("#dlgDbDriver"))   $("#dlgDbDriver").value   = editB ? (editB.dbDriver || "clouderby") : "clouderby";
+  // DB: Anypoint アプリ探索の初期化 (identity 選択肢を埋め、探索 UI を畳む)
+  populateDbAuthRef("");
+  if ($("#dlgDbAppFilter")) $("#dlgDbAppFilter").value = "";
+  state._dbPicked = null;
+  dbDiscoverReset();
 
   // 編集モードの見た目: title / CTA / proto と url をロック
   const eyebrow = document.querySelector("#connectDialog .dialog-eyebrow");
