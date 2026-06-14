@@ -6,6 +6,7 @@ import { PROTOCOLS, getProtocol }           from "./protocols/index.js";
 import { mockUrl }                          from "./protocols/mock.js";
 import { AgentWindow }                      from "./window.js";
 import { DbWindow }                         from "./dbwindow.js";
+import { ClouderbyClient }                  from "./protocols/db/clouderby.js";
 import * as persist                         from "./persist.js";
 import { modalConfirm, modalAlert, modalPrompt, modalChoice, modalBusinessGroup, modalExport, modalImportScope } from "./modal.js";
 import { encryptText, decryptText }          from "./cryptobox.js";
@@ -3582,7 +3583,7 @@ function applyProtoSpecificFields() {
   if (urlPrefix && isDb) urlPrefix.textContent = "url";
   if (nameField) nameField.hidden = isMock && !isEditing;
   if (authField) authField.hidden = isMock || isDb;   // DB は inline user/password を使う
-  if (testBtn)   testBtn.hidden   = isMock || isDb;
+  if (testBtn)   testBtn.hidden   = isMock;            // DB は接続(session)テスト可
   if (advanced)  advanced.hidden  = isMock || isDb;
 
   // placeholder の切替
@@ -5737,6 +5738,31 @@ async function testDialog() {
         ` · ${result.card?.skills?.length || 0} skill${(result.card?.skills?.length || 0) === 1 ? "" : "s"}` +
         ` · ${ms}ms` +
         (mismatch ? `<br/><span class='dts-warn'>⚠ AgentCard.url (<code>${escapeHtml(cardUrl)}</code>) is on a different origin than the discovery URL. Messages will be sent to that URL.</span>` : ""));
+    } else if (protoId === "db") {
+      const driver = $("#dlgDbDriver")?.value || "clouderby";
+      if (driver !== "clouderby") {
+        setDialogTestStatus("info", `Test for driver <code>${escapeHtml(driver)}</code> is not supported yet.`);
+      } else {
+        // clouderby: session を張れるか (= base URL 到達 + user/password 認証) を確認し、
+        // 可能ならテーブル数も取得して即 close。実際の接続ウインドウは作らない。
+        const client = new ClouderbyClient({
+          baseUrl:  url,
+          user:     $("#dlgDbUser")?.value.trim(),
+          password: $("#dlgDbPassword")?.value || "",
+          database: $("#dlgDbDatabase")?.value.trim() || "default",
+          proxify:  proxifyForTest
+        });
+        await client.open();   // 認証失敗は 401 で throw
+        let tcount = null;
+        try { tcount = (await client.tables()).length; } catch { /* metadata 任意 */ }
+        try { await client.close(); } catch { /* best-effort */ }
+        const ms = Math.round(performance.now() - t0);
+        setDialogTestStatus("ok",
+          `<span class='dts-dot'></span> session OK` +
+          (client.serverVersion ? ` · clouderby <code>${escapeHtml(client.serverVersion)}</code>` : "") +
+          (tcount != null ? ` · ${tcount} table${tcount === 1 ? "" : "s"}` : "") +
+          ` · ${ms}ms`);
+      }
     } else {
       setDialogTestStatus("info", `Test for protocol <code>${escapeHtml(protoId)}</code> is not supported yet.`);
     }
