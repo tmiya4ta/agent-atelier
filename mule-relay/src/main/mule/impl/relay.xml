@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!--
+      CloudHub リバースプロキシ relay
+      ──────────────────────────────
+      用途: home 公開IP (atelier.theorems.io) はヘアピン NAT のため LAN 内から届かない。
+            CloudHub は外部にあるので home 公開IP に普通に到達できる。 そこで
+            CloudHub アプリ経由で atelier.theorems.io を中継し、 LAN からでも見られるようにする。
+
+      固定 upstream (relay.upstream) に path/query 保持で forward する透過プロキシ。
+      相対パス資産 (/js/app.js 等) も relay の URL に解決 → 再 forward されるので SPA がそのまま動く。
+    -->
+
+    <http:request-config name="relay-request-config">
+        <http:request-connection protocol="HTTPS" host="atelier.theorems.io" port="443"/>
+    </http:request-config>
+
+    <flow name="relay-flow">
+        <http:listener config-ref="http-listener-config" path="/*"
+                       allowedMethods="GET,POST,PUT,DELETE,PATCH,HEAD,OPTIONS">
+            <http:response statusCode="#[vars.st default 200]">
+                <http:headers><![CDATA[#[vars.hdrs default {}]]]></http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.st default 502]">
+                <http:body>#[payload]</http:body>
+                <http:headers><![CDATA[#[vars.hdrs default { 'Content-Type': 'text/plain; charset=utf-8' }]]]></http:headers>
+            </http:error-response>
+        </http:listener>
+
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="target"><![CDATA[%dw 2.0
+output application/java
+---
+(p('relay.upstream') default "https://atelier.theorems.io") ++ (attributes.requestUri default "/")]]></ee:set-variable>
+                <ee:set-variable variableName="fwdHeaders"><![CDATA[%dw 2.0
+output application/java
+var h = attributes.headers default {}
+// hop-by-hop / host は除去し、 Host を upstream の host に明示上書きする。
+// (これが無いと Caddy の host ベース振分け (atelier.theorems.io:443) に当たらず 404 になる)
+var drop = ["host","proxy-connection","connection","keep-alive","te","trailer","transfer-encoding","upgrade","content-length"]
+var upstreamHost = ((p('relay.upstream') default "https://atelier.theorems.io") replace /^https?:\/\// with "") replace /\/.*$/ with ""
+---
+(h filterObject ((v, k) -> not (drop contains lower(k as String)))) ++ { "Host": upstreamHost }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <try>
+            <http:request method="#[attributes.method]"
+                          url="#[vars.target]"
+                          config-ref="relay-request-config"
+                          followRedirects="false"
+                          responseTimeout="60000">
+                <http:headers>#[vars.fwdHeaders]</http:headers>
+                <http:response-validator>
+                    <http:success-status-code-validator values="0..599"/>
+                </http:response-validator>
+            </http:request>
+
+            <ee:transform>
+                <ee:variables>
+                    <ee:set-variable variableName="st"><![CDATA[%dw 2.0 output application/java --- attributes.statusCode default 200]]></ee:set-variable>
+                    <ee:set-variable variableName="hdrs"><![CDATA[%dw 2.0
+output application/java
+var rh = attributes.headers default {}
+var drop = ["connection","keep-alive","proxy-authenticate","proxy-connection","te","trailer","transfer-encoding","upgrade"]
+---
+rh filterObject ((v, k) -> not (drop contains lower(k as String)))]]></ee:set-variable>
+                </ee:variables>
+            </ee:transform>
+
+            <error-handler>
+                <on-error-continue type="ANY">
+                    <ee:transform>
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0 output text/plain --- "relay error: " ++ (error.description default "unknown") ++ " (target: " ++ (vars.target default "") ++ ")"]]></ee:set-payload>
+                        </ee:message>
+                        <ee:variables>
+                            <ee:set-variable variableName="st"><![CDATA[%dw 2.0 output application/java --- 502]]></ee:set-variable>
+                            <ee:set-variable variableName="hdrs"><![CDATA[%dw 2.0 output application/java --- { "Content-Type": "text/plain; charset=utf-8" }]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                </on-error-continue>
+            </error-handler>
+        </try>
+    </flow>
+
+</mule>

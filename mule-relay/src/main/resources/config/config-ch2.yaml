@@ -1,0 +1,4 @@
+http.port: "8081"
+
+# リバースプロキシの転送先 (固定 upstream)。 CloudHub から外部到達できる公開 URL。
+relay.upstream: "https://atelier.theorems.io"

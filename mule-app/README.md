@@ -100,11 +100,38 @@ yaac deploy app <org> <env> atelier-static target=ch2:<ps> v-cores=0.1 \
 
 (あるいは `1.0.1` → `1.0.2` のようにリビジョンを上げて update)
 
-## 注意
+## /proxy エンドポイント (CORS バイパス)
 
-- **Atelier の `/proxy` エンドポイントは Python dev-server 専用**。 Mule にホストする場合、
-  Atelier から CORS 制約のあるエンドポイント (Anypoint Exchange / 外部 A2A など) を直接叩くと
-  ブラウザにブロックされる可能性あり。 必要なら Mule 側に proxy フロー (`/proxy?url=...`) を
-  追加するか、 別の API Gateway をかます
+`impl/proxy.xml` に `/proxy?url=<encoded>` フローを実装済み。 Atelier client が CORS 制約の
+ある先 (Anypoint Exchange / 外部 A2A・MCP など) を叩くための転送口で、 Python dev-server と
+同じ I/F。
+
+### SSRF ガード (公開 CloudHub 上で必須)
+
+`/proxy` は**無認証で誰でも叩ける公開エンドポイント**になるため、 open proxy 化を防ぐ
+SSRF ガード (`src/main/resources/dw/SsrfGuard.dwl`) を組み込んである:
+
+- **strict allowlist**: host が許可 suffix に一致した時だけ転送。 既定は
+  `*.mulesoft.com` / `*.cloudhub.io` / `*.amazonaws.com` (Exchange の S3) /
+  `*.salesforce.com` / `*.force.com` / `github(usercontent).com` / fonts / jsdelivr。
+- **private/reserved IP 拒否**: `10/8` `127/8` `169.254/16` (cloud metadata) `172.16/12`
+  `192.168/16` `100.64/10` CGNAT、 IPv6 `::1`/ULA/link-local、 `localhost`/`.internal`/`.local`。
+- **scheme は http/https のみ**。 `file:` `gopher:` 等は拒否。
+- **userinfo 詐称** (`http://anypoint.mulesoft.com@169.254.169.254/`) は host 解析後に弾く。
+- **3xx redirect 先にも同じガードを適用** (allowlist host が内部へ飛ばす経路を遮断)。
+- 違反時は upstream に飛ばさず `403 { error, reason, host }` を返す。
+
+外部 A2A/MCP エージェントを足すときは:
+
+- `config/config-*.yaml` の **`proxy.allowHosts`** にカンマ区切りで host suffix を追加
+  (例 `proxy.allowHosts: "agents.example.com,my-a2a.io"`)、 または
+- `SsrfGuard.dwl` の `ALLOW_SUFFIX` を編集。
+
+### まだ残るリスク / 推奨
+
+- ガードは **DNS rebinding を防げない** (Mule HTTP connector が host 名で再解決するため)。
+- ガードは allowlist であり**認証・レート制限ではない**。 公開運用では `/proxy` に
+  **API Manager の client-id enforcement + rate limiting** ポリシーを併用すること。
+- 可能なら `/proxy` を静的配信アプリと分離し、 認証必須の別 listener に置く。
 - 同梱されるアセット: 親 (`../`) の `index.html`, `styles.css`, `js/**`, `oauth/**`, `assets/**`
 - `server/*.py` (mock-agent / dev-server) は同梱されない (CH2 では Python 動かないので)

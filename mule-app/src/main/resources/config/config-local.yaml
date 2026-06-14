@@ -1,1 +1,5 @@
 http.port: "8081"
+
+# /proxy で追加許可する host suffix (カンマ区切り)。 外部 A2A/MCP エージェントを足すとき設定。
+# 既定の許可: *.mulesoft.com / *.cloudhub.io / *.amazonaws.com / salesforce / github / fonts / jsdelivr
+proxy.allowHosts: ""

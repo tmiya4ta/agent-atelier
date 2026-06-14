@@ -1,0 +1,43 @@
+# theorems-edge — *.theorems.io を kind/RTF のアプリへ流すエッジリバースプロキシ
+#
+#   外部: *.theorems.io --(router)--> 192.168.11.6:443(HTTPS)/:9180(http)
+#   このコンテナ(docker network "kind" 上)で TLS 終端 → kind ノードの NodePort へ。
+#
+# 証明書: Let's Encrypt wildcard (/etc/letsencrypt/live/theorems.io, ro マウント)
+# アプリ追加時は: アプリ svc に NodePort を生やし、ここに host ブロックを足す。
+
+{
+    auto_https off          # 証明書は自前供給。 Caddy の自動取得はしない
+    admin off
+}
+
+# ── atelier ───────────────────────────────────────────────
+# 443: TLS 終端 (theorems.io wildcard)
+atelier.theorems.io:443 {
+    tls /etc/letsencrypt/live/theorems.io/fullchain.pem /etc/letsencrypt/live/theorems.io/privkey.pem
+    reverse_proxy 172.23.0.2:30081 172.23.0.3:30081 172.23.0.4:30081 {
+        lb_policy round_robin
+    }
+}
+
+# 9180: 素 HTTP
+http://atelier.theorems.io:9180 {
+    reverse_proxy 172.23.0.2:30081 172.23.0.3:30081 172.23.0.4:30081 {
+        lb_policy round_robin
+    }
+}
+
+# ── atelier-proxy (standalone CORS-bypass proxy, SSRF guard 付き) ──
+# NodePort 30082 → atelier-proxy:8081
+proxy.theorems.io:443 {
+    tls /etc/letsencrypt/live/theorems.io/fullchain.pem /etc/letsencrypt/live/theorems.io/privkey.pem
+    reverse_proxy 172.23.0.2:30082 172.23.0.3:30082 172.23.0.4:30082 {
+        lb_policy round_robin
+    }
+}
+
+http://proxy.theorems.io:9180 {
+    reverse_proxy 172.23.0.2:30082 172.23.0.3:30082 172.23.0.4:30082 {
+        lb_policy round_robin
+    }
+}
