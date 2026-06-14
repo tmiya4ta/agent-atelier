@@ -477,6 +477,45 @@
 
         <!-- DB (clouderby) connection fields -->
         <div id="dlgDbFields" hidden>
+          <div class="field">
+            <label class="field-label" for="dlgDbDriver"><span>type</span><span class="field-hint">database driver</span></label>
+            <select id="dlgDbDriver" class="dlg-authref">
+              <option value="clouderby">clouderby · JDBC over HTTP</option>
+            </select>
+          </div>
+
+          <!-- clouderby: discover deployed apps via Anypoint (no Anypoint UI needed) -->
+          <div id="dlgClouderbyDiscover">
+            <div class="field">
+              <label class="field-label" for="dlgDbAuthRef">
+                <span>discover via Anypoint</span>
+                <span class="field-hint">pick an identity → choose a deployed app (fills server url)</span>
+              </label>
+              <select id="dlgDbAuthRef" class="dlg-authref"></select>
+            </div>
+            <div class="field-row" id="dlgDbScopeRow" hidden>
+              <div class="field" id="dlgDbBgField" hidden>
+                <label class="field-label" for="dlgDbBg"><span>business group</span></label>
+                <select id="dlgDbBg" class="dlg-authref"></select>
+              </div>
+              <div class="field" id="dlgDbEnvField" hidden>
+                <label class="field-label" for="dlgDbEnv"><span>environment</span></label>
+                <select id="dlgDbEnv" class="dlg-authref"></select>
+              </div>
+            </div>
+            <div class="field" id="dlgDbAppField" hidden>
+              <label class="field-label">
+                <span>app</span>
+                <span class="field-hint" id="dlgDbAppHint">select a deployed app</span>
+              </label>
+              <input id="dlgDbAppFilter" type="text" class="dbpick-filter" placeholder="filter apps…" autocomplete="off" />
+              <div id="dlgDbAppList" class="dbpick-list" role="listbox" aria-label="deployed apps"></div>
+            </div>
+            <div class="field" id="dlgDbSignInField" hidden>
+              <button type="button" class="ghost-btn" id="dlgDbSignIn">Sign in to load apps</button>
+            </div>
+          </div>
+
           <div class="field-row">
             <div class="field">
               <label class="field-label" for="dlgDbDatabase"><span>database</span><span class="field-hint">optional</span></label>
