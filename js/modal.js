@@ -228,6 +228,75 @@ export function modalPrompt({ title, label, placeholder, defaultValue, confirmLa
   });
 }
 
+// modalExport — Export ダイアログ。 ファイル名 + 「Secret を含める」チェック +
+// チェック時にスライド表示される passphrase 欄。
+//   返り値: { name, includeSecrets, passphrase } または null (cancel)。
+export function modalExport({ title, defaultValue } = {}) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement("div");
+    wrap.className = "modal-backdrop modal-top";
+    wrap.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true">
+        <header class="modal-head">
+          <span class="modal-eyebrow">input</span>
+          <h3 class="modal-title">${escapeHtml(title || "Name this export")}</h3>
+        </header>
+        <div class="modal-body">
+          <label class="modal-label">file name (.json appended automatically)</label>
+          <input class="modal-input" id="expName" type="text" autocomplete="off" value="${escapeHtml(defaultValue || "")}" />
+          <label class="modal-check">
+            <input type="checkbox" id="expSecrets" />
+            <span class="modal-check-main">
+              <span class="modal-check-label">Include secrets (client_secret / tokens)</span>
+              <span class="modal-check-desc">Full backup. The file will be encrypted with a passphrase.</span>
+            </span>
+          </label>
+          <div class="modal-passwrap" id="expPassWrap">
+            <label class="modal-label">passphrase (encrypts the file)</label>
+            <input class="modal-input" id="expPass" type="password" autocomplete="new-password" placeholder="encryption passphrase" />
+            <span class="modal-hint">This passphrase encrypts the file. Required to import it. If lost, the file cannot be decrypted.</span>
+          </div>
+        </div>
+        <footer class="modal-foot">
+          <div class="modal-foot-actions">
+            <button type="button" class="ghost-btn modal-cancel">Cancel</button>
+            <button type="button" class="primary-btn modal-confirm"><span>Export</span><span class="arrow">→</span></button>
+          </div>
+        </footer>
+      </div>
+    `;
+    document.body.appendChild(wrap);
+    requestAnimationFrame(() => wrap.classList.add("is-open"));
+    const q = (s) => wrap.querySelector(s);
+    const nameEl = q("#expName"), cb = q("#expSecrets"), passWrap = q("#expPassWrap"), passEl = q("#expPass");
+    cb.addEventListener("change", () => {
+      passWrap.classList.toggle("is-open", cb.checked);
+      if (cb.checked) setTimeout(() => passEl.focus(), 180);
+    });
+    const close = (result) => {
+      wrap.classList.remove("is-open");
+      setTimeout(() => wrap.remove(), 220);
+      if (_stackKeyHandler === onKey) { document.removeEventListener("keydown", onKey, true); _stackKeyHandler = null; }
+      resolve(result);
+    };
+    const submit = () => {
+      const name = nameEl.value.trim();
+      if (!name) { nameEl.focus(); return; }
+      if (cb.checked && !passEl.value) { passEl.focus(); return; }
+      close({ name, includeSecrets: cb.checked, passphrase: passEl.value });
+    };
+    q(".modal-confirm").addEventListener("click", submit);
+    q(".modal-cancel").addEventListener("click", () => close(null));
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(null); }
+      else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); submit(); }
+    };
+    document.addEventListener("keydown", onKey, true);
+    _stackKeyHandler = onKey;
+    setTimeout(() => { nameEl.focus(); nameEl.select(); }, 50);
+  });
+}
+
 // modalBusinessGroup — business group を「1 枚で」選ばせる/入力させるモーダル。
 //   await modalBusinessGroup({ title, loadGroups, signIn })
 //     loadGroups: async () => [{id,name}]   (throw すると失敗扱い)
