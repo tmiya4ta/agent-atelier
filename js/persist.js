@@ -192,23 +192,6 @@ export function clear() {
   clearSecrets();
 }
 
-// ─── 暗号化同期 (TOTP) 用スナップショット ─────────────
-// localStorage の state(secret 抜き) と sessionStorage の secrets を **両方** 束ねる。
-// この束を呼び出し側 (sync.js) がクライアント暗号化してサーバへ置く → secret も持ち運べる。
-export function snapshotForSync() {
-  let st = null, sec = null;
-  try { st  = JSON.parse(localStorage.getItem(KEY) || "null"); } catch {}
-  try { sec = JSON.parse(sessionStorage.getItem(SECRETS_KEY) || "null"); } catch {}
-  return { v: VERSION, state: st, secrets: sec };
-}
-// 同期から復元: 両ストアへ書き戻す。 呼び出し側で reload して再 hydrate する想定。
-export function restoreFromSync(obj) {
-  if (!obj || !obj.state) return false;
-  try { localStorage.setItem(KEY, JSON.stringify(obj.state)); } catch {}
-  try { if (obj.secrets) sessionStorage.setItem(SECRETS_KEY, JSON.stringify(obj.secrets)); } catch {}
-  return true;
-}
-
 // debounced save — 連続的な変更 (ドラッグ等) でも安く済ませる
 let _timer = null;
 export function scheduleSave(state, ms = 80) {
@@ -219,21 +202,31 @@ export function scheduleSave(state, ms = 80) {
 // ─── export / import ─────────────────────────
 // Snapshot file format:
 // { app: "atelier", exportedAt: ISO, state: <raw state object — secrets stripped> }
-export function exportJson() {
+// opts.includeSecrets=true で client_secret / token 等のクレデンシャルも含める
+// (引っ越し/完全バックアップ用。 出力ファイルはパスワード級の機密になる)。
+// 既定 (false) は従来どおり secret を strip した「雛形」。
+export function exportJson(opts = {}) {
   const raw = localStorage.getItem(KEY);
   const state = raw ? JSON.parse(raw) : { v: VERSION };
-  // localStorage 上の state は既に save() で secrets 抜きだが、 念のため再度 strip。
-  if (Array.isArray(state.catalogs))   state.catalogs   = state.catalogs.map(stripSecrets);
-  if (Array.isArray(state.identities)) state.identities = state.identities.map(stripSecrets);
-  if (Array.isArray(state.bookmarks))  state.bookmarks  = state.bookmarks.map(stripSecrets);
-  if (Array.isArray(state.workspaces)) {
-    state.workspaces.forEach(ws => (ws.windows || []).forEach(w => {
-      if (w.config) w.config = stripSecrets(w.config);
-    }));
+  if (opts.includeSecrets) {
+    // sessionStorage に逃がしてある secrets を構造へ再合流する。
+    hydrateSecrets(state.catalogs, state.bookmarks, state.identities);
+    (state.workspaces || []).forEach(ws => (ws.windows || []).forEach(w => hydrateWindowSecrets(w)));
+  } else {
+    // 既定: secret を strip (共有しても安全な雛形)。
+    if (Array.isArray(state.catalogs))   state.catalogs   = state.catalogs.map(stripSecrets);
+    if (Array.isArray(state.identities)) state.identities = state.identities.map(stripSecrets);
+    if (Array.isArray(state.bookmarks))  state.bookmarks  = state.bookmarks.map(stripSecrets);
+    if (Array.isArray(state.workspaces)) {
+      state.workspaces.forEach(ws => (ws.windows || []).forEach(w => {
+        if (w.config) w.config = stripSecrets(w.config);
+      }));
+    }
   }
   return JSON.stringify({
     app: "atelier",
     exportedAt: new Date().toISOString(),
+    includesSecrets: !!opts.includeSecrets,
     state
   }, null, 2);
 }
@@ -305,7 +298,19 @@ export function importJson(str, opts = {}) {
     if (cur && (cur.theme === "dark" || cur.theme === "light")) state.theme = cur.theme;
   } catch {}
 
-  // import 時は secrets を必ず除去 (snapshot 由来の token を流し込ませない)
+  // opts.keepSecrets=true (ユーザーが自分の完全バックアップと確認済み) なら、
+  // secret を sessionStorage 側へ移して復元する。 localStorage には決して平文で残さない。
+  if (opts.keepSecrets) {
+    (state.catalogs   || []).forEach(c   => { const s = extractSecrets(c,   c.id); if (s) setSecretEntry("catalogs",   c.id, s.secrets); });
+    (state.identities || []).forEach(idn => { const s = extractSecrets(idn, idn.id); if (s) setSecretEntry("identities", idn.id, s.secrets); });
+    (state.bookmarks  || []).forEach(b   => { const k = b.key || `${b.protoId}::${b.url || ""}`; const s = extractSecrets(b, k); if (s) setSecretEntry("bookmarks", k, s.secrets); });
+    (state.workspaces || []).forEach(ws => (ws.windows || []).forEach(w => {
+      const k = `${w.protoId}::${w.config?.url || ""}`;
+      const s = w.config ? extractSecrets(w.config, k) : null; if (s) setSecretEntry("windows", k, s.secrets);
+    }));
+  }
+  // localStorage には常に strip 版を書く (secret はディスクに残さない)。 keepSecrets の時は
+  // 上で sessionStorage に逃がしてあるので、 reload 後 hydrateSecrets で復元される。
   if (Array.isArray(state.catalogs))   state.catalogs   = state.catalogs.map(stripSecrets);
   if (Array.isArray(state.identities)) state.identities = state.identities.map(stripSecrets);
   if (Array.isArray(state.bookmarks))  state.bookmarks  = state.bookmarks.map(stripSecrets);

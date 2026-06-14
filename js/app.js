@@ -6,11 +6,10 @@ import { PROTOCOLS, getProtocol }           from "./protocols/index.js";
 import { mockUrl }                          from "./protocols/mock.js";
 import { AgentWindow }                      from "./window.js";
 import * as persist                         from "./persist.js";
-import { modalConfirm, modalAlert, modalPrompt, modalChoice, modalBusinessGroup } from "./modal.js";
+import { modalConfirm, modalAlert, modalPrompt, modalChoice, modalBusinessGroup, modalExport } from "./modal.js";
+import { encryptText, decryptText }          from "./cryptobox.js";
 import { runAuthCodeFlow, redirectUri }     from "./oauth.js";
 import { parseScript, parseMocks, ScriptRunner }        from "./script.js";
-import { genSecret, verifyTotp, otpauthUri } from "./totp.js";
-import { pushSettings, pullSettings }        from "./sync.js";
 
 // /demo用のフォールバック (ブックマーク0件の時のみ使用)
 const DEMO_AGENTS = [
@@ -65,31 +64,6 @@ const CATALOG_FLOWS = [
   { id: "cc",       label: "Client Credentials",  sub: "oauth2 / cc",   description: "Client credentials grant" },
   { id: "authcode", label: "Authorization Code",  sub: "oauth2 / code", description: "Authorization code + PKCE" }
 ];
-
-// 現状 Anypoint のみ。ベンダーが増えたらここに追加 + providerセレクタUIを復活させる
-const ANYPOINT = {
-  id: "anypoint",
-  label: "Anypoint Platform",
-  authUrl:  "https://anypoint.mulesoft.com/accounts/api/v2/oauth2/authorize",
-  tokenUrl: "https://anypoint.mulesoft.com/accounts/api/v2/oauth2/token"
-};
-
-// 「Sign in with Anypoint」用 Connected App。 client_id をここに入れれば
-// ログインゲートはボタン 1 発になる (Google ログイン同様)。 空ならゲートに
-// client_id 入力欄が出る。 redirect URL は <origin>/oauth/callback.html を登録。
-// 暗号化設定同期。 /sync は atelier-static 自身 (同一オリジン) に同居 → 相対パス。
-// (egress 不要・Object Store だけなので k0/RTF でも動く)
-const SYNC_BASE = "";
-
-const ANYPOINT_SIGNIN = {
-  clientId:     "",             // ← Connected App (Authorization Code) の client_id
-  clientSecret: "",             // ← Anypoint は authcode で client_secret 必須
-  authUrl:  ANYPOINT.authUrl,
-  tokenUrl: ANYPOINT.tokenUrl,
-  // openid/profile/email = userinfo, offline_access = refresh token, full = 各API
-  scopes:   "openid profile email offline_access full",
-  userinfoUrl: "https://anypoint.mulesoft.com/accounts/api/v2/oauth2/userinfo"
-};
 
 const state = {
   workspaces: [],     // [{ id, name, windows: [], events: 0, layer: <div> }]
@@ -272,7 +246,6 @@ function init() {
   wireScriptPanel();
   wireBackup();
   wireConnToggleAll();
-  wireAuthGate();
   applyZoom();   // 復元値を反映
   applySidebar();
   applySidePanelW();   // 復元値を反映
@@ -280,19 +253,6 @@ function init() {
   applyScriptPanel();   // 復元値を反映
   updateStatusLine();
   updateEmptyState();
-
-  // 永続ローカルセッション (TOTP) を復元 → リロードしてもログイン状態を維持。
-  // init() はモジュール評価中に呼ばれ TOTP_KEY/SESSION_KEY const がまだ TDZ なので、
-  // ここではリテラルキーで直接 localStorage を読む (ヘルパー経由だと TDZ で握り潰される)。
-  try {
-    const sess = JSON.parse(localStorage.getItem("atelier:session:v1") || "null");
-    const enrolled = !!localStorage.getItem("atelier:totp:v1");
-    if (sess && !(sess.method === "totp" && !enrolled)) state._localSession = sess;
-    else if (sess) localStorage.removeItem("atelier:session:v1");
-  } catch {}
-
-  // 起動時ログインゲート (TOTP サインイン / skip でカタログ無効)
-  maybeShowAuthGate();
 
   // import 直後 (reload を挟む) は restore 後にウインドウを tile する
   if (sessionStorage.getItem("atelier:tileAfterImport")) {
@@ -323,39 +283,7 @@ function init() {
 }
 
 // 保存トリガ (debounced)
-function dirty() { persist.scheduleSave(state); syncSchedulePush(); }
-
-// ── 暗号化設定同期 (TOTP セッション時のみ) ──────────────────
-// 変更を debounce してサーバへ push (クライアント暗号化)。
-let _syncTimer = null;
-function syncSchedulePush(ms = 2500) {
-  if (!(state._localSession?.method === "totp") || !totpSecret()) return;
-  if (_syncTimer) clearTimeout(_syncTimer);
-  _syncTimer = setTimeout(syncPushNow, ms);
-}
-async function syncPushNow() {
-  _syncTimer = null;
-  const secret = totpSecret();
-  if (!secret || state._localSession?.method !== "totp") return;
-  try {
-    persist.save(state);   // 最新を localStorage/sessionStorage に確定してから snapshot
-    await pushSettings(SYNC_BASE, secret, persist.snapshotForSync());
-  } catch (e) { console.warn("[sync] push failed:", e?.message || e); }
-}
-// ログイン直後に1回: サーバに設定があれば取り込み (server が正)、 無ければ現在の設定を種として push。
-async function syncPullOnLogin(secret) {
-  try {
-    const obj = await pullSettings(SYNC_BASE, secret);
-    if (obj && obj.state) {
-      persist.restoreFromSync(obj);
-      location.reload();          // 同期した state で再初期化 (session/totp は別キーなので維持)
-      return;
-    }
-    // サーバ未保存 (初回端末) → 現在のローカルを種として保存
-    persist.save(state);
-    await pushSettings(SYNC_BASE, secret, persist.snapshotForSync());
-  } catch (e) { console.warn("[sync] pull failed:", e?.message || e); }
-}
+function dirty() { persist.scheduleSave(state); }
 
 // ═══════════════════════════════════════════════════════
 // ZOOM
@@ -453,8 +381,6 @@ function wireSideResize() {
 // SIDEBAR ACTIVITY BAR (rail + panel)
 // ═══════════════════════════════════════════════════════
 function selectSideCat(cat) {
-  // カタログはサインイン (手段問わず) が前提。 未サインインなら押せない (no-op)。
-  if (cat === "catalogs" && !appSignedIn()) return;
   state.activeSideCat = cat;
   $$("#sideRail .rail-ico").forEach(b => {
     const on = b.dataset.cat === cat;
@@ -470,355 +396,8 @@ function wireSideRail() {
   $$("#sideRail .rail-ico").forEach(b => {
     b.addEventListener("click", () => selectSideCat(b.dataset.cat));
   });
-  // 復元カテゴリが catalogs でも未サインインなら connections に退避
-  const start = (state.activeSideCat === "catalogs" && !appSignedIn()) ? "connections" : (state.activeSideCat || "connections");
+  const start = state.activeSideCat || "connections";
   selectSideCat(start);
-}
-
-// ═══════════════════════════════════════════════════════
-// AUTH GATE (Sign in with Anypoint)
-// ═══════════════════════════════════════════════════════
-// セッション identity = サインインで得た Anypoint authcode トークン。
-function sessionIdentity() {
-  return (state.identities || []).find(i => i._session && i.kind === "oauth2_authcode");
-}
-function isSignedIn() {
-  const idn = sessionIdentity();
-  return !!(idn && idn.accessToken && Date.now() < (idn.tokenExpiresAt || 0));
-}
-// skip はこの読み込み中だけ有効 (メモリ)。 リロードすれば未サインインなら再度ゲートが出る。
-function authSkipped() { return !!state._authSkipped; }
-
-// ── ローカルセッション (TOTP / GitHub / Google) ──────────────
-// Anypoint 以外のログイン手段。 セッションはメモリ (リロードで再ログイン)。
-// Anypoint と違い「カタログのアンロック」はしない (catalogs は Anypoint 専用)。
-function localSession() { return state._localSession || null; }
-// アプリ全体のサインイン判定 (どの手段でも可)。 catalogs は別途 isSignedIn() (Anypoint) を見る。
-function appSignedIn() { return isSignedIn() || !!localSession(); }
-
-// TOTP の共有秘密は localStorage に保存 (再ログイン時に検証で使う = パスワード相当)。
-const TOTP_KEY = "atelier:totp:v1";
-function totpSecret()    { try { return localStorage.getItem(TOTP_KEY) || ""; } catch { return ""; } }
-function totpEnrolled()  { return !!totpSecret(); }
-function setTotpSecret(s){ try { s ? localStorage.setItem(TOTP_KEY, s) : localStorage.removeItem(TOTP_KEY); } catch {} }
-
-// ローカルセッションを localStorage に永続化 → リロードしてもログイン状態を維持
-// (ログアウトするまで保持)。 secret ではなく「解錠済み」フラグなので localStorage で可。
-const SESSION_KEY = "atelier:session:v1";
-function saveLocalSession(s) { try { s ? localStorage.setItem(SESSION_KEY, JSON.stringify(s)) : localStorage.removeItem(SESSION_KEY); } catch {} }
-function loadLocalSession()  { try { return JSON.parse(localStorage.getItem(SESSION_KEY) || "null"); } catch { return null; } }
-
-function showAuthGate() {
-  const g = $("#authGate"); if (!g) return;
-  g.hidden = false;
-  showGateView("main");                                       // 常に手段選択ビューから
-  $("#authGateMsg").textContent = "";
-}
-function hideAuthGate() {
-  const g = $("#authGate");
-  if (!g || g.hidden) return;
-  g.classList.add("is-closing");           // フェードアウト
-  setTimeout(() => {
-    g.hidden = true;
-    g.classList.remove("is-closing");
-    setAuthGatePending(false);             // 次回のため form ビューに戻す
-  }, 240);
-}
-// ゲートを「フォーム」⇄「認証中スピナー」で切り替える。
-function setAuthGatePending(on) {
-  const main = $("#authGateMain"), pend = $("#authGatePending");
-  if (main) main.hidden = on;
-  if (pend) pend.hidden = !on;
-}
-
-// 起動時の判定: サインイン済み (手段問わず) or skip 済みならゲートを出さない。
-function maybeShowAuthGate() {
-  applyCatalogGate();
-  updateAuthStatus();
-  if (appSignedIn() || authSkipped()) { hideAuthGate(); return; }
-  showAuthGate();
-}
-
-async function doAnypointSignIn() {
-  const btn = $("#authGateSignin"), msg = $("#authGateMsg");
-  const clientId = (ANYPOINT_SIGNIN.clientId || $("#authGateCid")?.value || "").trim();
-  const clientSecret = (ANYPOINT_SIGNIN.clientSecret || $("#authGateSecret")?.value || "").trim();
-  if (!clientId) { msg.textContent = "Connected App の client_id を入力してください。"; $("#authGateCid")?.focus(); return; }
-  btn.disabled = true;
-  msg.textContent = "";
-  setAuthGatePending(true);   // フォーム → 認証中スピナーに切替 (戻ってきてもダサくない)
-  try {
-    const tmp = {
-      authUrl: ANYPOINT_SIGNIN.authUrl, tokenUrl: ANYPOINT_SIGNIN.tokenUrl,
-      clientId, clientSecret: clientSecret || undefined,
-      scopes: ANYPOINT_SIGNIN.scopes, redirectUri: redirectUri()
-    };
-    const data = await runAuthCodeFlow(tmp, { tab: true });   // 別タブで Anypoint へ
-    let idn = sessionIdentity();
-    if (!idn) {
-      idn = {
-        id: `idn-${++idnCounter}`, _session: true, kind: "oauth2_authcode",
-        name: "Anypoint (signed in)", provider: "anypoint",
-        authUrl: tmp.authUrl, tokenUrl: tmp.tokenUrl, clientId,
-        clientSecret: clientSecret || undefined, scopes: tmp.scopes,
-        redirectUri: tmp.redirectUri, createdAt: Date.now()
-      };
-      state.identities.push(idn);
-    } else {
-      idn.clientId = clientId;
-      if (clientSecret) idn.clientSecret = clientSecret;
-    }
-    idn.accessToken    = data.access_token;
-    idn.tokenExpiresAt = Date.now() + Math.max(60, (data.expires_in || 3600) - 60) * 1000;
-    if (data.refresh_token) idn.refreshToken = data.refresh_token;
-    idn.updatedAt = Date.now();
-    state._authSkipped = false;
-    dirty();
-    renderIdentities();
-    applyCatalogGate();
-    updateAuthStatus();
-    // token を得た時点でゲートを即フェードアウト (チラつき防止)。
-    hideAuthGate();
-    // userinfo (名前/イニシャル) は背景で取得 → アバターを後追い更新。
-    fetchAnypointUserinfo(idn).then((who) => {
-      if (who) { idn.name = `Anypoint · ${who}`; dirty(); renderIdentities(); updateAuthStatus(); }
-    });
-  } catch (e) {
-    setAuthGatePending(false);   // フォームに戻してエラー表示
-    msg.textContent = `サインイン失敗: ${e?.message || e}`;
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-// Anypoint userinfo から表示名を取得 (best-effort)。
-async function fetchAnypointUserinfo(idn) {
-  try {
-    const res = await fetch(`/proxy?url=${encodeURIComponent(ANYPOINT_SIGNIN.userinfoUrl)}`, {
-      headers: { Authorization: `Bearer ${idn.accessToken}`, Accept: "application/json" }
-    });
-    if (!res.ok) return null;
-    const u = await res.json();
-    return u.name || u.preferred_username || u.email || u.username || null;
-  } catch { return null; }
-}
-
-function skipAuthGate() {
-  state._authSkipped = true;
-  hideAuthGate();
-  applyCatalogGate();
-}
-
-// 未サインイン時はカタログ機能を無効化 (rail アイコン lock + 追加ボタン無効)。
-// ログイン手段は問わない (TOTP/GitHub/Google でも可)。 catalog の実 API 認証は
-// 各カタログの authRef (OAuth CC 等) で行うので gate のセッション種別には依存しない。
-function applyCatalogGate() {
-  const on = appSignedIn();
-  const railCat = document.querySelector('#sideRail .rail-ico[data-cat="catalogs"]');
-  if (railCat) {
-    railCat.classList.toggle("is-locked", !on);
-    railCat.title = on ? "Catalogs" : "Catalogs — sign in required";
-  }
-  const addBtn = $("#catalogAdd");
-  if (addBtn) addBtn.disabled = !on;
-  if (!on && state.activeSideCat === "catalogs") selectSideCat("connections");
-}
-
-// ── ローカルセッション確立 (TOTP / OAuth プロバイダ共通) ──────
-function establishLocalSession(method, name) {
-  state._localSession = { method, name: name || method, at: Date.now() };
-  saveLocalSession(state._localSession);   // リロードで維持
-  state._authSkipped = false;
-  updateAuthStatus();
-  applyCatalogGate();
-  hideAuthGate();
-}
-
-// ── TOTP (認証アプリ) ────────────────────────────────────────
-function showGateView(which) {   // "main" | "totp"
-  $("#authGateMain").hidden = which !== "main";
-  $("#authGateTotp").hidden = which !== "totp";
-}
-
-let _qrLibPromise = null;
-function loadQrLib() {
-  if (window.QRCode) return Promise.resolve(window.QRCode);
-  if (_qrLibPromise) return _qrLibPromise;
-  _qrLibPromise = new Promise((res, rej) => {
-    const s = document.createElement("script");
-    s.src = "https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js";
-    s.onload = () => res(window.QRCode); s.onerror = () => rej(new Error("QR lib load failed"));
-    document.head.appendChild(s);
-  });
-  return _qrLibPromise;
-}
-
-async function renderTotpQr(uri) {
-  const box = $("#totpQr"); if (!box) return;
-  box.innerHTML = "";
-  try {
-    const QR = await loadQrLib();
-    const canvas = document.createElement("canvas");
-    box.appendChild(canvas);
-    await QR.toCanvas(canvas, uri, { width: 176, margin: 1 });
-  } catch {
-    box.textContent = "QR を表示できませんでした。下のキーを手入力してください。";
-  }
-}
-
-async function openTotpGate() {
-  $("#totpMsg").textContent = "";
-  $("#totpCode").value = "";
-  showGateView("totp");
-  if (totpEnrolled()) {
-    // 既に登録済み → コード入力で解錠
-    $("#totpEnroll").hidden = true;
-    $("#totpVerify").hidden = false;
-    $("#totpReset").hidden = false;
-    state._totpPending = null;
-  } else {
-    // 未登録 → 新規シークレット生成 + QR
-    const secret = genSecret();
-    state._totpPending = secret;
-    $("#totpEnroll").hidden = false;
-    $("#totpVerify").hidden = true;
-    $("#totpReset").hidden = true;
-    $("#totpKey").textContent = secret.replace(/(.{4})/g, "$1 ").trim();
-    renderTotpQr(otpauthUri(secret, signedInNameRaw() || "atelier", "Atelier"));
-  }
-  setTimeout(() => $("#totpCode")?.focus(), 60);
-}
-
-async function submitTotp() {
-  const code = ($("#totpCode")?.value || "").trim();
-  const msg = $("#totpMsg");
-  const enrolling = !totpEnrolled();
-  const secret = enrolling ? state._totpPending : totpSecret();
-  if (!secret) { msg.textContent = "secret がありません。"; return; }
-  const ok = await verifyTotp(secret, code);
-  if (!ok) { msg.textContent = "コードが違います。アプリの現在のコードを入力してください。"; return; }
-  if (enrolling) { setTotpSecret(secret); state._totpPending = null; }
-  establishLocalSession("totp", "Authenticator");
-  syncPullOnLogin(secret);   // サーバに設定があれば取り込み (無ければ種として保存)
-}
-
-function resetTotp() {
-  setTotpSecret("");
-  if (state._localSession?.method === "totp") { state._localSession = null; saveLocalSession(null); }
-  openTotpGate();   // enroll モードへ
-}
-
-// ── OAuth プロバイダ (GitHub / Google) ───────────────────────
-// client_id を設定すれば有効化。 GitHub は token 交換に secret 必須 (proxy 側に置く想定)、
-// Google は PKCE public が使える。 未設定時は導線だけ出して案内する。
-const OAUTH_PROVIDERS = {
-  github: { name: "GitHub", clientId: "", authUrl: "https://github.com/login/oauth/authorize",
-            tokenUrl: "https://github.com/login/oauth/access_token", scopes: "read:user user:email" },
-  google: { name: "Google", clientId: "", authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
-            tokenUrl: "https://oauth2.googleapis.com/token", scopes: "openid email profile" }
-};
-async function doProviderSignIn(key) {
-  const p = OAUTH_PROVIDERS[key]; if (!p) return;
-  const msg = $("#authGateMsg");
-  if (!p.clientId) {
-    msg.textContent = `${p.name} は未設定です。${p.name} の OAuth App を作成し、 js/app.js の OAUTH_PROVIDERS.${key}.clientId を設定してください (redirect = この画面のURL + /oauth/callback.html)。`;
-    return;
-  }
-  msg.textContent = "";
-  setAuthGatePending(true);
-  try {
-    const data = await runAuthCodeFlow({
-      authUrl: p.authUrl, tokenUrl: p.tokenUrl, clientId: p.clientId,
-      clientSecret: p.clientSecret, scopes: p.scopes, redirectUri: redirectUri()
-    }, { tab: true });
-    establishLocalSession(key, p.name);
-    void data;
-  } catch (e) {
-    setAuthGatePending(false);
-    msg.textContent = `${p.name} サインイン失敗: ${e?.message || e}`;
-  }
-}
-
-function wireAuthGate() {
-  $("#authGateSkip")?.addEventListener("click", skipAuthGate);
-  $("#authGateTotpBtn")?.addEventListener("click", openTotpGate);
-  $("#totpSubmit")?.addEventListener("click", submitTotp);
-  $("#totpCode")?.addEventListener("keydown", (e) => { if (e.key === "Enter") submitTotp(); });
-  $("#totpReset")?.addEventListener("click", resetTotp);
-  $("#totpBack")?.addEventListener("click", () => { showGateView("main"); $("#authGateMsg").textContent = ""; });
-  $("#authGateCancel")?.addEventListener("click", () => {
-    setAuthGatePending(false);   // 認証中表示をやめてフォームへ (別タブは閉じてOK)
-    $("#authGateMsg").textContent = "";
-  });
-  const av = $("#railAvatar");
-  if (av) av.addEventListener("click", () => {
-    const who = signedInName();
-    openRowMenu(av, [
-      { header: true, label: who },
-      { label: "Logout", danger: true, onClick: doLogout }
-    ]);
-  });
-}
-
-// 表示名の生 (Anypoint userinfo 名 or ローカルセッション名)。 TOTP enroll の QR ラベル等に使う。
-function signedInNameRaw() {
-  const n = sessionIdentity()?.name || "";
-  if (n) return n.startsWith("Anypoint · ") ? n.slice("Anypoint · ".length) : n;
-  return localSession()?.name || "";
-}
-// サインイン中ユーザーの表示名 (アバター用)。
-function signedInName() {
-  return signedInNameRaw() || (isSignedIn() ? "Anypoint" : (localSession() ? "Account" : "Anypoint"));
-}
-// 名前からイニシャル (最大2文字) を作る。
-function initialsOf(name) {
-  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
-// サインイン状態を左レールのアバターに反映 (Claude.ai 風の丸イニシャル)。
-function updateAuthStatus() {
-  const av = $("#railAvatar"); if (!av) return;
-  const on = appSignedIn();
-  av.hidden = !on;
-  if (on) {
-    const who = signedInName();
-    av.textContent = initialsOf(who);
-    av.title = `${who} — account`;
-  }
-}
-
-// logout: 認証情報をすべてリセット (identities / token / sessionStorage secrets)。
-async function doLogout() {
-  const ok = await modalConfirm({
-    title: "Sign out?",
-    message: "サインアウトして、保存されている認証情報 (identity / トークン / client_secret) を消去します。認証アプリ (TOTP) の登録は保持され、再ログインはコード入力だけで済みます (外すにはゲートの reset authenticator)。",
-    confirmLabel: "Sign out",
-    danger: true
-  });
-  if (!ok) return;
-  // identity を全削除
-  state.identities = [];
-  // catalogs / bookmarks にキャッシュされた token も消す
-  (state.catalogs || []).forEach(c => { delete c.accessToken; delete c.tokenExpiresAt; });
-  (state.bookmarks || []).forEach(b => { delete b.auth; });
-  // sessionStorage の secret ストアを破棄
-  persist.clearSecrets();
-  state._sessionIdentityId = null;
-  state._localSession = null;     // セッション終了 (TOTP/GitHub/Google)
-  saveLocalSession(null);         // 永続セッションも破棄
-  // TOTP の登録 (共有秘密) は端末登録扱いで保持 → 再ログインはコード入力だけで済む。
-  // 完全に外したい時はゲートの「reset authenticator」で削除する。
-  state._authSkipped = false;
-  dirty();
-  renderIdentities();
-  renderCatalogs();
-  renderBookmarks();
-  updateAuthStatus();
-  applyCatalogGate();
-  showAuthGate();   // 再ログインを促す
 }
 
 // ═══════════════════════════════════════════════════════
@@ -5072,27 +4651,24 @@ async function openImportPicker() {
 
 function wireBackup() {
   $("#btnExport").addEventListener("click", async () => {
-    const ok = await modalConfirm({
-      title:        "Export configuration?",
-      message:      "The file will contain connections, catalogs and scripts — including OAuth client secrets and access tokens. Treat it as sensitive.",
-      confirmLabel: "Continue"
-    });
-    if (!ok) return;
     const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const defaultName = `atelier-export-${stamp}`;
-    const inputName = await modalPrompt({
-      title:        "Name this export",
-      label:        "File name (.json appended automatically)",
-      placeholder:  defaultName,
-      defaultValue: defaultName,
-      confirmLabel: "Export"
-    });
-    if (!inputName) return;
-    const safe = inputName.replace(/\.json$/i, "").replace(/[\\/:*?"<>|]+/g, "_").trim() || defaultName;
+    const r = await modalExport({ title: "Name this export", defaultValue: defaultName });
+    if (!r) return;
+    const includeSecrets = !!r.includeSecrets;
+    const safe = r.name.replace(/\.json$/i, "").replace(/[\\/:*?"<>|]+/g, "_").trim() || defaultName;
     try {
       // Ensure pending debounced save is flushed so the export reflects the latest state
       persist.save(state);
-      const json = persist.exportJson();
+      let json;
+      if (includeSecrets) {
+        // Secret 込み → passphrase でファイル全体を暗号化
+        const inner = persist.exportJson({ includeSecrets: true });
+        const box   = await encryptText(r.passphrase, inner);
+        json = JSON.stringify({ app: "atelier", encrypted: true, exportedAt: new Date().toISOString(), ...box }, null, 2);
+      } else {
+        json = persist.exportJson();
+      }
       const blob = new Blob([json], { type: "application/json" });
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement("a");
@@ -5171,6 +4747,22 @@ async function chooseImportScope() {
 
 // Returns true if import happened (so caller can persist URL history etc.).
 async function applyImport(text, sourceLabel, presetScope) {
+  // 暗号化ファイル (Secret 込み export) なら passphrase で復号してから取り込む。
+  let forceKeepSecrets = false;
+  try {
+    const head = JSON.parse(text);
+    if (head && head.encrypted) {
+      const pass = await modalPrompt({
+        title:        "Passphrase",
+        label:        "This file is encrypted. Enter the passphrase used when it was exported.",
+        placeholder:  "passphrase",
+        confirmLabel: "Decrypt & import"
+      });
+      if (!pass) return false;
+      try { text = await decryptText(pass, head); forceKeepSecrets = true; }
+      catch { await modalAlert({ title: "Decryption failed", message: "Wrong passphrase or the file is corrupted." }); return false; }
+    }
+  } catch {}
   // presetScope が渡されたら scope ダイアログを省略 (repository フローが
   // "Scenarios only" チェックボックスで既に決めているケース)。
   const scope = presetScope || await chooseImportScope();
@@ -5183,8 +4775,25 @@ async function applyImport(text, sourceLabel, presetScope) {
       danger:       true
     });
     if (!ok) return false;
+    // 暗号化ファイルを復号した場合は passphrase 入力時点で復元の意思があるので keepSecrets。
+    // 平文に includesSecrets がある (旧/手動) 場合だけ確認する。
+    let keepSecrets = forceKeepSecrets;
+    if (!keepSecrets) {
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed && parsed.includesSecrets) {
+          keepSecrets = await modalConfirm({
+            title:        "Restore credentials too?",
+            message:      "This file contains client secrets / access tokens. Restore them?\n(Secrets are kept in sessionStorage, not written to disk in plain text.)",
+            confirmLabel: "Restore credentials",
+            cancelLabel:  "Settings only (no secrets)",
+            danger:       true
+          });
+        }
+      } catch {}
+    }
     try {
-      persist.importJson(text);
+      persist.importJson(text, { keepSecrets });
     } catch (e) {
       if (e.code === "IMPORT_UNSAFE") {
         const proceed = await modalConfirm({
@@ -5196,7 +4805,7 @@ async function applyImport(text, sourceLabel, presetScope) {
           danger:       true
         });
         if (!proceed) return false;
-        persist.importJson(text, { allowOverride: true });
+        persist.importJson(text, { allowOverride: true, keepSecrets });
       } else {
         await modalAlert({ title: "Import に失敗しました", message: String(e.message || e) });
         return false;
