@@ -2848,6 +2848,23 @@ body.is-dark .agent-tag { color: #5BB8E8; }
   border-color: var(--line);
   border-left: 3px solid color-mix(in srgb, var(--ink-4) 45%, transparent);
 }
+
+/* A2A SSE の途中進捗ステップ (status-update) — 回答バブルと混同しないよう控えめに。
+   満タンバブルではなく、細い左バー + 小さめ淡色のテキスト行にする。
+   最終メッセージ (.msg-agent) はフルバブルのまま。 */
+.msg.msg-status .msg-body {
+  background: transparent;
+  border: 0;
+  border-left: 2px solid color-mix(in srgb, var(--ink-4) 35%, transparent);
+  border-radius: 0;
+  box-shadow: none;
+  padding: 2px 0 2px 10px;
+  font-size: calc(11px * var(--fs-mul, 1.1) * var(--fs, 1));
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+.msg.msg-status .msg-body strong { color: var(--ink-2); font-weight: 600; }
+.msg.msg-status { margin: 1px 0; }
 /* mrkdwn (Slack) — chat bubble 内の安全な HTML サブセット */
 .msg-body code {
   font-family: var(--f-mono);
