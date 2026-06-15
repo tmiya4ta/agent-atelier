@@ -2979,11 +2979,19 @@ function renderCatalogs() {
           <span class="bc-branch">${isLast ? "└─" : "├─"}</span>
           <span class="catalog-status-dot bc-dot ${bgStatusCls}" title="${bgStatusTitle}"></span>
           <span class="bc-name">${escapeHtml(bg.bgName || bg.input)}</span>
+          <button class="bc-edit" title="Edit RTM scan / environments" aria-label="edit bg">
+            <svg viewBox="0 0 14 14" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 2.5 11.5 5.5 5 12 2 12 2 9 Z"/></svg>
+          </button>
           <button class="bc-remove" title="Remove this business group" aria-label="remove bg">
             <svg viewBox="0 0 12 12" width="8" height="8"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/><line x1="9.5" y1="2.5" x2="2.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/></svg>
           </button>
         `;
         btn.addEventListener("click", async (e) => {
+          if (e.target.closest(".bc-edit")) {
+            e.stopPropagation();
+            openBgEditDialog(c, bg);
+            return;
+          }
           if (e.target.closest(".bc-remove")) {
             e.stopPropagation();
             const ok = await modalConfirm({
@@ -3083,6 +3091,74 @@ async function addBusinessGroupToCatalog(cat) {
   openBgDrawer(cat, bg);
 }
 
+// ─── Business Group 編集ダイアログ (Scan RTM + environments) ───
+let _bgEdit = null;   // { cat, bg }
+
+function openBgEditDialog(cat, bg) {
+  _bgEdit = { cat, bg };
+  $("#bgEditDialog").hidden = false;
+  $("#bgEditTitle").innerHTML = `Edit <em>${escapeHtml(bg.bgName || bg.input)}</em>`;
+  $("#bgScanRtm").checked = !!bg.scanRtm;
+  $("#bgEnvField").hidden = !bg.scanRtm;
+  $("#bgEnvList").innerHTML = "";
+  if (bg.scanRtm) refreshBgEnvField();
+}
+
+function closeBgEditDialog() {
+  $("#bgEditDialog").hidden = true;
+  _bgEdit = null;
+}
+
+// Scan RTM チェック時、 その BG の org の environment 一覧を出す (既選択を pre-check)。
+async function refreshBgEnvField() {
+  if (!_bgEdit) return;
+  const { cat, bg } = _bgEdit;
+  const field = $("#bgEnvField"), list = $("#bgEnvList"), status = $("#bgEnvStatus");
+  const scan  = $("#bgScanRtm");
+  if (!scan.checked) { field.hidden = true; return; }
+  field.hidden = false;
+  if (!bg.bgId) { list.innerHTML = ""; if (status) status.textContent = "this business group has no resolved ID"; return; }
+  if (status) status.textContent = "loading environments…";
+  list.innerHTML = "";
+  try {
+    const idn   = identityById(cat.authRef);
+    const token = await acquireCatalogToken(cat);
+    const envs  = await fetchEnvironmentsForOrg(token, controlPlaneBase(idn), bg.bgId);
+    if (!envs.length) { if (status) status.textContent = "no environments found"; return; }
+    if (status) status.textContent = "scan する環境を選択";
+    const sel = new Set((bg.envs || []).map(e => e.id));
+    list.innerHTML = "";
+    envs.forEach(e => {
+      const row = document.createElement("label");
+      row.className = "cat-env-opt";
+      row.innerHTML =
+        `<input type="checkbox" value="${escapeHtml(e.id)}" data-name="${escapeHtml(e.name)}" ${sel.has(e.id) ? "checked" : ""}/>` +
+        `<span>${escapeHtml(e.name)}${e.isProduction ? " · prod" : ""}</span>`;
+      list.appendChild(row);
+    });
+  } catch (e) {
+    if (status) status.textContent = `couldn't load environments (${e?.message || e})`;
+  }
+}
+
+async function submitBgEdit() {
+  if (!_bgEdit) return;
+  const { cat, bg } = _bgEdit;
+  const scanOn = $("#bgScanRtm").checked;
+  const boxes  = $("#bgEnvList")?.querySelectorAll('input[type="checkbox"]:checked') || [];
+  const envs   = [...boxes].map(b => ({ id: b.value, name: b.dataset.name || b.value }));
+  bg.scanRtm = scanOn;
+  bg.envs    = scanOn ? envs : [];
+  bg.rtmApps = null; bg.rtmAppsFetchedAt = null;   // 設定変更 → RTM キャッシュ破棄
+  dirty();
+  renderCatalogs();
+  closeBgEditDialog();
+  // 当該 BG の drawer が開いていれば再読込
+  if (state._drawerCatalogId === cat.id && state._drawerBgId === bg.id) {
+    openBgDrawer(cat, bg);
+  }
+}
+
 // ─── Auth flow セグメント ───
 // catalog ダイアログの identity セレクトを埋める (oauth2_cc / oauth2_authcode のみ;
 // catalog の Exchange API は OAuth トークンを要求するため bearer/jwt は対象外)。
@@ -3116,6 +3192,14 @@ function openCatalogDialog(editing) {
   $("#catBusinessGroup").value = "";   // 編集時は既存 BGs に追加する形なので空 (初回のみ使用)
   renderCatAuthRefSelect(editing?.authRef || "");
   resetCatBgField();
+  // 編集 (鉛筆) では BG / Scan RTM 欄は出さない (BG は + で追加・各 BG の編集ボタンで設定)。
+  const bgWrap = $("#catBgFieldWrap");
+  if (bgWrap) bgWrap.hidden = !!editing;
+  // eyebrow / CTA を編集モードに
+  const catEyebrow = document.querySelector("#catalogDialog .dialog-eyebrow");
+  if (catEyebrow) catEyebrow.textContent = editing ? "edit catalog" : "new catalog";
+  const catCtaLabel = document.querySelector("#catalogDialog .cat-cta-label");
+  if (catCtaLabel) catCtaLabel.textContent = editing ? "Save catalog" : "Save catalog";
   // RTM scan 欄を初期化
   $("#catScanRtm").checked = false;
   $("#catEnvField").hidden = true;
@@ -3218,6 +3302,11 @@ function wireCatalogDialog() {
   $("#catClose").addEventListener("click", closeCatalogDialog);
   $("#catCancel").addEventListener("click", closeCatalogDialog);
   $("#catSubmit").addEventListener("click", submitCatalogDialog);
+  // BG 編集ダイアログ (Scan RTM + environments)
+  $("#bgEditClose")?.addEventListener("click", closeBgEditDialog);
+  $("#bgEditCancel")?.addEventListener("click", closeBgEditDialog);
+  $("#bgEditSave")?.addEventListener("click", submitBgEdit);
+  $("#bgScanRtm")?.addEventListener("change", refreshBgEnvField);
 
   const authSel = $("#catAuthRef");
   if (authSel) {
