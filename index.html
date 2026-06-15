@@ -612,7 +612,7 @@
             </select>
           </div>
 
-          <div class="field">
+          <div class="field" id="catBgFieldWrap">
             <label class="field-label" for="catBusinessGroup">
               <span>business group</span>
               <span class="field-hint" id="catBgHint">name or ID — optional (more can be added later)</span>
@@ -621,23 +621,10 @@
             <input id="catBusinessGroup" type="text" placeholder="e.g. btd  or  0fc4eaf1-5697-4cef-9c1b-3b96e3a52ee2" autocomplete="off" />
           </div>
 
-          <div class="field">
-            <label class="cat-check">
-              <input type="checkbox" id="catScanRtm" />
-              <span class="cat-check-body">
-                <span class="cat-check-label">Scan Runtime Manager apps</span>
-                <span class="cat-check-hint">この BG のデプロイ済みアプリも一覧に含める</span>
-              </span>
-            </label>
-          </div>
-
-          <div class="field" id="catEnvField" hidden>
-            <label class="field-label">
-              <span>environments</span>
-              <span class="field-hint" id="catEnvStatus">scan する環境を選択</span>
-            </label>
-            <div class="cat-env-list" id="catEnvList"></div>
-          </div>
+          <!-- Scan RTM / environments は BG ごとの設定なので、各 BG の編集ボタン
+               (#bgEditDialog) に移動。catalog ダイアログには出さない。 -->
+          <input type="checkbox" id="catScanRtm" hidden />
+          <div id="catEnvField" hidden><div id="catEnvList"></div><span id="catEnvStatus" hidden></span></div>
         </div>
       </div>
 
@@ -652,6 +639,48 @@
             <span class="cat-cta-label">Save catalog</span>
             <span class="arrow">→</span>
           </button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ───────────────  BUSINESS GROUP EDIT DIALOG  ─────────────── -->
+  <div class="dialog-backdrop" id="bgEditDialog" hidden>
+    <div class="dialog dialog-catalog" role="dialog" aria-modal="true" aria-labelledby="bgEditTitle">
+      <header class="dialog-head">
+        <div>
+          <span class="dialog-eyebrow">business group</span>
+          <h2 class="dialog-title" id="bgEditTitle">Edit <em>business group</em></h2>
+        </div>
+        <button class="icon-btn" id="bgEditClose" aria-label="close">
+          <svg viewBox="0 0 16 16" width="14" height="14"><line x1="2" y1="2" x2="14" y2="14" stroke="currentColor" stroke-width="1.4"/><line x1="14" y1="2" x2="2" y2="14" stroke="currentColor" stroke-width="1.4"/></svg>
+        </button>
+      </header>
+      <div class="dialog-body">
+        <div class="cat-section cat-section-form">
+          <div class="field">
+            <label class="cat-check">
+              <input type="checkbox" id="bgScanRtm" />
+              <span class="cat-check-body">
+                <span class="cat-check-label">Scan Runtime Manager apps</span>
+                <span class="cat-check-hint">この BG のデプロイ済みアプリも一覧に含める</span>
+              </span>
+            </label>
+          </div>
+          <div class="field" id="bgEnvField" hidden>
+            <label class="field-label">
+              <span>environments</span>
+              <span class="field-hint" id="bgEnvStatus">scan する環境を選択</span>
+            </label>
+            <div class="cat-env-list" id="bgEnvList"></div>
+          </div>
+        </div>
+      </div>
+      <footer class="dialog-foot">
+        <span class="dialog-foot-meta"><span class="status-dot"></span> <span id="bgEditMeta">RTM scan settings</span></span>
+        <div class="dialog-foot-actions">
+          <button class="ghost-btn" id="bgEditCancel">cancel</button>
+          <button class="primary-btn" id="bgEditSave"><span>Save</span><span class="arrow">→</span></button>
         </div>
       </footer>
     </div>

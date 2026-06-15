@@ -1967,6 +1967,17 @@ body.is-resizing-side .sidebar { transition: none !important; }
 }
 .bookmark-child:hover .bc-remove { opacity: 0.55; }
 .bc-remove:hover { background: var(--warn-soft); color: var(--warn) !important; opacity: 1 !important; }
+.bc-edit {
+  display: grid; place-items: center;
+  width: 16px; height: 16px;
+  color: var(--ink-4);
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.bookmark-child:hover .bc-edit { opacity: 0.55; }
+.bc-edit:hover { background: var(--accent-soft); color: var(--accent-ink) !important; opacity: 1 !important; }
+.bookmark-child .bc-edit { flex: 0 0 auto; }
 .bookmark-child:hover {
   background: var(--accent-soft);
   color: var(--accent-ink);
