@@ -1255,12 +1255,17 @@ async function fetchBgAssets(cat, bg) {
       throw new Error(`Business group resolution failed: ${e.message}`);
     }
   }
+  // bgId が確定できないまま検索すると organizationId 無しの public Exchange 全体を
+  // 引いてしまい、他組織/public の asset が混入する。 unscoped 検索は行わずエラーにする。
+  if (!bg.bgId) {
+    throw new Error(`Could not resolve business group "${bg.input}". Pick it from the list so its ID is known.`);
+  }
 
   const PAGE = 50;
   const HARD_CAP = 500;
   const assets = [];
   let offset = 0;
-  const orgFilter = bg.bgId ? `&organizationId=${encodeURIComponent(bg.bgId)}` : "";
+  const orgFilter = `&organizationId=${encodeURIComponent(bg.bgId)}`;
   while (offset < HARD_CAP) {
     const url = `https://anypoint.mulesoft.com/exchange/api/v2/assets?types=agent&limit=${PAGE}&offset=${offset}${orgFilter}`;
     const res = await fetch(`/proxy?url=${encodeURIComponent(url)}`, {
@@ -1273,6 +1278,17 @@ async function fetchBgAssets(cat, bg) {
     if (page.length < PAGE) break;     // 最終ページ
     offset += PAGE;
   }
+
+  // 防御: Exchange は親組織の asset を子組織にも継承表示するため、organizationId で
+  // 絞っても親/public の asset が混じることがある。 選択した BG が「所有」する asset
+  // (owner org === bgId) だけに絞り込み、他組織/public を除外する。
+  // 所有者は organization.id を最優先 (organizationId フィールドは null のことが多い)。
+  const ownerOf = (a) => a.organization?.id || a.organizationId || a.groupId || null;
+  const owned = assets.filter(a => ownerOf(a) === bg.bgId);
+  // owner 情報が全く取れない実装差に備え、 1 件も owner を持たない場合のみ素の結果を返す。
+  const scoped = (owned.length > 0 || assets.some(a => ownerOf(a))) ? owned : assets;
+  assets.length = 0;
+  assets.push(...scoped);
 
   // 各アセットの a2a-card.json + asset 詳細 (managed instances) を並列取得
   await Promise.allSettled(assets.map(async (a) => {
