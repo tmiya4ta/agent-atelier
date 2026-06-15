@@ -3080,15 +3080,24 @@ async function addBusinessGroupToCatalog(cat) {
     input,
     bgId:  picked.bgId || null,   // select 選択なら UUID 確定 → resolveBusinessGroupId をスキップ
     bgName: picked.bgName || null,
+    scanRtm: !!picked.scanRtm,    // RTM アプリも一覧に含めるか (Add modal のチェック)
+    envs:   [],
     assets: null,
-    assetsFetchedAt: null
+    assetsFetchedAt: null,
+    rtmApps: null,
+    rtmAppsFetchedAt: null
   };
   cat.businessGroups.push(bg);
   state._catalogExpanded[cat.id] = true;
   renderCatalogs();
   dirty();
-  // 直ちに drawer を開いて取得
-  openBgDrawer(cat, bg);
+  // scan RTM を選んだ場合は、 続けて環境を選ばせる (RTM スキャンには env が必要)。
+  // それ以外はそのまま drawer を開いて取得。
+  if (bg.scanRtm) {
+    openBgEditDialog(cat, bg);
+  } else {
+    openBgDrawer(cat, bg);
+  }
 }
 
 // ─── Business Group 編集ダイアログ (Scan RTM + environments) ───
