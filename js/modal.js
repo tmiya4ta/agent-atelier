@@ -369,7 +369,7 @@ export function modalImportScope({ encrypted } = {}) {
 //   挙動: ロード表示 → 成功なら select + 手入力併設 / 0件 or 失敗はテキスト /
 //         認証必要なら Sign in ボタン (ユーザー操作で OAuth ポップアップを通す)。
 //   返り値: { input, bgId, bgName } または null (cancel)。
-export function modalBusinessGroup({ title, loadGroups, signIn } = {}) {
+export function modalBusinessGroup({ title, loadGroups, signIn, loadEnvs } = {}) {
   return new Promise((resolve) => {
     const wrap = document.createElement("div");
     wrap.className = "modal-backdrop";
@@ -390,6 +390,11 @@ export function modalBusinessGroup({ title, loadGroups, signIn } = {}) {
             <input type="checkbox" class="modal-bg-scan-cb" />
             <span>Scan Runtime Manager apps (also list deployed apps)</span>
           </label>
+          <div class="modal-bg-envwrap" hidden>
+            <label class="modal-label">environments</label>
+            <div class="modal-bg-envlist cat-env-list"></div>
+            <p class="modal-bg-envstatus modal-hint"></p>
+          </div>
         </div>
         <footer class="modal-foot">
           <div class="modal-foot-actions">
@@ -407,6 +412,44 @@ export function modalBusinessGroup({ title, loadGroups, signIn } = {}) {
     const sel      = wrap.querySelector(".modal-bg-select");
     const orLbl    = wrap.querySelector(".modal-bg-or");
     const text     = wrap.querySelector(".modal-bg-text");
+    const scanCb   = wrap.querySelector(".modal-bg-scan-cb");
+    const envWrap  = wrap.querySelector(".modal-bg-envwrap");
+    const envList  = wrap.querySelector(".modal-bg-envlist");
+    const envStat  = wrap.querySelector(".modal-bg-envstatus");
+
+    // 現在選択中の BG の UUID (dropdown 選択時のみ。手入力は未解決なので null)
+    const currentBgId = () => (!sel.hidden && sel.value) ? sel.value : null;
+
+    let _envSeq = 0;
+    async function refreshEnvs() {
+      if (!scanCb || !scanCb.checked) { if (envWrap) envWrap.hidden = true; return; }
+      envWrap.hidden = false;
+      const bgId = currentBgId();
+      if (!bgId) { envList.innerHTML = ""; envStat.textContent = "pick a business group from the list above to choose environments"; return; }
+      if (typeof loadEnvs !== "function") { envList.innerHTML = ""; envStat.textContent = ""; return; }
+      const seq = ++_envSeq;
+      envStat.textContent = "loading environments…"; envList.innerHTML = "";
+      try {
+        const envs = await loadEnvs(bgId);
+        if (seq !== _envSeq) return;   // 古い結果は破棄
+        if (!envs?.length) { envStat.textContent = "no environments found"; return; }
+        envStat.textContent = "select environments to scan";
+        envList.innerHTML = "";
+        envs.forEach(e => {
+          const row = document.createElement("label");
+          row.className = "cat-env-opt";
+          row.innerHTML =
+            `<input type="checkbox" value="${escapeHtml(e.id)}" data-name="${escapeHtml(e.name)}" />` +
+            `<span>${escapeHtml(e.name)}${e.isProduction ? " · prod" : ""}</span>`;
+          envList.appendChild(row);
+        });
+      } catch (e) {
+        if (seq !== _envSeq) return;
+        envStat.textContent = `couldn't load environments (${e?.message || e})`;
+      }
+    }
+    scanCb?.addEventListener("change", refreshEnvs);
+    sel?.addEventListener("change", () => { if (scanCb?.checked) refreshEnvs(); });
 
     const close = (result) => {
       wrap.classList.remove("is-open");
@@ -418,15 +461,18 @@ export function modalBusinessGroup({ title, loadGroups, signIn } = {}) {
       resolve(result);
     };
     const confirm = () => {
-      const scanRtm = wrap.querySelector(".modal-bg-scan-cb")?.checked || false;
+      const scanRtm = scanCb?.checked || false;
+      const envs = scanRtm
+        ? [...envList.querySelectorAll('input[type="checkbox"]:checked')].map(b => ({ id: b.value, name: b.dataset.name || b.value }))
+        : [];
       if (!sel.hidden && sel.value) {
         const opt = sel.selectedOptions[0];
         const nm = (opt?.dataset.name || opt?.textContent || sel.value).trim();
-        close({ input: nm || sel.value, bgId: sel.value, bgName: opt?.dataset.name || null, scanRtm });
+        close({ input: nm || sel.value, bgId: sel.value, bgName: opt?.dataset.name || null, scanRtm, envs });
         return;
       }
       const v = text.value.trim();
-      if (v) { close({ input: v, bgId: null, bgName: null, scanRtm }); return; }
+      if (v) { close({ input: v, bgId: null, bgName: null, scanRtm, envs }); return; }
       text.hidden = false; text.focus();
     };
     wrap.querySelector(".modal-confirm").addEventListener("click", confirm);
