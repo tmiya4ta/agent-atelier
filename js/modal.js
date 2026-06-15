@@ -386,6 +386,10 @@ export function modalBusinessGroup({ title, loadGroups, signIn } = {}) {
           <label class="modal-label modal-bg-or" hidden>or enter name / ID manually</label>
           <input class="modal-input modal-bg-text" type="text" autocomplete="off"
                  placeholder="e.g. btd  or  0fc4eaf1-5697-4cef-9c1b-3b96e3a52ee2" hidden />
+          <label class="modal-check modal-bg-scan">
+            <input type="checkbox" class="modal-bg-scan-cb" />
+            <span>Scan Runtime Manager apps (also list deployed apps)</span>
+          </label>
         </div>
         <footer class="modal-foot">
           <div class="modal-foot-actions">
@@ -414,14 +418,15 @@ export function modalBusinessGroup({ title, loadGroups, signIn } = {}) {
       resolve(result);
     };
     const confirm = () => {
+      const scanRtm = wrap.querySelector(".modal-bg-scan-cb")?.checked || false;
       if (!sel.hidden && sel.value) {
         const opt = sel.selectedOptions[0];
         const nm = (opt?.dataset.name || opt?.textContent || sel.value).trim();
-        close({ input: nm || sel.value, bgId: sel.value, bgName: opt?.dataset.name || null });
+        close({ input: nm || sel.value, bgId: sel.value, bgName: opt?.dataset.name || null, scanRtm });
         return;
       }
       const v = text.value.trim();
-      if (v) { close({ input: v, bgId: null, bgName: null }); return; }
+      if (v) { close({ input: v, bgId: null, bgName: null, scanRtm }); return; }
       text.hidden = false; text.focus();
     };
     wrap.querySelector(".modal-confirm").addEventListener("click", confirm);
