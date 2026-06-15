@@ -3063,6 +3063,12 @@ async function addBusinessGroupToCatalog(cat) {
         disabled: added.has(String(g.id).toLowerCase()) || added.has(String(g.name || "").toLowerCase())
       }));
     },
+    // Scan RTM チェック時、 選択中 BG の environment 一覧をモーダル内に出すための loader
+    loadEnvs: async (bgId) => {
+      const idn = identityById(cat.authRef);
+      const token = await acquireCatalogToken(cat);
+      return await fetchEnvironmentsForOrg(token, controlPlaneBase(idn), bgId);
+    },
     // authcode で要認証のときモーダルが出す「Sign in」用 (ユーザー操作で OAuth ポップアップ)
     signIn: () => reauthIdentity(cat.authRef)
   });
@@ -3080,8 +3086,8 @@ async function addBusinessGroupToCatalog(cat) {
     input,
     bgId:  picked.bgId || null,   // select 選択なら UUID 確定 → resolveBusinessGroupId をスキップ
     bgName: picked.bgName || null,
-    scanRtm: !!picked.scanRtm,    // RTM アプリも一覧に含めるか (Add modal のチェック)
-    envs:   [],
+    scanRtm: !!picked.scanRtm,        // RTM アプリも一覧に含めるか (Add modal のチェック)
+    envs:   picked.envs || [],        // Add modal 内で選んだ環境
     assets: null,
     assetsFetchedAt: null,
     rtmApps: null,
@@ -3091,9 +3097,9 @@ async function addBusinessGroupToCatalog(cat) {
   state._catalogExpanded[cat.id] = true;
   renderCatalogs();
   dirty();
-  // scan RTM を選んだ場合は、 続けて環境を選ばせる (RTM スキャンには env が必要)。
-  // それ以外はそのまま drawer を開いて取得。
-  if (bg.scanRtm) {
+  // scan ON だが env を選べていない (手入力で bgId 未確定など) 場合だけ、 続けて
+  // BG 編集ダイアログで環境を選ばせる。 それ以外は drawer を開いて取得。
+  if (bg.scanRtm && !bg.envs.length && bg.bgId) {
     openBgEditDialog(cat, bg);
   } else {
     openBgDrawer(cat, bg);
