@@ -70,6 +70,7 @@ export class ProtocolAdapter extends EventTarget {
     this._realCard    = this.agentCard;
     this._mockEntries = Array.isArray(entries) ? entries.slice() : [];
     this._mockSeq     = 0;   // 順番消費型 (文字列配列) の位置
+    this._mockDelayMs = undefined;  // DSL `delay Ns` 未指定 = 既定の思考時間 (7〜26s)
 
     // 擬似 agentCard + open 状態 (ネット fetch なし)
     if (!this.agentCard) {
@@ -92,8 +93,12 @@ export class ProtocolAdapter extends EventTarget {
       // 応答を先に解決して長さを測る (順番消費型なので二度呼ばない)。
       const reply = this._mockResolve(text);
 
-      // 思考時間の見積り (LLM が考えている感)。base 7〜10s + 文字数連動、上限 26s。
+      // 思考時間の見積り (LLM が考えている感)。
+      // DSL `delay Ns` で this._mockDelayMs が指定されていれば、 それをベース時間に使う
+      // (0 なら即答、 文字数連動・上限は付けずに指定値をそのまま尊重)。
+      // 未指定時は従来どおり base 7〜10s + 文字数連動 (1 文字 14ms・最大 +16s)・上限 26s。
       const thinkDelay = (txt) => {
+        if (typeof this._mockDelayMs === "number") return this._mockDelayMs;
         const base    = 7000 + Math.random() * 3000;
         const perChar = Math.min((txt?.length || 0) * 14, 16000);
         return Math.min(base + perChar, 26000);
@@ -154,6 +159,7 @@ export class ProtocolAdapter extends EventTarget {
     this.state     = this._realState;
     this.agentCard = this._realCard;
     this._mockActive = false;
+    this._mockDelayMs = undefined;
     this._realSend = this._mockEntries = null;
   }
 }
