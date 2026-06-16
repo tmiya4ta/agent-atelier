@@ -137,6 +137,7 @@ export function save(state) {
       catalogs:  sanitizedCatalogs,
       scripts:   state.scripts   || [],
       selectedScriptId: state.selectedScriptId || null,
+      scriptPinned: !!state.scriptPinned,   // PIN: run でパネルを閉じない設定 (セッション跨ぎで保持)
       // 「閉じても残るコネクション登録」。 各 entry は { key, protoId, url, name, persona?, channel? }
       // (auth/secret は sessionStorage 側)。
       bookmarks: sanitizedBookmarks,

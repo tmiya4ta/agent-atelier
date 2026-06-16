@@ -9,6 +9,8 @@
 //   ^ <operator>: <hint> -> <var>                 operator-agent に hint + 直近の captured vars を送り、
 //                                                 reply を vars.<var> に保存 (デモ自動化の繋ぎ役)
 //   sleep 2s                                      pause execution
+//   delay 2s                                      mock 応答の「考える時間」ベースを指定 (mock モード時)。
+//                                                 以降の send に適用 (上に書けば全体に効く)。 0s で即答。
 //   clear                                         全 window のチャットをクリア
 //   clear <window>                                指定 window のチャットをクリア
 //   $> <window>: <応答>                          mock 応答 (`<` と対称)。 その window への n 回目の send が
@@ -32,6 +34,8 @@ const WAIT_RE     = /^>\s*(.+?)(?:\s+(\d+(?:\.\d+)?)\s*s?)?(?:\s+as\s+([a-zA-Z_]
 // `^ Operator: hint here -> varname` (操作: → でも -> でも可)
 const OPERATOR_RE = /^\^\s*(.+?)\s*:\s*(.+?)\s*(?:->|→)\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*$/;
 const SLEEP_RE    = /^sleep\s+(\d+(?:\.\d+)?)\s*s?$/i;
+// `delay 2s` — mock 応答の思考ベース時間 (秒) を指定。 mock モード時のみ意味を持つ。
+const DELAY_RE    = /^delay\s+(\d+(?:\.\d+)?)\s*s?$/i;
 const CLEAR_RE    = /^clear(?:\s+(.+))?$/i;
 // `$> <window>: <応答テキスト>` — mock モード時の擬似応答 (`<` と対称)。 改行は \n で表現。
 // window 名を明示し、 その window への n 回目の send が n 番目の $> を取る (送信順に消費)。
@@ -60,6 +64,7 @@ export function parseScript(text) {
       return;
     }
     if ((m = ln.match(SLEEP_RE))) { ops.push({ kind: "sleep", duration: parseFloat(m[1]), line: i + 1 }); return; }
+    if ((m = ln.match(DELAY_RE))) { ops.push({ kind: "delay", duration: parseFloat(m[1]), line: i + 1 }); return; }
     if ((m = ln.match(CLEAR_RE))) { ops.push({ kind: "clear", win: m[1] ? clean(m[1]) : null, line: i + 1 }); return; }
     ops.push({ kind: "error", raw, line: i + 1 });
   });
@@ -138,20 +143,36 @@ export class ScriptRunner {
   async run(ops) {
     this.cancelled = false;
     this.vars = {};        // ${var} 展開 + capture (`as var`) で使う script-scoped 変数テーブル
+    this._pending = [];    // 投げっぱなしにした send (直後に明示 `>` がある時 / operator) の Promise。 run 末尾の drainSends で待つ
     const t0 = performance.now();
-    for (const op of ops) {
+    for (let i = 0; i < ops.length; i++) {
       if (this.cancelled) break;
+      const op = ops[i];
       try {
-        await this._exec(op);
+        await this._exec(op, ops[i + 1] || null);
       } catch (e) {
         this.onLog({ level: "err", text: `line ${op.line}: ${e.message}` });
         if (this.cancelled) break;
       }
     }
+    // wait (`>`) を伴わない投げっぱなしの send がまだ走っているなら、ここで完了を待つ。
+    // mock モードでは run 後に adapter.send が本物へ戻る (mockRestore) ため、待たずに
+    // 抜けると send が「戻った後の本物 send」を呼んでしまい、mock 応答が出ない。
+    await this.drainSends();
     this.onLog({ level: "info", text: `done in ${Math.round(performance.now() - t0)}ms` });
   }
 
-  async _exec(op) {
+  // fire-and-forget で投げた send (`<` / `^`) の完了をまとめて待つ。
+  // 個々の reject は send 側でログ済みなので、ここでは握り潰して全件待ち切る。
+  async drainSends() {
+    const pending = this._pending || [];
+    this._pending = [];
+    // 停止された場合は待たない (mock の思考ディレイで最大数十秒固まるのを避ける)。
+    if (!pending.length || this.cancelled) return;
+    await Promise.allSettled(pending);
+  }
+
+  async _exec(op, nextOp = null) {
     if (op.kind === "error") {
       this.onLog({ level: "err", text: `unknown directive: ${op.raw}` });
       return;
@@ -162,6 +183,16 @@ export class ScriptRunner {
         new Promise(r => setTimeout(r, op.duration * 1000)),
         this._cancelPromise()
       ]);
+      return;
+    }
+    if (op.kind === "delay") {
+      // mock 応答の「考える時間」ベースを ms で全 mock window に伝播 (以降の send に効く)。
+      // mock 中でなければ no-op だが、 値は保持しておく (後で mock が乗れば効く)。
+      this._mockDelayMs = Math.max(0, op.duration * 1000);
+      for (const w of this.getAllWindows()) {
+        if (w.adapter && w.adapter._mockActive) w.adapter._mockDelayMs = this._mockDelayMs;
+      }
+      this.onLog({ level: "dim", text: `· mock delay = ${op.duration}s` });
       return;
     }
     if (op.kind === "clear") {
@@ -185,9 +216,29 @@ export class ScriptRunner {
     if (op.kind === "send") {
       const msg = expandVars(op.text, this.vars);
       this.onLog({ level: "send", text: `→ ${win.name}: ${msg}` });
-      win.sendProgrammatic(msg).catch(e => {
+      const sendP = win.sendProgrammatic(msg).catch(e => {
         this.onLog({ level: "err", text: `send failed: ${e.message}` });
       });
+      // 直後に同じ window 宛の明示 `>` (wait) があれば、 待ちはそちらに任せて投げっぱなし。
+      // それ以外は「送信 → 返信到着まで待つ」逐次実行 (上から 1 つずつ・ 返信の連発を防ぐ)。
+      const nextIsWaitSameWin = nextOp && nextOp.kind === "wait"
+        && this.findWindow(nextOp.win) === win;
+      if (nextIsWaitSameWin) {
+        // wait op が後で drain するので、 取りこぼし防止に _pending へ積むだけ。
+        this._pending.push(sendP);
+        return;
+      }
+      // 逐次: この send の返信 (typewriter 完了) まで待ってから次行へ。
+      // 既定 timeout は wait と同じ 60s。 停止時は即抜ける。
+      try {
+        await Promise.race([
+          win.waitForReply({ timeout: 60000 }),
+          this._cancelPromise()
+        ]);
+      } catch (e) {
+        // 返信が来なくても (timeout 等) スクリプトは止めず次行へ進む。
+        if (!this.cancelled) this.onLog({ level: "dim", text: `· ${win.name}: ${e.message}` });
+      }
       return;
     }
     if (op.kind === "wait") {

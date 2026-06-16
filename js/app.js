@@ -89,6 +89,7 @@ const state = {
   openScriptIds: [],  // panel に open しているタブの順序
   scriptPanelOpen: false,
   scriptPanelHeight: 0,  // 0 = 未設定。 init で canvas の ~50% に決まる
+  scriptPinned: false,   // PIN: ON の間は run してもパネルを閉じない
   sidePanelW: 240        // CONNECTIONS パネル領域の幅 (px)。 右端ドラッグで可変
 };
 
@@ -196,6 +197,7 @@ function init() {
     state.openScriptIds    = (saved.openScriptIds || []).filter(id => state.scripts.find(s => s.id === id));
     state.scriptPanelOpen  = !!saved.scriptPanelOpen && state.openScriptIds.length > 0;
     state.scriptPanelHeight = normalizeScriptPanelHeight(saved.scriptPanelHeight);
+    state.scriptPinned     = !!saved.scriptPinned;
     state.sidePanelW = normalizeSidePanelW(saved.sidePanelW);
     catCounter    = state.catalogs.reduce((m, c) => Math.max(m, parseInt(c.id?.split("-")[1] || 0)), 0);
     scriptCounter = state.scripts.reduce((m, s) => Math.max(m, parseInt(s.id?.split("-")[1] || 0)), 0);
@@ -213,6 +215,7 @@ function init() {
     state.openScriptIds    = (saved?.openScriptIds || []).filter(id => state.scripts.find(s => s.id === id));
     state.scriptPanelOpen  = !!saved?.scriptPanelOpen && state.openScriptIds.length > 0;
     state.scriptPanelHeight = normalizeScriptPanelHeight(saved?.scriptPanelHeight);
+    state.scriptPinned     = !!saved?.scriptPinned;
     state.sidePanelW = normalizeSidePanelW(saved?.sidePanelW);
     scriptCounter = state.scripts.reduce((m, s) => Math.max(m, parseInt(s.id?.split("-")[1] || 0)), 0);
     createWorkspace("default", { focus: true, silent: true });
@@ -3355,12 +3358,35 @@ function wireCatalogDialog() {
 // ═══════════════════════════════════════════════════════
 // SCRIPTS (sidebar)
 // ═══════════════════════════════════════════════════════
+// 新規スクリプトの初期 body。 DSL 構文の早見表をコメントで上部に置く
+// (Script Editor を初めて開く人がそのまま編集できるよう、 末尾に動くサンプルも添える)。
+const SCRIPT_TEMPLATE = [
+  "# ── Script DSL 早見表 ─────────────────────────────",
+  "#   < <window>: <message>     window へ送信 (${var} 展開可)",
+  "#   > <window> [30s] [as v]   返信を待つ (任意で timeout / 変数に保存)",
+  "#   ^ <operator>: <hint> -> v  operator-agent に投げ、 返信を v に保存",
+  "#   sleep 2s                  一時停止",
+  "#   clear [<window>]          チャットをクリア (省略で全 window)",
+  "#   $> <window>: <応答>        mock 応答 (Mock モード ON 時のみ・ 改行は \\n)",
+  "#   # ...                     コメント (無視)",
+  "# <window> は window 名 (部分一致可) か ID (例 aw-1)。",
+  "# ──────────────────────────────────────────────",
+  "",
+  "# サンプル: window に送って返信を待つ",
+  "< Atelier Bistro: こんにちは。 おすすめを教えて。",
+  "> Atelier Bistro 60s",
+  "",
+  "# Mock モード ON で動かすサンプル (上の送信に対する擬似応答):",
+  "# $> Atelier Bistro: いらっしゃいませ。 本日のおすすめは…",
+  ""
+].join("\n");
+
 function createScript({ name, body, select = true } = {}) {
   const id = `scr-${++scriptCounter}`;
   const s = {
     id,
     name: name || `script ${scriptCounter}`,
-    body: body ?? "# example\n> Atelier Bistro: hello\n< Atelier Bistro\n",
+    body: body ?? SCRIPT_TEMPLATE,
     autoLoop: false,
     createdAt: Date.now(),
     updatedAt: Date.now()
@@ -4061,8 +4087,10 @@ function applyScriptPanel() {
   if (state.scriptPanelOpen && state.openScriptIds.length > 0) {
     panel.classList.add("is-open");
     renderScriptTabs();
-    renderCommandChips();
+    // 先に台本を読み込んで mock 判定 (_editorAllMock) を確定させてから chip を描く
+    // (mock モードなら `>` を `$>` に差し替えた chip にするため)。
     loadActiveScriptIntoPanel();
+    renderCommandChips();
   } else {
     panel.classList.remove("is-open");
   }
@@ -4253,9 +4281,12 @@ function refreshEditorMockState() {
   if (ed && ed.value.trim()) {
     try { allMock = scriptIsAllMock(parseScript(ed.value)); } catch { allMock = false; }
   }
+  const prev = editorMockActive();
   state._editorAllMock = allMock;
   // 手動 MOCK が OFF のときだけ、 ボタン表示を auto 判定に追従させる (手動 ON は尊重)
   if (!state.scriptMock) setMockButtonState(allMock);
+  // auto-mock 判定が変わったら commands chip の `>` ⇔ `$>` も追従させる
+  if (editorMockActive() !== prev) renderCommandChips();
 }
 
 function highlightDslLine(raw) {
@@ -4317,8 +4348,8 @@ function highlightDslLine(raw) {
     }
     return out;
   }
-  // sleep N s
-  if ((m = trimmed.match(/^(sleep)(\s+)(\d+(?:\.\d+)?)(\s*s?)$/i))) {
+  // sleep N s / delay N s (delay は mock 応答の思考時間)
+  if ((m = trimmed.match(/^(sleep|delay)(\s+)(\d+(?:\.\d+)?)(\s*s?)$/i))) {
     return escapeHtmlInline(lead)
       + `<span class="tk-cmd">${escapeHtmlInline(m[1])}</span>${escapeHtmlInline(m[2])}`
       + `<span class="tk-num">${escapeHtmlInline(m[3] + m[4])}</span>`;
@@ -4400,18 +4431,29 @@ const DSL_COMMANDS = [
   { glyph: ">",     label: "wait",     insert: "> ",        cursor: "end",  title: "Wait for reply — > name [30s] [as var]" },
   { glyph: "^",     label: "operator", insert: "^ operator: ", cursor: "end", title: "Operator-agent directive — ^ name: hint -> var" },
   { glyph: "sleep", label: "pause",    insert: "sleep 1s",  cursor: "end",  title: "Pause — sleep Ns" },
+  { glyph: "delay", label: "think",    insert: "delay 2s",  cursor: "end",  title: "Mock 応答の考える時間 — delay Ns (mock モード時・以降の send に適用・0s で即答)" },
   { glyph: "clear", label: "reset",    insert: "clear",     cursor: "end",  title: "Clear chat — clear [name]" },
   { glyph: "#",     label: "comment",  insert: "# ",        cursor: "end",  title: "Comment line — # ..." }
 ];
+
+// mock モード時の chip 差し替え: `>` (wait) を `$>` (mock 応答) にする。
+// mock 中は応答源が `$>` なので、 wait を入れる代わりに mock 応答を入れやすくする。
+const MOCK_REPLY_CMD = { glyph: "$>", label: "mock", insert: "$> ", cursor: "end",
+  title: "Mock reply — $> name: text  (mock モード時の擬似応答。 改行は \\n)" };
 
 function renderCommandChips() {
   const root = $("#scriptCommandChips");
   if (!root) return;
   root.innerHTML = "";
-  DSL_COMMANDS.forEach(c => {
+  const mockOn = editorMockActive();
+  const commands = mockOn
+    ? DSL_COMMANDS.map(c => c.label === "wait" ? MOCK_REPLY_CMD : c)
+    : DSL_COMMANDS;
+  commands.forEach(c => {
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "swc-cmd";
+    // mock 応答 chip ($>) は mock 色で目立たせ、 wait と差し替わったと分かるように
+    btn.className = "swc-cmd" + (c === MOCK_REPLY_CMD ? " is-mock" : "");
     btn.title = c.title;
     btn.innerHTML = `<span class="swc-cmd-glyph">${escapeHtml(c.glyph)}</span><span class="swc-cmd-label">${escapeHtml(c.label)}</span>`;
     btn.addEventListener("click", () => insertCommandTemplate(c));
@@ -4450,12 +4492,12 @@ function refreshScriptChips() {
     return;
   }
 
-  // カーソル行が `> partial` or `< partial` なら補完候補をハイライト
+  // カーソル行が `> partial` / `< partial` / `$> partial` なら補完候補をハイライト
   const cursor = ed ? ed.selectionStart : 0;
   const before = ed ? ed.value.slice(0, cursor) : "";
   const lineStart = before.lastIndexOf("\n") + 1;
   const lineUpToCursor = before.slice(lineStart);
-  const m = lineUpToCursor.match(/^[><]\s+(.*?):?$/);
+  const m = lineUpToCursor.match(/^(?:\$>|[><])\s+(.*?):?$/);
   const query = m ? m[1].toLowerCase().trim() : "";
   const matchMode = !!m;
 
@@ -4482,17 +4524,19 @@ function insertWindowName(win, matchMode) {
   const lineUpToCursor = before.slice(lineStart);
 
   if (matchMode) {
-    // `> partial` を `> Full Name#N: ` (send) または `< Full Name#N ` (wait) に置換
-    const marker = lineUpToCursor.match(/^([><])\s+/)[1];
-    const tail   = marker === ">" ? ": " : " ";
+    // marker を尊重して補完。 send (`<`) と mock (`$>`) は `name: ` まで (本文を `:` 区切りで続ける)、
+    // wait (`>`) は `name ` (コロン不要・ timeout が続く)。
+    const marker = lineUpToCursor.match(/^(\$>|[><])\s+/)[1];
+    const tail   = (marker === "<" || marker === "$>") ? ": " : " ";
     const newLineUpToCursor = `${marker} ${display}${tail}`;
     const newBefore = ed.value.slice(0, lineStart) + newLineUpToCursor;
     ed.value = newBefore + after;
     ed.selectionStart = ed.selectionEnd = newBefore.length;
   } else {
-    // 空行 → send テンプレ。途中なら display name だけ
+    // 空行 → send (or mock) テンプレで `name: ` まで入れる。 途中なら display name だけ。
     const lineEmpty = !lineUpToCursor.trim();
-    const insertText = lineEmpty ? `> ${display}: ` : display;
+    const marker = editorMockActive() ? "$>" : "<";
+    const insertText = lineEmpty ? `${marker} ${display}: ` : display;
     ed.value = before + insertText + after;
     ed.selectionStart = ed.selectionEnd = before.length + insertText.length;
   }
@@ -4641,6 +4685,15 @@ function setMockButtonState(on) {
   btn.setAttribute("aria-pressed", on ? "true" : "false");
 }
 
+// PIN ボタンの見た目を on/off に同期 (ON の間は run でパネルを閉じない)。
+function setScriptPinState(on) {
+  const btn = $("#scriptPin");
+  if (!btn) return;
+  btn.classList.toggle("is-on", !!on);
+  btn.setAttribute("aria-pressed", on ? "true" : "false");
+  btn.title = on ? "Unpin panel: run で閉じる" : "Pin panel: run しても閉じない";
+}
+
 async function runScript(opts = {}) {
   // 既に別の script が実行中なら多重実行しない (サイドバー run / Ctrl+Enter / line 実行
   // など複数の入口があるため、 ここで一括ガード)。 停止は stop ボタン経由で。
@@ -4656,7 +4709,8 @@ async function runScript(opts = {}) {
 
   // run したらエディタ (script panel) を閉じて、 ウインドウ側の実行が見えるようにする。
   // script の実行は panel と独立なので、 閉じても走り続ける。
-  if (state.scriptPanelOpen) closeScriptPanel();
+  // ただし PIN 留めされていれば閉じない (編集しながら繰り返し run したいケース)。
+  if (state.scriptPanelOpen && !state.scriptPinned) closeScriptPanel();
 
   // ─── mock モードの実効判定 ───
   // 明示的に MOCK ボタン ON、 または 台本が参照する window が「全部 mock 接続」なら
@@ -4860,6 +4914,12 @@ function wireScriptPanel() {
   $("#scriptCollapse").addEventListener("click", closeScriptPanel);
   $("#scriptRun").addEventListener("click",  runScript);
   $("#scriptStop").addEventListener("click", () => state._script?.runner?.stop());
+  // PIN トグル: ON の間は run してもパネルを閉じない (編集 → run を繰り返したいとき)。
+  $("#scriptPin").addEventListener("click", () => {
+    state.scriptPinned = !state.scriptPinned;
+    setScriptPinState(state.scriptPinned);
+  });
+  setScriptPinState(state.scriptPinned);
   // mock トグル: セッション内のみ (persist しない)。 ON で実通信せずローカル応答。
   $("#scriptMock").addEventListener("click", (e) => {
     state.scriptMock = !state.scriptMock;
@@ -4873,6 +4933,8 @@ function wireScriptPanel() {
       (state.scriptMock || auto) ? "running" : "");
     // ハイライトを mock ON/OFF で切替: $> は ON=mock 色 / OFF=dim、 > は ON=dim / OFF=通常
     updateScriptHighlight();
+    // commands chip も mock ON/OFF で `>` ⇔ `$>` を切替
+    renderCommandChips();
     setTimeout(() => { if (!state._script) setScriptStatus("", ""); }, 2500);
   });
   $("#scriptClear").addEventListener("click", () => {
@@ -4945,8 +5007,9 @@ function wireScriptPanel() {
       if (chip) { e.preventDefault(); chip.click(); }
       return;
     }
-    // 素の Enter: 現在行が `< name: text` (text 有り) なら `\n> name\n` を挿入
-    // (送信のあとに自動で wait を補完)
+    // 素の Enter: 現在行が `< name: text` (text 有り) なら、 送信のあとの応答行を自動補完。
+    //   - 通常モード: `\n> name\n` (wait を補完して次行へ)
+    //   - Mock モード: `\n$> name: ` (mock 応答を続けて書けるよう : の後で止める。 改行しない)
     if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
       const ed = e.target;
       const cursor = ed.selectionStart;
@@ -4958,7 +5021,7 @@ function wireScriptPanel() {
       if (m) {
         const name = m[1].trim();
         e.preventDefault();
-        const insert = `\n> ${name}\n`;
+        const insert = editorMockActive() ? `\n$> ${name}: ` : `\n> ${name}\n`;
         ed.value = before + insert + after;
         ed.selectionStart = ed.selectionEnd = before.length + insert.length;
         autoSaveScript();

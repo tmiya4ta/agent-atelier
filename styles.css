@@ -3863,6 +3863,26 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
   background: var(--paper-2);
   color: var(--ink);
 }
+.script-tabbar-pin {
+  align-self: center;
+  margin: 0 0 0 4px;
+  padding: 4px 6px;
+  color: var(--ink-3);
+  border-radius: 4px;
+}
+.script-tabbar-pin:hover {
+  background: var(--paper-2);
+  color: var(--ink);
+}
+/* PIN ON: アクセント色 + 留めている感 (run でも閉じない状態を明示) */
+.script-tabbar-pin.is-on {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.script-tabbar-pin.is-on:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
 
 /* ─── Actions row (commands の下、 editor の上) ─── */
 .script-actions {
@@ -4019,6 +4039,13 @@ body.is-sidebar-collapsed .script-panel { left: 0; }
   color: var(--ink-3);
   font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
 }
+/* mock モード時の $> (mock 応答) chip。 mock 色 (amber) で wait と差し替わったと示す。 */
+.swc-cmd.is-mock { border-color: #d9b35a; }
+.swc-cmd.is-mock .swc-cmd-glyph { color: #b8860b; }
+.swc-cmd.is-mock:hover { border-color: #b8860b; background: rgba(184, 134, 11, 0.10); color: var(--accent-ink); }
+body.is-dark .swc-cmd.is-mock { border-color: #6b531f; }
+body.is-dark .swc-cmd.is-mock .swc-cmd-glyph { color: #E0A93B; }
+body.is-dark .swc-cmd.is-mock:hover { border-color: #E0A93B; background: rgba(224, 169, 59, 0.14); color: #fff; }
 
 /* ─── Editor (full width) ─── */
 .script-editor-wrap {

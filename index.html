@@ -947,19 +947,22 @@
       <div class="script-tabbar-spacer"></div>
       <span class="script-saved" id="scriptSavedAt">—</span>
       <span class="script-status" id="scriptStatus" hidden></span>
+      <button class="script-tool script-tool-icon script-tabbar-pin" id="scriptPin" title="Pin panel: run しても閉じない" aria-pressed="false" aria-label="pin panel">
+        <svg viewBox="0 0 16 16" width="12" height="12"><path d="M9.5 1.8 L14.2 6.5 L11.6 7.1 L9 9.7 L8.4 12.4 L3.6 7.6 L6.3 7 L8.9 4.4 Z M6 10 L2.5 13.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
       <button class="script-tool script-tool-icon script-tabbar-collapse" id="scriptCollapse" title="Close panel (Ctrl+Shift+K)" aria-label="close panel">
         <svg viewBox="0 0 16 16" width="12" height="12"><path d="M3 5 L8 10 L13 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
     </div>
 
-    <div class="script-windows-bar" id="scriptWindowsBar">
-      <span class="script-windows-label">windows</span>
-      <div class="script-window-chips" id="scriptWindowChips"></div>
-    </div>
-
     <div class="script-windows-bar script-commands-bar">
       <span class="script-windows-label">commands</span>
       <div class="script-window-chips" id="scriptCommandChips"></div>
+    </div>
+
+    <div class="script-windows-bar" id="scriptWindowsBar">
+      <span class="script-windows-label">windows</span>
+      <div class="script-window-chips" id="scriptWindowChips"></div>
     </div>
 
     <div class="script-actions">
