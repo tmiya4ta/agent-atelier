@@ -3112,6 +3112,16 @@ body.is-dark .agent-tag { color: #5BB8E8; }
   padding: 0;
 }
 .compose-input::placeholder { color: var(--ink-4); }
+/* script 実行時に自動でタイプしている間の演出 (人間が打っている風)。
+   末尾キャレット風の点滅ボーダーで「入力中」を示す。 */
+.compose-input.is-autotyping {
+  caret-color: var(--accent);
+  animation: composeAutotype 0.9s steps(1, end) infinite;
+}
+@keyframes composeAutotype {
+  0%, 50%   { border-right: 2px solid var(--accent); }
+  50.01%, 100% { border-right: 2px solid transparent; }
+}
 .compose-send {
   display: grid; place-items: center;
   width: 30px; height: 30px;

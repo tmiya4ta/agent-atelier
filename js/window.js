@@ -521,7 +521,8 @@ export class AgentWindow {
     this._pushInputHistory(text);
     ta.value = "";
     ta.style.height = "auto";
-    this.sendProgrammatic(text);
+    // 手入力はユーザーが既に打ち終えているので、 入力エリアへの自動タイプ演出はスキップ。
+    this.sendProgrammatic(text, { typeIntoCompose: false });
   }
 
   // ───────────────────────────────────────────
@@ -618,10 +619,12 @@ export class AgentWindow {
     }
   }
 
-  // Script から呼び出される。返り値は adapter.send の Promise
-  sendProgrammatic(text) {
+  // Script から呼び出される。返り値は adapter.send の Promise。
+  // opts.typeIntoCompose (既定 true): 下の入力エリアに 1 文字ずつ「人間が打っている」風に
+  //   流し込んでから送信する。 手入力 (_sendFromCompose) からは false で呼ぶ (二重タイプ防止)。
+  sendProgrammatic(text, opts = {}) {
     if (!text || this.adapter.state !== "open") return Promise.reject(new Error("not connected"));
-    const userDone = this._addUserMessage(text);
+    const typeInto = opts.typeIntoCompose !== false;
     const doSend = () => {
       this._showTyping(true);
       this.lastSendAt = Date.now();
@@ -633,11 +636,19 @@ export class AgentWindow {
         throw err;
       });
     };
-    // mock モード時は「入力表示が終わってから」応答遅延を開始する。 これで入力の長短に
-    // かかわらず "表示完了 → 約3秒後に応答" が一定になる (実通信時は並行のまま遅延ゼロ)。
-    if (this.adapter._mockActive) {
-      return userDone.then(doSend);
+    if (typeInto) {
+      // 人間が打っているように: まず下の入力エリアに 1 文字ずつタイプ → 入力欄をクリアして
+      // ユーザーバブルを即時表示 (バブル側ではタイプしない) → 送信。
+      return this._typeIntoCompose(text).then(() => {
+        const ta = this.el.querySelector(".compose-input");
+        if (ta) { ta.value = ""; ta.style.height = "auto"; }
+        this._addUserMessage(text, { instant: true });
+        return doSend();
+      });
     }
+    // 手入力時: 従来どおりストリームにユーザーバブルをタイプライター表示してから送信。
+    const userDone = this._addUserMessage(text);
+    if (this.adapter._mockActive) return userDone.then(doSend);
     return doSend();
   }
 
@@ -678,15 +689,42 @@ export class AgentWindow {
     });
   }
 
-  // 返り値: 入力 typewriter が完了する Promise
-  _addUserMessage(text) {
+  // 返り値: 入力 typewriter が完了する Promise。
+  // opts.instant = true なら、 タイプライターせず本文を即時表示して整形する
+  // (入力エリア側で既にタイプ演出済みのケース — sendProgrammatic から)。
+  _addUserMessage(text, opts = {}) {
     const stream = this.el.querySelector(".chat-stream");
     const node = this._renderMsg("user", "you", "");
     stream.appendChild(node);
     const body = node.querySelector(".msg-body");
+    if (opts.instant) {
+      this._renderUserBody(body, text);
+      this._scrollChat(true);
+      return Promise.resolve();
+    }
     const done = this._typewriteUser(body, text);
     this._scrollChat(true);
     return done;
+  }
+
+  // user バブル本文を protocol に応じて整形して即時セット (タイプなし)。
+  // _typewriteUser の finalize と同じ整形ロジックを共有する。
+  _renderUserBody(body, fullText) {
+    const normalized = String(fullText).replace(/\\n/g, "\n");
+    if (this.protoMode === "slack") {
+      body.innerHTML = safeHtml(mrkdwnToHtml(normalized));
+      body.dataset.md = "1";
+    } else if (this.protoMode === "a2a" && window.marked) {
+      try {
+        window.marked.setOptions({ gfm: true, breaks: true });
+        body.innerHTML = safeHtml(window.marked.parse(normalized));
+        body.dataset.md = "1";
+      } catch (e) {
+        body.textContent = normalized;
+      }
+    } else {
+      body.textContent = normalized;
+    }
   }
 
   _addSystemMessage(text) {
@@ -807,6 +845,45 @@ export class AgentWindow {
   // protocol に応じた markdown / mrkdwn 整形を innerHTML で適用する。
   // 入力 (user 発言) を typewriter 表示。 表示が完了したら resolve する Promise を返す
   // (mock モードで「入力表示が終わってから応答遅延を開始」するために使う)。
+  // 入力エリア (compose-input) に 1 文字ずつ「人間が打っている」ように流し込む演出。
+  // script 実行時、 ストリームに直接バブルを出す代わりに、 まずここで下の入力欄に
+  // ぱちぱちタイプして見せる。 完了したら resolve (呼び出し側が clear + 送信)。
+  // 速度は 1 文字ごとに 40〜80ms のゆらぎ + 空白/句読点で軽く溜め (自然さ)。
+  _typeIntoCompose(fullText) {
+    return new Promise((resolve) => {
+      const ta = this.el.querySelector(".compose-input");
+      if (!ta) { resolve(); return; }
+      if (this._composeTypeTimer) { clearTimeout(this._composeTypeTimer); this._composeTypeTimer = null; }
+      const normalized = String(fullText).replace(/\\n/g, "\n");
+      const total = normalized.length;
+      ta.value = "";
+      ta.classList.add("is-autotyping");   // タイプ中の見た目 (キャレット点滅)
+      let i = 0;
+      const autosize = () => {
+        ta.style.height = "auto";
+        ta.style.height = Math.min(ta.scrollHeight, 140) + "px";
+      };
+      // 1 文字あたりの待ち時間: ベース 40〜80ms。 直前文字が空白/句読点なら少し溜める。
+      const delayFor = (ch) => {
+        let d = 40 + Math.random() * 40;
+        if (/[\s、。,.!?！？]/.test(ch)) d += 60 + Math.random() * 90;
+        return d;
+      };
+      const finish = () => { ta.classList.remove("is-autotyping"); this._composeTypeTimer = null; resolve(); };
+      const tick = () => {
+        // 停止されたら途中でも打ち切り、 打てた分はそのまま resolve (呼び出し側が処理)
+        if (this._composeTypeAborted) { this._composeTypeAborted = false; finish(); return; }
+        if (i >= total) { finish(); return; }
+        const ch = normalized[i];
+        ta.value = normalized.slice(0, i + 1);
+        autosize();
+        i += 1;
+        this._composeTypeTimer = setTimeout(tick, delayFor(ch));
+      };
+      tick();
+    });
+  }
+
   _typewriteUser(body, fullText) {
     return new Promise((resolve) => {
       if (this._userTypeTimer) {
@@ -929,6 +1006,12 @@ export class AgentWindow {
   // 停止ボタン押下: 進行中の adapter 送信を中断し、 実行中シナリオも止め、 typing 表示を消す。
   _stopInflight() {
     if (typeof this.adapter.abort === "function") this.adapter.abort();
+    // 入力エリアへのタイプ演出が走っていれば中断し、 入力欄をクリア。
+    if (this._composeTypeTimer) {
+      this._composeTypeAborted = true;
+      const ta = this.el.querySelector(".compose-input");
+      if (ta) { ta.value = ""; ta.style.height = "auto"; ta.classList.remove("is-autotyping"); }
+    }
     // 実行中のシナリオ (ScriptRunner / loop) も停止する。 app 側が listen。
     document.dispatchEvent(new CustomEvent("atelier:stop-scenario"));
     this._showTyping(false);
