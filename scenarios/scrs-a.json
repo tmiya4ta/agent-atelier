@@ -265,10 +265,10 @@
               "channel": ""
             },
             "pos": {
-              "left": "40px",
-              "top": "32px",
-              "width": "760px",
-              "height": "680px",
+              "left": "16px",
+              "top": "16px",
+              "width": "788px",
+              "height": "776px",
               "zIndex": "201"
             },
             "activeTab": "chat",
