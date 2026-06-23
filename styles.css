@@ -5129,6 +5129,38 @@ body { transition: background-color 0.25s ease, color 0.25s ease; }
   flex-shrink: 0;
 }
 
+/* ── MCP tools: アコーディオン (項目クリックでその場展開) ── */
+.tool-acc { display: flex; flex-direction: column; }
+.tool-acc > .tool-item { width: 100%; }
+.tool-acc.is-open > .tool-item {
+  border-bottom-left-radius: 0; border-bottom-right-radius: 0;
+  border-color: color-mix(in srgb, var(--tool-accent, var(--accent)) 55%, transparent);
+  transform: none;
+}
+/* 展開シェブロン(▾)は常時うっすら、開いたら反転 */
+.tool-acc > .tool-item .tool-go { opacity: 0.5; transform: none; transition: opacity 0.15s ease, transform 0.2s ease; }
+.tool-acc:hover > .tool-item .tool-go,
+.tool-acc.is-open > .tool-item .tool-go { opacity: 1; transform: none; }
+.tool-acc.is-open > .tool-item .tool-go { transform: rotate(180deg); }
+
+/* びよーんと開閉: grid-template-rows 0fr→1fr で auto 高さを滑らかに */
+.tool-acc-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.22s ease;
+  border: 1px solid color-mix(in srgb, var(--tool-accent, var(--accent)) 55%, transparent);
+  border-top: none;
+  border-bottom-left-radius: 9px; border-bottom-right-radius: 9px;
+  background: color-mix(in srgb, var(--tool-accent, var(--accent)) 5%, var(--panel));
+}
+.tool-acc:not(.is-open) > .tool-acc-body { border-color: transparent; }
+.tool-acc.is-open > .tool-acc-body { grid-template-rows: 1fr; }
+.tool-acc-inner { overflow: hidden; min-height: 0; }
+.tool-acc.is-open > .tool-acc-body > .tool-acc-inner { padding: 12px; }
+.tool-acc-inner > .tool-form-fields { margin: 0; }
+.tool-acc-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
+.tool-acc-inner .tool-result { flex: none; margin-top: 10px; }
+
 .tool-form {
   display: flex; flex-direction: column; gap: 12px;
   flex: 1; min-height: 0;   /* result を pane の残り高さに伸ばす */
