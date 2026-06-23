@@ -1400,41 +1400,31 @@ export class AgentWindow {
     // tools-list / tool-form の DOM ハンドラ。
     // _mcpApplyOpen で参照する this._mcpDom を **先に** 設定することが重要 —
     // 後段の state==="open" チェックで即時描画が走ったとき undefined だと何も描かれない。
-    const list   = toolsPane.querySelector(".tools-list");
-    const form   = toolsPane.querySelector(".tool-form");
-    const fields = form.querySelector(".tool-form-fields");
-    const result = form.querySelector(".tool-result");
-    const back   = form.querySelector(".tool-back");
-    const cancel = form.querySelector(".tool-cancel");
-    const run    = form.querySelector(".tool-run");
+    const list = toolsPane.querySelector(".tools-list");
 
+    // アコーディオン: tool item ヘッダのクリックでその場展開し、
+    // 引数フォーム + Send + 結果を項目の下に「びよーん」と出す。
+    // 旧 .tool-form ダイアログ(index.html)は使わない。
     list.addEventListener("click", (ev) => {
-      const item = ev.target.closest(".tool-item");
-      if (!item) return;
-      const name = item.dataset.tool;
-      const tool = (this._mcpTools || []).find(t => t.name === name);
+      const head = ev.target.closest(".tool-item");
+      if (!head) return;
+      const acc = head.closest(".tool-acc");
+      if (!acc) return;
+      const tool = (this._mcpTools || []).find(t => t.name === acc.dataset.tool);
       if (!tool) return;
-      this._openMcpToolForm(tool);
-    });
-
-    back.addEventListener("click",   () => this._closeMcpToolForm());
-    cancel.addEventListener("click", () => this._closeMcpToolForm());
-    run.addEventListener("click",    () => this._runMcpTool());
-
-    // form 内 Enter で submit (textarea を除き)
-    fields.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") {
-        e.preventDefault();
-        this._runMcpTool();
+      const willOpen = !acc.classList.contains("is-open");
+      // 単一展開: 他に開いている項目は閉じる
+      list.querySelectorAll(".tool-acc.is-open").forEach((a) => {
+        if (a !== acc) a.classList.remove("is-open");
+      });
+      if (willOpen && !acc.dataset.built) {
+        this._buildMcpToolBody(acc, tool);
+        acc.dataset.built = "1";
       }
+      acc.classList.toggle("is-open", willOpen);
     });
 
-    this._mcpDom = { list, form, fields, result };
-
-    // tools タブを再クリックしたら form を閉じて一覧に戻す。
-    if (toolsTab) {
-      toolsTab.addEventListener("click", () => this._closeMcpToolForm());
-    }
+    this._mcpDom = { list };
 
     // ── adapter "open" 購読 + 既に open 済みなら即時描画 ──
     // 既存の "open" イベントは _wireAdapter で chat 用ロジックも走るが、
@@ -1482,38 +1472,44 @@ export class AgentWindow {
       const schema = t.inputSchema || t.input_schema || {};
       const argc = Object.keys(schema.properties || {}).length;
       const ro   = /READ-ONLY/i.test(t.description || "");
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "tool-item tool-cat-" + cat;
-      btn.dataset.tool = t.name;
-      btn.innerHTML = `
-        <span class="tool-ico" aria-hidden="true">${TOOL_GLYPH[cat]}</span>
-        <span class="tool-item-main">
-          <span class="tool-item-name">${escapeHtml(t.name)}</span>
-          <span class="tool-item-desc">${escapeHtml(t.description || "")}</span>
-        </span>
-        <span class="tool-item-tags">
-          ${argc ? `<span class="tool-tag">${argc} arg${argc === 1 ? "" : "s"}</span>`
-                 : `<span class="tool-tag is-noargs">no args</span>`}
-          ${ro ? `<span class="tool-tag is-ro">read-only</span>` : ""}
-        </span>
-        <span class="tool-go" aria-hidden="true">→</span>
+      const acc = document.createElement("div");
+      acc.className = "tool-acc tool-cat-" + cat;
+      acc.dataset.tool = t.name;
+      acc.innerHTML = `
+        <button type="button" class="tool-item">
+          <span class="tool-ico" aria-hidden="true">${TOOL_GLYPH[cat]}</span>
+          <span class="tool-item-main">
+            <span class="tool-item-name">${escapeHtml(t.name)}</span>
+            <span class="tool-item-desc">${escapeHtml(t.description || "")}</span>
+          </span>
+          <span class="tool-item-tags">
+            ${argc ? `<span class="tool-tag">${argc} arg${argc === 1 ? "" : "s"}</span>`
+                   : `<span class="tool-tag is-noargs">no args</span>`}
+            ${ro ? `<span class="tool-tag is-ro">read-only</span>` : ""}
+          </span>
+          <span class="tool-go" aria-hidden="true">▾</span>
+        </button>
+        <div class="tool-acc-body"><div class="tool-acc-inner"></div></div>
       `;
-      list.appendChild(btn);
+      list.appendChild(acc);
     }
   }
 
-  _openMcpToolForm(tool) {
-    if (!this._mcpDom) return;
-    const { list, form, fields, result } = this._mcpDom;
-    list.hidden = true;
-    form.hidden = false;
-    result.hidden = true;
-    result.textContent = "";
-    form.querySelector(".tool-form-title").textContent = tool.name;
-    form.querySelector(".tool-form-desc").textContent  = tool.description || "";
-    fields.innerHTML = "";
-    this._mcpCurrentTool = tool;
+  // アコーディオン項目の body を遅延生成: 説明 + 引数フォーム + Send + 結果。
+  _buildMcpToolBody(acc, tool) {
+    const inner = acc.querySelector(".tool-acc-inner");
+    inner.innerHTML = "";
+
+    if (tool.description) {
+      const desc = document.createElement("p");
+      desc.className = "tool-form-desc";
+      desc.textContent = tool.description;
+      inner.appendChild(desc);
+    }
+
+    const fields = document.createElement("form");
+    fields.className = "tool-form-fields";
+    fields.addEventListener("submit", (e) => e.preventDefault());
 
     const schema = tool.inputSchema || tool.input_schema || { properties: {}, required: [] };
     const props  = schema.properties || {};
@@ -1522,60 +1518,76 @@ export class AgentWindow {
     if (!keys.length) {
       const note = document.createElement("p");
       note.className = "tool-form-empty";
-      note.textContent = "(no input fields — call directly)";
+      note.textContent = "(no input fields — Send directly)";
       fields.appendChild(note);
     }
     for (const name of keys) {
-      const def = props[name] || {};
-      const row = document.createElement("label");
-      row.className = "tool-field";
-      const label = document.createElement("span");
-      label.className = "tool-field-label";
-      label.textContent = name + (required.has(name) ? " *" : "");
-      const desc = document.createElement("span");
-      desc.className = "tool-field-desc";
-      desc.textContent = def.description || "";
-
-      let input;
-      const type = def.type;
-      if (type === "integer" || type === "number") {
-        input = document.createElement("input");
-        input.type = "number";
-        if (type === "integer") input.step = "1";
-      } else if (type === "boolean") {
-        input = document.createElement("input");
-        input.type = "checkbox";
-      } else if (type === "object" || type === "array") {
-        input = document.createElement("textarea");
-        input.rows = 3;
-        input.placeholder = type === "object" ? "{ }" : "[ ]";
-      } else {
-        input = document.createElement("input");
-        input.type = "text";
-      }
-      input.className = "tool-field-input";
-      input.dataset.name = name;
-      input.dataset.type = type || "string";
-
-      row.appendChild(label);
-      if (def.description) row.appendChild(desc);
-      row.appendChild(input);
-      fields.appendChild(row);
+      fields.appendChild(this._buildToolField(name, props[name] || {}, required.has(name)));
     }
+    inner.appendChild(fields);
+
+    const actions = document.createElement("div");
+    actions.className = "tool-acc-actions";
+    const run = document.createElement("button");
+    run.type = "button";
+    run.className = "tool-run";
+    run.textContent = "Send";
+    actions.appendChild(run);
+    inner.appendChild(actions);
+
+    const result = document.createElement("pre");
+    result.className = "tool-result";
+    result.hidden = true;
+    inner.appendChild(result);
+
+    run.addEventListener("click", () => this._runMcpToolIn(tool, fields, result));
+    // Enter で送信 (textarea を除く)
+    fields.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") {
+        e.preventDefault();
+        this._runMcpToolIn(tool, fields, result);
+      }
+    });
   }
 
-  _closeMcpToolForm() {
-    if (!this._mcpDom) return;
-    const { list, form } = this._mcpDom;
-    list.hidden = false;
-    form.hidden = true;
-    this._mcpCurrentTool = null;
+  _buildToolField(name, def, isRequired) {
+    const row = document.createElement("label");
+    row.className = "tool-field";
+    const label = document.createElement("span");
+    label.className = "tool-field-label";
+    label.textContent = name + (isRequired ? " *" : "");
+    const desc = document.createElement("span");
+    desc.className = "tool-field-desc";
+    desc.textContent = def.description || "";
+
+    let input;
+    const type = def.type;
+    if (type === "integer" || type === "number") {
+      input = document.createElement("input");
+      input.type = "number";
+      if (type === "integer") input.step = "1";
+    } else if (type === "boolean") {
+      input = document.createElement("input");
+      input.type = "checkbox";
+    } else if (type === "object" || type === "array") {
+      input = document.createElement("textarea");
+      input.rows = 3;
+      input.placeholder = type === "object" ? "{ }" : "[ ]";
+    } else {
+      input = document.createElement("input");
+      input.type = "text";
+    }
+    input.className = "tool-field-input";
+    input.dataset.name = name;
+    input.dataset.type = type || "string";
+
+    row.appendChild(label);
+    if (def.description) row.appendChild(desc);
+    row.appendChild(input);
+    return row;
   }
 
-  async _runMcpTool() {
-    if (!this._mcpDom || !this._mcpCurrentTool) return;
-    const { fields, result } = this._mcpDom;
-    const tool = this._mcpCurrentTool;
+  async _runMcpToolIn(tool, fields, result) {
     const args = {};
     const inputs = fields.querySelectorAll(".tool-field-input");
     for (const el of inputs) {
@@ -1597,6 +1609,7 @@ export class AgentWindow {
         try { args[name] = JSON.parse(raw); }
         catch (e) {
           result.hidden = false;
+          result.classList.add("is-error");
           result.textContent = `invalid JSON for "${name}": ${e.message}`;
           return;
         }
