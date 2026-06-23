@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!--
+      CloudHub ワイルドカード リバースプロキシ relay (*.theorems.io)
+      ──────────────────────────────────────────────────────────────
+      用途: home 公開IP (*.theorems.io) はヘアピン NAT のため LAN 内から届かない。
+            CloudHub は外部にあるので home 公開IP に普通に到達できる。 そこで
+            CloudHub アプリ経由で *.theorems.io を中継し、 LAN からでも見られるようにする。
+
+      ルーティング: パス先頭セグメントを subdomain として扱う。
+        GET /snowapp/.well-known/agent.json
+          → https://snowapp.theorems.io/.well-known/agent.json
+        POST /snowapp/    (JSON-RPC)
+          → https://snowapp.theorems.io/
+
+      安全性: 宛先ドメインは theorems.io に固定。 subdomain は [a-z0-9-] のみ許可。
+              任意ホストには飛ばせない (open proxy にならない)。
+    -->
+
+    <flow name="theorems-relay-flow">
+        <http:listener config-ref="http-listener-config" path="/*"
+                       allowedMethods="GET,POST,PUT,DELETE,PATCH,HEAD,OPTIONS">
+            <http:response statusCode="#[vars.st default 200]">
+                <http:headers><![CDATA[#[vars.hdrs default {}]]]></http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.st default 502]">
+                <http:body>#[payload]</http:body>
+                <http:headers><![CDATA[#[vars.hdrs default { 'Content-Type': 'text/plain; charset=utf-8' }]]]></http:headers>
+            </http:error-response>
+        </http:listener>
+
+        <!-- パス先頭セグメント = subdomain。 残りパス+query を upstream へ。 -->
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="route"><![CDATA[%dw 2.0
+output application/java
+var path = attributes.requestPath default "/"
+var segs = (path splitBy "/") filter ($ != "")
+var sub  = lower(segs[0] default "")
+var rest = if (sizeOf(segs) <= 1) "/" else "/" ++ (segs[1 to -1] joinBy "/")
+var qs   = attributes.queryString default ""
+---
+{
+  sub:    sub,
+  valid:  (sub matches /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/),
+  host:   sub ++ ".theorems.io",
+  target: "https://" ++ sub ++ ".theorems.io" ++ rest ++ (if (qs != "") ("?" ++ qs) else "")
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="INFO" category="theorems.relay"
+                message="#['relay ' ++ (attributes.method default '?') ++ ' ' ++ (attributes.requestPath default '/') ++ ' -> ' ++ (if (vars.route.valid) (vars.route.target) else 'INVALID(' ++ (vars.route.sub default '') ++ ')')]"/>
+
+        <choice>
+            <!-- 不正な subdomain は 400 (upstream へ飛ばさない) -->
+            <when expression="#[not (vars.route.valid default false)]">
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: "bad relay path",
+  hint:  "use /<subdomain>/<path> where <subdomain> is a host under theorems.io",
+  example: "/snowapp/.well-known/agent.json",
+  got: (vars.route.sub default "")
+}]]></ee:set-payload>
+                    </ee:message>
+                    <ee:variables>
+                        <ee:set-variable variableName="st"><![CDATA[%dw 2.0 output application/java --- 400]]></ee:set-variable>
+                        <ee:set-variable variableName="hdrs"><![CDATA[%dw 2.0 output application/java --- { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*" }]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </when>
+
+            <otherwise>
+                <ee:transform>
+                    <ee:variables>
+                        <ee:set-variable variableName="fwdHeaders"><![CDATA[%dw 2.0
+output application/java
+var h = attributes.headers default {}
+// hop-by-hop / host は除去し、 Host を upstream の host に明示上書きする。
+// (これが無いと Caddy の host ベース振分け (<sub>.theorems.io:443) に当たらず 404 になる)
+var drop = ["host","proxy-connection","connection","keep-alive","te","trailer","transfer-encoding","upgrade","content-length"]
+---
+(h filterObject ((v, k) -> not (drop contains lower(k as String)))) ++ { "Host": vars.route.host }]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+
+                <try>
+                    <http:request method="#[attributes.method]"
+                                  url="#[vars.route.target]"
+                                  config-ref="relay-request-config"
+                                  followRedirects="false"
+                                  responseTimeout="60000">
+                        <http:headers>#[vars.fwdHeaders]</http:headers>
+                        <http:response-validator>
+                            <http:success-status-code-validator values="0..599"/>
+                        </http:response-validator>
+                    </http:request>
+
+                    <ee:transform>
+                        <ee:variables>
+                            <ee:set-variable variableName="st"><![CDATA[%dw 2.0 output application/java --- attributes.statusCode default 200]]></ee:set-variable>
+                            <ee:set-variable variableName="hdrs"><![CDATA[%dw 2.0
+output application/java
+var rh = attributes.headers default {}
+var drop = ["connection","keep-alive","proxy-authenticate","proxy-connection","te","trailer","transfer-encoding","upgrade"]
+---
+rh filterObject ((v, k) -> not (drop contains lower(k as String)))]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+
+                    <error-handler>
+                        <on-error-continue type="ANY">
+                            <ee:transform>
+                                <ee:message>
+                                    <ee:set-payload><![CDATA[%dw 2.0 output text/plain --- "relay error: " ++ (error.description default "unknown") ++ " (target: " ++ (vars.route.target default "") ++ ")"]]></ee:set-payload>
+                                </ee:message>
+                                <ee:variables>
+                                    <ee:set-variable variableName="st"><![CDATA[%dw 2.0 output application/java --- 502]]></ee:set-variable>
+                                    <ee:set-variable variableName="hdrs"><![CDATA[%dw 2.0 output application/java --- { "Content-Type": "text/plain; charset=utf-8" }]]></ee:set-variable>
+                                </ee:variables>
+                            </ee:transform>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+            </otherwise>
+        </choice>
+    </flow>
+
+</mule>
