@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+
+    <!-- mule.env を CLI/環境変数で上書き可能にする (default = local) -->
+    <global-property name="mule.env" value="local"/>
+    <configuration-properties file="config/config-${mule.env}.yaml"/>
+
+    <!-- HTTP listener (inbound) -->
+    <http:listener-config name="http-listener-config">
+        <http:listener-connection host="0.0.0.0" port="${http.port}"/>
+    </http:listener-config>
+
+    <!-- HTTP requester (outbound). url を都度フル指定するので host はプレースホルダ。
+         全 upstream が *.theorems.io:443 HTTPS (public cert) なので単一 config で足りる。 -->
+    <http:request-config name="relay-request-config">
+        <http:request-connection protocol="HTTPS" host="theorems.io" port="443"/>
+    </http:request-config>
+
+</mule>

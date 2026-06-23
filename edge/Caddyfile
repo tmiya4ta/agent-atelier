@@ -41,3 +41,39 @@ http://proxy.theorems.io:9180 {
         lb_policy round_robin
     }
 }
+
+# ── snowapp (Snowflake 顧客DB A2A エージェント) ──
+# NodePort 30090 → snowapp:9999 (ns=snowapp)
+# ⚠ 認証なし＝顧客PII(氏名/email/電話)が全公開。 認証を足す場合は下記コメントの
+#   basic_auth か、 @ok header_regex Authorization "^Bearer <token>$" 等を reverse_proxy の前に入れる。
+snowapp.theorems.io:443 {
+    tls /etc/letsencrypt/live/theorems.io/fullchain.pem /etc/letsencrypt/live/theorems.io/privkey.pem
+    # basic_auth {
+    #     snowapp $2a$14$<bcrypt-hash>   # `caddy hash-password` で生成
+    # }
+    reverse_proxy 172.23.0.2:30090 172.23.0.3:30090 172.23.0.4:30090 {
+        lb_policy round_robin
+    }
+}
+
+http://snowapp.theorems.io:9180 {
+    reverse_proxy 172.23.0.2:30090 172.23.0.3:30090 172.23.0.4:30090 {
+        lb_policy round_robin
+    }
+}
+
+# ── snowapp-mcp (Snowflake 顧客DB MCP サーバ / streamable-http stateless+json) ──
+# NodePort 30091 → snowapp-mcp:8000 (ns=snowapp)。 MCP endpoint は /mcp。
+# relay 経由: https://theorems-relay-.../snowapp-mcp/mcp
+snowapp-mcp.theorems.io:443 {
+    tls /etc/letsencrypt/live/theorems.io/fullchain.pem /etc/letsencrypt/live/theorems.io/privkey.pem
+    reverse_proxy 172.23.0.2:30091 172.23.0.3:30091 172.23.0.4:30091 {
+        lb_policy round_robin
+    }
+}
+
+http://snowapp-mcp.theorems.io:9180 {
+    reverse_proxy 172.23.0.2:30091 172.23.0.3:30091 172.23.0.4:30091 {
+        lb_policy round_robin
+    }
+}
