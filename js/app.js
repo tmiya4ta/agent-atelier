@@ -5835,8 +5835,10 @@ function openDialog(opts = {}) {
     if (eyebrow) eyebrow.textContent = "edit connection";
     if (title)   title.innerHTML = "Edit <em>connection</em>";
     if (submitLabel) submitLabel.textContent = "save";
-    $("#dlgUrl").readOnly = true;
-    $("#dlgUrl").classList.add("is-readonly");
+    // URL は編集可能 (変更時は保存処理で bookmark を re-key + 開いている窓を再接続)。
+    $("#dlgUrl").readOnly = false;
+    $("#dlgUrl").classList.remove("is-readonly");
+    // protocol は固定 (変えると別の接続になるため)。
     document.querySelectorAll("#dlgProtoGrid .proto-card").forEach(el => el.disabled = true);
   } else {
     if (eyebrow) eyebrow.textContent = "new connection";
@@ -6058,6 +6060,8 @@ async function submitDialog() {
     const b = (state.bookmarks || []).find(x => x.key === editKey);
     if (b) {
       const newName = name || b.name;
+      const oldUrl  = b.url;
+      const urlChanged = !isMock && !!url && url !== oldUrl;
       b.name = newName;
       b.authRef = cleanAuthRef;
       if (state.selectedProto === "slack") b.channel = channel || "general";
@@ -6066,15 +6070,29 @@ async function submitDialog() {
         b.user     = dbUser;
         if (dbPassword) b.password = dbPassword;   // 空入力なら既存 password を保持
       }
-      // 開いているウインドウを新しい auth/name で再接続
+      if (urlChanged) {
+        // 同じ url の bookmark が既にあれば重複させない
+        state.bookmarks = (state.bookmarks || []).filter(
+          x => x === b || !(x.protoId === b.protoId && x.url === url)
+        );
+        b.url = url;
+        b.key = bookmarkKey(b.protoId, url);   // url 由来の key を貼り直す
+      }
+      // 開いているウインドウを新しい url/auth/name で再接続 (フィルタは旧 url で)
       const wins = state.workspaces.flatMap(w => w.windows)
-        .filter(w => w.protoId === b.protoId && w.adapter.config.url === b.url);
+        .filter(w => w.protoId === b.protoId && w.adapter.config.url === oldUrl);
       const resolved = await resolveAuthForConnection({ authRef: cleanAuthRef, auth: b.auth });
       for (const win of wins) {
         win.adapter.config.name = newName;
         win.adapter.config.authRef = cleanAuthRef;
         win.adapter.config.auth = resolved.auth;
         win.adapter.config.authHeaders = resolved.authHeaders;
+        if (urlChanged) {
+          // url を差し替えてフレッシュに再接続 (a2a/mcp は this.endpoint を起点に discovery する)
+          win.adapter.config.url = url;
+          if ("endpoint" in win.adapter) win.adapter.endpoint = url;
+          win.name = newName || win.name;
+        }
         if (isDb && win.adapter.client) {
           // clouderby クライアントの接続情報を更新してセッション張り直し
           Object.assign(win.adapter.config, { database: b.database, user: b.user, password: b.password });
