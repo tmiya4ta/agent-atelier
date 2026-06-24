@@ -1351,7 +1351,10 @@ export class AgentWindow {
             <button type="button" class="set-decode-btn" hidden>decode JWT ▾</button>
           </div>
         </div>
-        <pre class="set-jwt-decoded" hidden></pre>
+        <div class="set-jwt-wrap" hidden>
+          <button type="button" class="set-jwt-copy" title="Copy decoded JSON" aria-label="Copy decoded JSON">copy</button>
+          <pre class="set-jwt-decoded"></pre>
+        </div>
       </div>
 
       <div class="set-section">
@@ -1442,22 +1445,38 @@ export class AgentWindow {
 
     // JWT decode: textarea (無ければ現在の auth) が JWT 形式なら decode ボタンを出す。
     const decodeBtn = box.querySelector(".set-decode-btn");
+    const decodedWrap = box.querySelector(".set-jwt-wrap");
     const decodedPre = box.querySelector(".set-jwt-decoded");
-    if (rawInput && decodeBtn && decodedPre) {
+    const copyBtn = box.querySelector(".set-jwt-copy");
+    if (rawInput && decodeBtn && decodedWrap && decodedPre) {
       const tokenNow = () => (rawInput.value.trim() || this.adapter.config.auth || "");
       const looksJwt = (s) => /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(s || "");
       const syncBtn = () => {
         decodeBtn.hidden = !looksJwt(tokenNow());
-        if (decodeBtn.hidden) decodedPre.hidden = true;
+        if (decodeBtn.hidden) decodedWrap.hidden = true;
       };
       rawInput.addEventListener("input", syncBtn);
       decodeBtn.addEventListener("click", () => {
-        if (!decodedPre.hidden) { decodedPre.hidden = true; return; }   // toggle off
+        if (!decodedWrap.hidden) { decodedWrap.hidden = true; return; }   // toggle off
         const dec = decodeJwt(tokenNow());
         if (dec) decodedPre.innerHTML = formatJwt(dec);          // 色付き HTML
         else     decodedPre.textContent = "(JWT としてデコードできません)";
-        decodedPre.hidden = false;
+        decodedWrap.hidden = false;
       });
+      if (copyBtn) {
+        copyBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const src = decodedPre.textContent || "";
+          const done = () => {
+            copyBtn.classList.add("is-copied");
+            copyBtn.textContent = "copied";
+            setTimeout(() => { copyBtn.classList.remove("is-copied"); copyBtn.textContent = "copy"; }, 1200);
+          };
+          if (navigator.clipboard?.writeText) {
+            navigator.clipboard.writeText(src).then(done).catch(() => { fallbackCopy(src); done(); });
+          } else { fallbackCopy(src); done(); }
+        });
+      }
       syncBtn();
     }
   }
