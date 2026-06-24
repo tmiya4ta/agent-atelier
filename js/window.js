@@ -1349,10 +1349,12 @@ export class AgentWindow {
             <div class="set-row-sub">${tokenReadonly ? "現在送信中の token (identity 由来・表示専用)" : "Bearer token を直接貼り付け (identity より優先)"}</div>
           </div>
           <div class="set-rawtoken-col">
-            <textarea class="set-input set-input-rawtoken" rows="2" spellcheck="false" autocomplete="off" placeholder="paste a Bearer token…"${tokenReadonly ? " readonly" : ""}>${escapeHtml(tokenVal)}</textarea>
+            <div class="set-rawtoken-field">
+              <textarea class="set-input set-input-rawtoken" rows="2" spellcheck="false" autocomplete="off" placeholder="paste a Bearer token…"${tokenReadonly ? " readonly" : ""}>${escapeHtml(tokenVal)}</textarea>
+              <button type="button" class="set-rawtoken-copy" hidden title="Copy token" aria-label="Copy token">copy</button>
+            </div>
             <div class="set-rawtoken-actions">
               <button type="button" class="set-decode-btn" hidden>decode JWT ▾</button>
-              <button type="button" class="set-rawtoken-copy" hidden>copy</button>
             </div>
           </div>
         </div>
