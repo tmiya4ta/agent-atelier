@@ -1,0 +1,12 @@
+{
+  "minMuleVersion": "4.9.8",
+  "javaSpecificationVersions": [
+    "17"
+  ],
+  "classLoaderModelLoaderDescriptor": {
+    "id": "mule",
+    "attributes": {
+      "exportedResources": []
+    }
+  }
+}

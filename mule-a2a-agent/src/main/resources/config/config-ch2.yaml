@@ -1,0 +1,13 @@
+http.port: "8081"
+
+# 転送先 = ft0 Flex Gateway 経由の Python A2A(snowapp)。 末尾 /snowapp が ft0 上の API instance base path。
+a2a.upstream: "https://ft0-23fgzd.pnwfdv.jpn-e1.cloudhub.io/snowapp"
+# TLS/SNI 用の upstream host (a2a.upstream のホスト部)。
+upstream.host: "ft0-23fgzd.pnwfdv.jpn-e1.cloudhub.io"
+
+# AgentCard の url を書き換える先。 空なら受信リクエストの Host から動的に組み立てる
+# (https://<host>)。 固定したい場合だけここに公開URLを入れる。
+a2a.publicUrl: ""
+
+# AgentCard の name を上書き (空なら upstream の name のまま)。 UI で区別しやすくする用途。
+agent.name: "Snowflake Customer DB Agent (Mule OBO)"

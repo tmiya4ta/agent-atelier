@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!--
+      Mule A2A Agent (EntraID OBO デモの「Mule Agent」)
+      ──────────────────────────────────────────────────────────────
+      役割: クライアント(Atelier UI)から A2A を受け、 ft0 Flex Gateway 経由で
+            Python の A2A エージェント(snowapp)へ転送し、 Snowflake のデータを返す。
+
+      フロー:
+        GET  /.well-known/agent-card.json | /.well-known/agent.json | /
+          → ft0(${a2a.upstream})の同パスを取得し、 AgentCard の url を
+            「この Mule Agent 自身の公開URL」に書き換えて返す。
+            (書き換えないと client が ft0 を直接叩いてしまい Mule Agent を経由しない)
+        POST /            (JSON-RPC message/send)
+          → ft0(${a2a.upstream})へそのまま転送。 Authorization(OBO の aud:snow トークン)は透過。
+
+      宛先は ft0 ゲートウェイに固定 (open proxy にしない)。
+    -->
+
+    <flow name="mule-a2a-agent-flow">
+        <http:listener config-ref="http-listener-config" path="/*"
+                       allowedMethods="GET,POST,PUT,DELETE,PATCH,HEAD,OPTIONS">
+            <http:response statusCode="#[vars.st default 200]">
+                <http:headers><![CDATA[#[vars.hdrs default {}]]]></http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.st default 502]">
+                <http:body>#[payload]</http:body>
+                <http:headers><![CDATA[#[vars.hdrs default { 'Content-Type': 'text/plain; charset=utf-8' }]]]></http:headers>
+            </http:error-response>
+        </http:listener>
+
+        <!-- 自分自身の公開host / 転送先 / card 判定 / 転送ヘッダを算出 (payload は触らない) -->
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="selfHost"><![CDATA[%dw 2.0
+output application/java
+var h = attributes.headers default {}
+---
+(h['x-forwarded-host'] default h['X-Forwarded-Host'] default h.host default h.Host default "") as String]]></ee:set-variable>
+
+                <ee:set-variable variableName="route"><![CDATA[%dw 2.0
+output application/java
+var path = attributes.requestPath default "/"
+var qs   = attributes.queryString default ""
+var base = (p('a2a.upstream') default "") replace /\/+$/ with ""
+var method = (attributes.method default "GET") as String
+var isCard = (path matches /(?i).*\/\.well-known\/agent-card\.json$/)
+          or (path matches /(?i).*\/\.well-known\/agent\.json$/)
+          or (method == "GET" and (path == "/" or path == ""))
+---
+{
+  target: base ++ path ++ (if (qs != "") ("?" ++ qs) else ""),
+  isCard: isCard,
+  method: method
+}]]></ee:set-variable>
+
+                <ee:set-variable variableName="fwdHeaders"><![CDATA[%dw 2.0
+output application/java
+var h = attributes.headers default {}
+// hop-by-hop / host は除去。 Authorization(OBO トークン)はそのまま透過する。
+var drop = ["host","proxy-connection","connection","keep-alive","te","trailer","transfer-encoding","upgrade","content-length"]
+---
+(h filterObject ((v, k) -> not (drop contains lower(k as String)))) ++ { "Host": (p('upstream.host') default "") }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="INFO" category="mule.a2a.agent"
+                message="#['a2a ' ++ (vars.route.method default '?') ++ ' ' ++ (attributes.requestPath default '/') ++ ' -> ' ++ (vars.route.target default '') ++ (if (vars.route.isCard) ' [card]' else '')]"/>
+
+        <choice>
+            <!-- CORS preflight: upstream へ飛ばさず 204 を返す -->
+            <when expression='#[(vars.route.method default "GET") == "OPTIONS"]'>
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0 output text/plain --- ""]]></ee:set-payload>
+                    </ee:message>
+                    <ee:variables>
+                        <ee:set-variable variableName="st"><![CDATA[%dw 2.0 output application/java --- 204]]></ee:set-variable>
+                        <ee:set-variable variableName="hdrs"><![CDATA[%dw 2.0 output application/java --- {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+  "Access-Control-Allow-Headers": "authorization,content-type"
+}]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </when>
+
+            <otherwise>
+                <try>
+                    <http:request method="#[vars.route.method]"
+                                  url="#[vars.route.target]"
+                                  config-ref="agent-request-config"
+                                  followRedirects="false"
+                                  responseTimeout="60000">
+                        <http:headers>#[vars.fwdHeaders]</http:headers>
+                        <http:response-validator>
+                            <http:success-status-code-validator values="0..599"/>
+                        </http:response-validator>
+                    </http:request>
+
+                    <!-- レスポンス status / headers を引き継ぐ。 body を書き換えるので
+                         content-length は除去し Mule に再計算させる。 CORS も付与。 -->
+                    <ee:transform>
+                        <ee:variables>
+                            <ee:set-variable variableName="st"><![CDATA[%dw 2.0 output application/java --- attributes.statusCode default 200]]></ee:set-variable>
+                            <ee:set-variable variableName="hdrs"><![CDATA[%dw 2.0
+output application/java
+var rh = attributes.headers default {}
+var drop = ["connection","keep-alive","proxy-authenticate","proxy-connection","te","trailer","transfer-encoding","upgrade","content-length"]
+---
+(rh filterObject ((v, k) -> not (drop contains lower(k as String)))) ++ { "Access-Control-Allow-Origin": "*" }]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+
+                    <!-- AgentCard なら url(と supportedInterfaces[].url)を自分自身に書き換える -->
+                    <choice>
+                        <when expression="#[(vars.route.isCard default false) and ((vars.st default 200) &lt; 400)]">
+                            <ee:transform>
+                                <ee:message>
+                                    <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var self = if ((p('a2a.publicUrl') default "") != "") (p('a2a.publicUrl')) else ("https://" ++ (vars.selfHost default ""))
+var nm   = p('agent.name') default ""
+var b    = payload
+---
+b
+  ++ (if (b.url?) { url: self } else {})
+  ++ (if (b.supportedInterfaces?) { supportedInterfaces: (b.supportedInterfaces map ($ ++ { url: self })) } else {})
+  ++ (if (nm != "") { name: nm } else {})]]></ee:set-payload>
+                                </ee:message>
+                            </ee:transform>
+                        </when>
+                    </choice>
+
+                    <error-handler>
+                        <on-error-continue type="ANY">
+                            <ee:transform>
+                                <ee:message>
+                                    <ee:set-payload><![CDATA[%dw 2.0 output text/plain --- "mule a2a agent error: " ++ (error.description default "unknown") ++ " (target: " ++ (vars.route.target default "") ++ ")"]]></ee:set-payload>
+                                </ee:message>
+                                <ee:variables>
+                                    <ee:set-variable variableName="st"><![CDATA[%dw 2.0 output application/java --- 502]]></ee:set-variable>
+                                    <ee:set-variable variableName="hdrs"><![CDATA[%dw 2.0 output application/java --- { "Content-Type": "text/plain; charset=utf-8", "Access-Control-Allow-Origin": "*" }]]></ee:set-variable>
+                                </ee:variables>
+                            </ee:transform>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
+            </otherwise>
+        </choice>
+    </flow>
+
+</mule>
