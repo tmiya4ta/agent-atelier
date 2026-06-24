@@ -1,1 +1,5 @@
 http.port: "8081"
+
+# subdomain プレフィックスが無いパス(ホスト直下 "/" や "/.well-known/...")を
+# 転送する既定エージェント(<relay.default>.theorems.io)。
+relay.default: "snowapp"
