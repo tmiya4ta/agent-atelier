@@ -1286,8 +1286,10 @@ export class AgentWindow {
     // Authorization: identity から選べる場合は select、 そうでなければ readonly のマスク表示。
     const cfg = this.adapter.config;
     const curRef = cfg.authRef || "";
-    // identity を使わず直接貼られた raw token (authRef 無しで auth がある場合)
-    const rawTokenVal = (!curRef && cfg.auth) ? cfg.auth : "";
+    // 現在送信中の Bearer (encode 文字列) を常に表示する。
+    //   identity 由来 (curRef あり) → 表示専用 (readonly)、 手入力 (curRef 無し) → 編集可。
+    const tokenVal = cfg.auth || "";
+    const tokenReadonly = !!curRef;
     let authControl;
     if (this.authApi) {
       const ids = this.authApi.list();
@@ -1341,14 +1343,17 @@ export class AgentWindow {
           </div>
           ${authControl}
         </div>
-        <div class="set-row" title="identity を使わず Bearer token を直接貼り付けます。 入力すると identity 選択より優先され、 そのまま Authorization: Bearer に使われます (自動更新なし)。">
+        <div class="set-row" title="${tokenReadonly ? "現在送信中の Bearer token (identity 由来・表示専用)。 decode / copy できます。" : "identity を使わず Bearer token を直接貼り付けます。 入力すると identity 選択より優先され、 そのまま Authorization: Bearer に使われます (自動更新なし)。"}">
           <div class="set-row-text">
-            <div class="set-row-title">Manual token <span class="set-row-help" aria-hidden="true">?</span></div>
-            <div class="set-row-sub">Bearer token を直接貼り付け (identity より優先)</div>
+            <div class="set-row-title">Bearer token <span class="set-row-help" aria-hidden="true">?</span></div>
+            <div class="set-row-sub">${tokenReadonly ? "現在送信中の token (identity 由来・表示専用)" : "Bearer token を直接貼り付け (identity より優先)"}</div>
           </div>
           <div class="set-rawtoken-col">
-            <textarea class="set-input set-input-rawtoken" rows="2" spellcheck="false" autocomplete="off" placeholder="paste a Bearer token…">${escapeHtml(rawTokenVal)}</textarea>
-            <button type="button" class="set-decode-btn" hidden>decode JWT ▾</button>
+            <textarea class="set-input set-input-rawtoken" rows="2" spellcheck="false" autocomplete="off" placeholder="paste a Bearer token…"${tokenReadonly ? " readonly" : ""}>${escapeHtml(tokenVal)}</textarea>
+            <div class="set-rawtoken-actions">
+              <button type="button" class="set-decode-btn" hidden>decode JWT ▾</button>
+              <button type="button" class="set-rawtoken-copy" hidden>copy</button>
+            </div>
           </div>
         </div>
         <div class="set-jwt-wrap" hidden>
@@ -1441,6 +1446,7 @@ export class AgentWindow {
     const rawInput = box.querySelector(".set-input-rawtoken");
     if (rawInput) {
       const commitRaw = () => {
+        if (rawInput.readOnly) return;   // identity 由来の表示専用は変更しない
         const tok = rawInput.value.trim();
         const hadRaw = !this.adapter.config.authRef && !!this.adapter.config.auth;
         if (tok) {
@@ -1461,6 +1467,7 @@ export class AgentWindow {
 
     // JWT decode: textarea (無ければ現在の auth) が JWT 形式なら decode ボタンを出す。
     const decodeBtn = box.querySelector(".set-decode-btn");
+    const copyTokenBtn = box.querySelector(".set-rawtoken-copy");
     const decodedWrap = box.querySelector(".set-jwt-wrap");
     const decodedPre = box.querySelector(".set-jwt-decoded");
     const copyBtn = box.querySelector(".set-jwt-copy");
@@ -1468,10 +1475,25 @@ export class AgentWindow {
       const tokenNow = () => (rawInput.value.trim() || this.adapter.config.auth || "");
       const looksJwt = (s) => /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(s || "");
       const syncBtn = () => {
-        decodeBtn.hidden = !looksJwt(tokenNow());
+        const tk = tokenNow();
+        decodeBtn.hidden = !looksJwt(tk);
+        if (copyTokenBtn) copyTokenBtn.hidden = !tk;   // encode 文字列のコピー
         if (decodeBtn.hidden) decodedWrap.hidden = true;
       };
       rawInput.addEventListener("input", syncBtn);
+      if (copyTokenBtn) {
+        copyTokenBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const src = tokenNow();
+          if (!src) return;
+          const done = () => {
+            copyTokenBtn.classList.add("is-copied"); copyTokenBtn.textContent = "copied";
+            setTimeout(() => { copyTokenBtn.classList.remove("is-copied"); copyTokenBtn.textContent = "copy"; }, 1200);
+          };
+          if (navigator.clipboard?.writeText) navigator.clipboard.writeText(src).then(done).catch(() => { fallbackCopy(src); done(); });
+          else { fallbackCopy(src); done(); }
+        });
+      }
       decodeBtn.addEventListener("click", () => {
         if (!decodedWrap.hidden) { decodedWrap.hidden = true; return; }   // toggle off
         const dec = decodeJwt(tokenNow());
