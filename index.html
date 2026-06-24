@@ -922,6 +922,15 @@
             </div>
 
             <div class="field" data-only="oauth2_authcode">
+              <label class="field-label" for="idnPrompt"><span>login prompt</span><span class="field-hint">SSO 引き継ぎを防ぐ — 別 ID でログインする用</span></label>
+              <select id="idnPrompt">
+                <option value="select_account">select_account（毎回アカウント選択・既定）</option>
+                <option value="login">login（毎回 再認証を強制）</option>
+                <option value="none">none（SSO 再利用・従来どおり）</option>
+              </select>
+            </div>
+
+            <div class="field" data-only="oauth2_authcode">
               <label class="field-label" for="idnRedirect"><span>redirect uri</span><span class="field-hint">Register this URL in the OAuth app</span></label>
               <input id="idnRedirect" type="text" readonly />
             </div>
