@@ -216,9 +216,17 @@ function proxify(targetUrl) {
 // content が空 / 形が違うときは raw result をそのまま返す。
 function extractToolResult(result) {
   if (!result) return null;
+  // 1) 構造化結果 (MCP structuredContent) を最優先。 FastMCP は outputSchema 付きツールで
+  //    { result: <value> } の形で入れる (list を返すツールはここに配列がまるごと入る)。
+  const sc = result.structuredContent;
+  if (sc && typeof sc === "object" && !Array.isArray(sc)) {
+    return ("result" in sc) ? sc.result : sc;
+  }
+  // 2) text ブロック群。 list を返すツールは 1 行 = 1 ブロックに分割されるので、
+  //    複数あれば配列にまとめる (各ブロックは JSON とみなしてパース試行)。
   const content = Array.isArray(result.content) ? result.content : [];
-  const textPart = content.find(p => p && p.type === "text" && typeof p.text === "string");
-  if (!textPart) return result;
-  const t = textPart.text;
-  try { return JSON.parse(t); } catch { return t; }
+  const textParts = content.filter(p => p && p.type === "text" && typeof p.text === "string");
+  if (!textParts.length) return result;
+  const parsed = textParts.map(p => { try { return JSON.parse(p.text); } catch { return p.text; } });
+  return parsed.length === 1 ? parsed[0] : parsed;
 }
