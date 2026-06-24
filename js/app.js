@@ -2540,6 +2540,16 @@ const IDENTITY_PROVIDERS = [
     loginUrl: "https://anypoint.mulesoft.com/accounts/login",   // username/password 方式
     scopes:   "full"
   },
+  {
+    // Microsoft Entra ID (旧 Azure AD)。endpoint は {tenant} 依存なので tenant id 欄で差し込む。
+    // tenant は Directory(tenant) ID(GUID) / 検証済みドメイン / "organizations" / "common" 等。
+    // CC は scope に "<resource>/.default" が必須 (例 api://<app-id>/.default)。
+    id: "entra", label: "Microsoft Entra ID",
+    authUrl:  "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize",
+    tokenUrl: "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
+    scopes:   "https://graph.microsoft.com/.default",
+    needsTenant: true
+  },
   { id: "custom", label: "Custom (manual)", authUrl: "", tokenUrl: "", scopes: "" }
 ];
 function providerById(id) { return IDENTITY_PROVIDERS.find(p => p.id === id) || IDENTITY_PROVIDERS.find(p => p.id === "custom"); }
@@ -2656,6 +2666,14 @@ function applyProviderPreset(clearOnCustom) {
   const kind = state.selectedIdentityKind;
   const p = providerById(state.selectedIdentityProvider || "custom");
   const locked = p.id !== "custom";
+  // tenant 欄: token url が {tenant} 依存の provider (Entra 等) のときだけ表示し、
+  // 入力値を {tenant} に差し込む。空なら placeholder の {tenant} を残す (保存時に弾く)。
+  const tenantField = $("#idnTenantField");
+  const tenantIn = $("#idnTenant");
+  const needsTenant = !!p.needsTenant;
+  if (tenantField) tenantField.style.display = needsTenant ? "" : "none";
+  const tenant = (tenantIn && tenantIn.value.trim()) || "{tenant}";
+  const subst = (u) => needsTenant ? String(u || "").replace(/\{tenant\}/g, tenant) : u;
   // kind ごとの token/auth url 入力欄
   const tokenInputs = {
     oauth2_cc: $("#idnTokenUrlCc"), oauth2_authcode: $("#idnTokenUrlCode"),
@@ -2666,8 +2684,8 @@ function applyProviderPreset(clearOnCustom) {
   // password 方式は OAuth token endpoint ではなく login endpoint を使う。
   const presetUrl = (kind === "oauth2_password" && p.loginUrl) ? p.loginUrl : p.tokenUrl;
   if (locked) {
-    if (tIn) tIn.value = presetUrl;
-    if (aIn) aIn.value = p.authUrl;
+    if (tIn) tIn.value = subst(presetUrl);
+    if (aIn) aIn.value = subst(p.authUrl);
     // scope はプリセットがあり、かつ空のときだけ補完 (既存値は尊重)
     const sc = $("#idnScopes");
     if (sc && p.scopes && !sc.value.trim()) sc.value = p.scopes;
@@ -2696,6 +2714,9 @@ function refreshIdentityDialog() {
   const provField = $("#idnProviderField");
   const showProvider = (kind === "oauth2_cc" || kind === "oauth2_authcode" || kind === "jwt_bearer" || kind === "oauth2_password");
   if (provField) provField.style.display = showProvider ? "" : "none";
+  // tenant 欄は provider が出ない kind (bearer) では隠す。出る場合は applyProviderPreset が制御。
+  const tenantField = $("#idnTenantField");
+  if (!showProvider && tenantField) tenantField.style.display = "none";
   if (showProvider) { renderIdentityProviderSelect(); applyProviderPreset(); }
 
   // redirectUri を authcode 用フィールドにセット
@@ -2747,6 +2768,9 @@ function openIdentityDialog(editing) {
   $("#idnPassword").value        = editing?.password ? "•".repeat(12) : "";
   $("#idnClientIdPwd").value     = editing?.clientId || "";
   $("#idnClientSecretPwd").value = editing?.clientSecret ? "•".repeat(12) : "";
+
+  // tenant (Entra 等 needsTenant provider 用)
+  $("#idnTenant").value = editing?.tenant || "";
 
   // scopes (共通 advanced)
   $("#idnScopes").value = editing?.scopes || "";
@@ -2924,6 +2948,20 @@ function submitIdentityDialog() {
     idn.scopes = scopes || undefined;
   }
 
+  // Entra 等 needsTenant provider: tenant を必須にし、token/auth url の {tenant} を差し込む。
+  if (kind !== "bearer") {
+    const prov = providerById(idn.provider || "custom");
+    if (prov.needsTenant) {
+      const tenantVal = $("#idnTenant").value.trim();
+      if (!tenantVal) { $("#idnTenant").focus(); return; }
+      idn.tenant = tenantVal;
+      if (idn.tokenUrl) idn.tokenUrl = idn.tokenUrl.replace(/\{tenant\}/g, tenantVal);
+      if (idn.authUrl)  idn.authUrl  = idn.authUrl.replace(/\{tenant\}/g, tenantVal);
+    } else {
+      idn.tenant = undefined;
+    }
+  }
+
   if (!existing) {
     state.identities.push(idn);
   } else {
@@ -2954,6 +2992,9 @@ function wireIdentityDialog() {
       applyProviderPreset(true);   // 手動切替: Custom にしたら前プリセット url をクリア
     });
   }
+  // tenant 入力で token/auth url の {tenant} をライブ差し込み
+  const tenantIn = $("#idnTenant");
+  if (tenantIn) tenantIn.addEventListener("input", () => applyProviderPreset());
 
   // toggle buttons for token/secret fields
   const togglePairs = [

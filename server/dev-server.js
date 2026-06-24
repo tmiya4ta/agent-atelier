@@ -60,6 +60,7 @@ const PROXY_ALLOW_SUFFIX = [
   "login.salesforce.com",
   "githubusercontent.com",  // raw scenarios
   "github.com",
+  "login.microsoftonline.com",  // Microsoft Entra ID OAuth2 token/authorize endpoint
   "fonts.googleapis.com",
   "fonts.gstatic.com",
   "cdn.jsdelivr.net",
