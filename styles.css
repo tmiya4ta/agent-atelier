@@ -3726,6 +3726,35 @@ body.is-dark .dbg-body {
   border-color: var(--ink-3);
 }
 
+/* manual token col: textarea + decode button */
+.set-rawtoken-col { display: flex; flex-direction: column; gap: 6px; align-items: stretch; min-width: 0; }
+.set-decode-btn {
+  align-self: flex-end;
+  padding: 3px 10px;
+  font-family: var(--f-mono);
+  font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink-3);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.set-decode-btn:hover { color: var(--ink); border-color: var(--ink-3); }
+.set-jwt-decoded {
+  margin: 4px 0 12px;
+  padding: 10px 12px;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: var(--f-mono);
+  font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
 /* warning row in settings (mismatch banner) */
 .set-warn {
   margin: 6px 0 12px;
