@@ -1454,7 +1454,8 @@ export class AgentWindow {
       decodeBtn.addEventListener("click", () => {
         if (!decodedPre.hidden) { decodedPre.hidden = true; return; }   // toggle off
         const dec = decodeJwt(tokenNow());
-        decodedPre.textContent = dec ? formatJwt(dec) : "(JWT としてデコードできません)";
+        if (dec) decodedPre.innerHTML = formatJwt(dec);          // 色付き HTML
+        else     decodedPre.textContent = "(JWT としてデコードできません)";
         decodedPre.hidden = false;
       });
       syncBtn();
@@ -1803,9 +1804,10 @@ function formatJwt(dec) {
   };
   const p = { ...(dec.payload || {}) };
   ["exp", "iat", "nbf", "auth_time"].forEach(k => { if (k in p) p[k] = stamp(p[k]); });
+  // syntaxJson で色付き HTML を返す (.k/.s/.n/.b + コメントは .c)
   const out = [];
-  if (dec.header) out.push("// header", JSON.stringify(dec.header, null, 2), "");
-  out.push("// payload", JSON.stringify(p, null, 2));
+  if (dec.header) out.push(`<span class="c">// header</span>`, syntaxJson(dec.header), "");
+  out.push(`<span class="c">// payload</span>`, syntaxJson(p));
   return out.join("\n");
 }
 

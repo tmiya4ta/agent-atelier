@@ -3754,6 +3754,16 @@ body.is-dark .dbg-body {
   border: 1px solid var(--line);
   border-radius: 4px;
 }
+/* decode 済み JWT の syntax 色 (syntaxJson の .k/.s/.n/.b + コメント .c) */
+.set-jwt-decoded .k { color: var(--accent-ink); font-weight: 500; }  /* keys    */
+.set-jwt-decoded .s { color: #1B7A4A; }                              /* strings */
+.set-jwt-decoded .n { color: #B45B00; }                              /* numbers */
+.set-jwt-decoded .b { color: var(--warn); }                          /* bool/null */
+.set-jwt-decoded .c { color: var(--ink-3); font-style: italic; }     /* comment */
+body.is-dark .set-jwt-decoded .k { color: #8FA0FF; }
+body.is-dark .set-jwt-decoded .s { color: #C6E48B; }
+body.is-dark .set-jwt-decoded .n { color: #F0BB29; }
+body.is-dark .set-jwt-decoded .b { color: #F45D4C; }
 
 /* warning row in settings (mismatch banner) */
 .set-warn {
