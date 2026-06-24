@@ -43,10 +43,16 @@
                 <ee:set-variable variableName="route"><![CDATA[%dw 2.0
 output application/java
 var path = attributes.requestPath default "/"
-var segs = (path splitBy "/") filter ($ != "")
-var sub  = lower(segs[0] default "")
-var rest = if (sizeOf(segs) <= 1) "/" else "/" ++ (segs[1 to -1] joinBy "/")
 var qs   = attributes.queryString default ""
+var segs = (path splitBy "/") filter ($ != "")
+var seg0 = lower(segs[0] default "")
+var isSub = (seg0 matches /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/)
+// 先頭セグメントが subdomain でない(ホスト直下 "/" や "/.well-known/..." 等)場合は
+// 既定エージェント(relay.default)へ全パスをそのまま転送する。
+// A2A/MCP の .well-known はオリジン直下(RFC 8615)を見るため、これでホスト直下 discovery が通る。
+var deflt = lower(p('relay.default') default "snowapp")
+var sub   = if (isSub) seg0 else deflt
+var rest  = if (isSub) (if (sizeOf(segs) <= 1) "/" else "/" ++ (segs[1 to -1] joinBy "/")) else path
 ---
 {
   sub:    sub,
