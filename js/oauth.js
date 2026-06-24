@@ -39,6 +39,12 @@ export async function runAuthCodeFlow(cat, opts = {}) {
   });
   // scope は ユーザー指定があれば送る。Anypointは指定なしも許容するケースが多い。
   if (cat.scopes) params.set("scope", cat.scopes);
+  // prompt: IdP の SSO セッション (cookie) が別ウインドウにログインを引き継ぐのを防ぐ。
+  //   "select_account" (既定) = 毎回アカウント選択 → 別 ID でログインできる
+  //   "login" = 毎回 再認証を強制 / "none" or "" = 付けない (従来どおり SSO 再利用)
+  //   identity の prompt フィールドで上書き可。未設定の既存 identity は select_account。
+  const promptVal = ("prompt" in cat) ? cat.prompt : "select_account";
+  if (promptVal && promptVal !== "none") params.set("prompt", promptVal);
 
   const authUrl = `${cat.authUrl}?${params.toString()}`;
   console.info("[oauth] authorize URL:", authUrl);

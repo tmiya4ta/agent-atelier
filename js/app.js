@@ -2784,6 +2784,7 @@ function openIdentityDialog(editing) {
   $("#idnTokenUrlCode").value     = editing?.tokenUrl || "";
   $("#idnClientIdCode").value     = editing?.clientId || "";
   $("#idnClientSecretCode").value = editing?.clientSecret ? "•".repeat(12) : "";
+  $("#idnPrompt").value           = editing?.prompt ?? "select_account";
 
   // jwt_bearer
   $("#idnAssertion").value  = editing?.assertion ? "•".repeat(12) : "";
@@ -2842,6 +2843,7 @@ function buildTempIdentityFromForm() {
     idn.authUrl  = $("#idnAuthUrl").value.trim();
     idn.tokenUrl = $("#idnTokenUrlCode").value.trim();
     idn.redirectUri = redirectUri();
+    idn.prompt = $("#idnPrompt").value || "select_account";
     const s = $("#idnClientSecretCode").value;
     idn.clientSecret = isMask(s) ? existing?.clientSecret : (s || undefined);
   } else if (kind === "jwt_bearer") {
@@ -2949,6 +2951,7 @@ function submitIdentityDialog() {
     idn.clientSecret = isMask(secretInput) ? existing?.clientSecret : (secretInput || undefined);
     idn.scopes = scopes || undefined;
     idn.redirectUri = redirectUri();
+    idn.prompt = $("#idnPrompt").value || "select_account";
   } else if (kind === "jwt_bearer") {
     const assertionInput = $("#idnAssertion").value.trim();
     const tokenUrlInput  = $("#idnTokenUrlJwt").value.trim();
