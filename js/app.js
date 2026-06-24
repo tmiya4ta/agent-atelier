@@ -1217,7 +1217,9 @@ async function refreshAuthcodeToken(idn) {
   if (idn.clientId)     params.set("client_id", idn.clientId);
   if (idn.clientSecret) params.set("client_secret", idn.clientSecret);
   if (idn.scopes)       params.set("scope", idn.scopes);
-  const res = await fetch(`/proxy?url=${encodeURIComponent(idn.tokenUrl)}`, {
+  // public client (secret 無し, 例: Entra SPA) は CORS 直 fetch、confidential は /proxy。
+  const fetchUrl = idn.clientSecret ? `/proxy?url=${encodeURIComponent(idn.tokenUrl)}` : idn.tokenUrl;
+  const res = await fetch(fetchUrl, {
     method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: params.toString()
   });
   const data = await res.json();

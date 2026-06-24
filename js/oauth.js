@@ -107,23 +107,27 @@ export async function runAuthCodeFlow(cat, opts = {}) {
     } catch {}
   });
 
-  // Exchange code → token (via /proxy for CORS)
-  // Anypoint connected app (authorization_code) は client_secret 必須。
-  // token endpoint は client_secret_post / client_secret_basic を受けるが、
-  // proxy 越しでも確実な client_secret_post (body に secret) を使う。
-  if (!cat.clientSecret) {
-    throw new Error("client_secret required — Anypoint の Connected App は authorization code で client_secret が必須です");
-  }
-  const body = new URLSearchParams({
+  // Exchange code → token。client の種類で送り方を変える:
+  //  - confidential client (client_secret あり, 例: Anypoint Connected App / Entra Web):
+  //    client_secret_post を /proxy 経由で送る (CORS 回避)。
+  //  - public client (client_secret なし, PKCE のみ, 例: Entra SPA アプリ):
+  //    secret は送らず token endpoint へ直接 fetch する。Entra は SPA 登録の
+  //    redirect URI に対してのみ CORS で token redemption を許可するため、
+  //    /proxy (サーバ側 = Origin 無し) だと AADSTS9002327 で拒否される。直 fetch なら
+  //    ブラウザが Origin を付けるので通る (PKCE で secret 不要)。
+  const params = {
     grant_type:    "authorization_code",
     code,
     redirect_uri:  redirectUri(),
     client_id:     cat.clientId,
-    client_secret: cat.clientSecret,
     code_verifier: verifier
-  });
+  };
+  if (cat.clientSecret) params.client_secret = cat.clientSecret;
+  const body = new URLSearchParams(params);
 
-  const res = await fetch(`/proxy?url=${encodeURIComponent(cat.tokenUrl)}`, {
+  const isPublicClient = !cat.clientSecret;
+  const fetchUrl = isPublicClient ? cat.tokenUrl : `/proxy?url=${encodeURIComponent(cat.tokenUrl)}`;
+  const res = await fetch(fetchUrl, {
     method:  "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body:    body.toString()
