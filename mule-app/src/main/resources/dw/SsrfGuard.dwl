@@ -33,6 +33,7 @@ var ALLOW_SUFFIX = [
   "force.com",
   "githubusercontent.com",  // raw scenarios
   "github.com",
+  "login.microsoftonline.com",  // Microsoft Entra ID OAuth2 token/authorize endpoint
   "fonts.googleapis.com",
   "fonts.gstatic.com",
   "cdn.jsdelivr.net"

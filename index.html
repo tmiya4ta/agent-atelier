@@ -725,6 +725,15 @@
             <select id="idnProvider"></select>
           </div>
 
+          <!-- tenant id (Entra ID など token url がテナント依存の provider のみ表示) -->
+          <div class="field" id="idnTenantField" style="display:none">
+            <label class="field-label" for="idnTenant">
+              <span>tenant id</span>
+              <span class="field-hint">Entra: Directory (tenant) ID — GUID / ドメイン / "organizations"</span>
+            </label>
+            <input id="idnTenant" type="text" placeholder="00000000-0000-0000-0000-000000000000" autocomplete="off" />
+          </div>
+
           <!-- bearer fields -->
           <div class="field" data-only="bearer">
             <label class="field-label" for="idnToken">
