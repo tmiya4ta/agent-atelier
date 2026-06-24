@@ -1368,27 +1368,66 @@ async function fetchAssetInstances(cat, a) {
 }
 
 // managed instance に endpointUri が無い (= API Manager のインスタンス) 場合、
-// API Manager の API instance 詳細から到達可能な URL を解決する。
-// 優先: gateway 経由の proxyUri (public なら) → 実装 endpoint.uri (base path 込み)。
+// API Manager の API instance 詳細から **gateway 経由の到達 URL** を解決する。
+//
+// 重要 (ユーザ要件): 接続先は Runtime Target (gateway) の public endpoint であるべき。
+// endpoint.uri は実装 backend (このデモでは relay) なので、それを使うと gateway を
+// 経由せず API Manager の policy も適用されない。よって backend uri へは自動
+// フォールバックしない。
+//
+// 解決チェーン:
+//   (1) API Manager instance の deployment.targetId (= Gateway Manager の gatewayId) を取り、
+//       Gateway Manager API
+//         GET /gatewaymanager/api/v1/.../gateways/{gatewayId}
+//       の configuration.ingress.publicUrl (= Runtime Target の public endpoint) を使う。
+//       これに API instance の base path (proxyUri/uri の path) を連結したものが
+//       gateway 経由の正しい URL。 private-space managed Flex Gateway でもこれで取れる。
+//   (2) (1) が無い場合、ep.proxyUri 自体が public (standalone Flex 等) ならそれを採用。
+//   base path は detail で手入力する場合のヒント用に asset._gatewayBasePath に保持。
 async function resolveManagedInstanceUrl(cat, asset) {
   const gid = asset.groupId || asset.organizationId || asset.organization?.id;
   const isPublic = (u) =>
     /^https?:\/\//i.test(u || "") &&
     !/^https?:\/\/(0\.0\.0\.0|127\.0\.0\.1|localhost|\[?::1\]?)\b/i.test(u || "");
+  const pathOf = (u) => { try { return new URL(u).pathname || "/"; } catch { return ""; } };
+  const join = (host, path) => host.replace(/\/+$/, "") + (path && path !== "/" ? path : "/");
+  const proxyGet = async (u) => {
+    const r = await fetch(`/proxy?url=${encodeURIComponent(u)}`, {
+      headers: { Authorization: `Bearer ${cat.accessToken}` }
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  };
   for (const inst of (asset._instances || [])) {
     const envId = inst.environmentId, apiId = inst.id;
     if (!gid || !envId || !apiId) continue;
-    const url = `https://anypoint.mulesoft.com/apimanager/api/v1/organizations/${gid}/environments/${envId}/apis/${apiId}`;
     try {
-      const r = await fetch(`/proxy?url=${encodeURIComponent(url)}`, {
-        headers: { Authorization: `Bearer ${cat.accessToken}` }
-      });
-      if (!r.ok) continue;
-      const d = await r.json();
+      const d = await proxyGet(
+        `https://anypoint.mulesoft.com/apimanager/api/v1/organizations/${gid}/environments/${envId}/apis/${apiId}`
+      );
       const ep = d.endpoint || {};
-      // gateway の public endpoint (proxyUri) を最優先、 無ければ実装 endpoint.uri。
-      const cand = [ep.proxyUri, ep.uri, d.endpointUri, inst.endpointUri].find(isPublic);
-      if (cand) { asset._a2aUrl = cand; return; }
+      // base path は gateway の proxyUri を優先 (listen path)、無ければ backend uri から。
+      const bp = pathOf(ep.proxyUri) || pathOf(ep.uri);
+      if (bp) asset._gatewayBasePath = bp;
+      // backend は参考表示用に保持 (接続先には使わない = gateway bypass 防止)。
+      if (isPublic(ep.uri)) asset._backendUri = ep.uri;
+
+      // (1) Runtime Target (Flex Gateway) の public endpoint を Gateway Manager API から解決。
+      const gwId = d.deployment?.targetId;
+      if (gwId) {
+        try {
+          const gw = await proxyGet(
+            `https://anypoint.mulesoft.com/gatewaymanager/api/v1/organizations/${gid}/environments/${envId}/gateways/${gwId}`
+          );
+          const ing = gw.configuration?.ingress || {};
+          const ext = (ing.endpoints || []).find(e => e.access === "external")?.url;
+          const pub = [ing.publicUrl, ext].find(isPublic);
+          if (pub) { asset._a2aUrl = join(pub, bp); return; }
+        } catch {}
+      }
+
+      // (2) gateway の proxyUri 自体が public (= standalone Flex 等) ならそれを採用。
+      if (isPublic(ep.proxyUri)) { asset._a2aUrl = ep.proxyUri; return; }
     } catch {}
   }
 }
@@ -2056,6 +2095,9 @@ function openAssetDetail(asset, cat) {
   urlInput.value = seed;
   if (rawCardUrl && rawCardUrl !== seed) {
     urlInput.placeholder = `card url: ${rawCardUrl}`;
+  } else if (!seed && asset._gatewayBasePath) {
+    // gateway public endpoint が自動解決できなかった場合のヒント (Runtime Target の public endpoint を入力)
+    urlInput.placeholder = `https://<gateway-public-endpoint>${asset._gatewayBasePath}`;
   } else {
     urlInput.placeholder = "https://...example.com/agent  (override / fill if template)";
   }
