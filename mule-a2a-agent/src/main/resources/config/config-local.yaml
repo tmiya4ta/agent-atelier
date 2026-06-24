@@ -1,0 +1,7 @@
+http.port: "8081"
+
+a2a.upstream: "https://ft0-23fgzd.pnwfdv.jpn-e1.cloudhub.io/snowapp"
+upstream.host: "ft0-23fgzd.pnwfdv.jpn-e1.cloudhub.io"
+
+a2a.publicUrl: ""
+agent.name: "Snowflake Customer DB Agent (Mule OBO)"
