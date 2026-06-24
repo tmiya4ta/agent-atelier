@@ -1020,31 +1020,32 @@ async function authenticateCatalog(cat) {
 // init で 1 回。authRef が既にあるものは skip するので冪等。
 function migrateAuthToIdentities() {
   state.identities = state.identities || [];
-  const byBearerToken = new Map();   // token -> id
-  const byCcKey       = new Map();   // `${tokenUrl}::${clientId}` -> id
+  const byCcKey = new Map();   // `${tokenUrl}::${clientId}` -> id
   for (const idn of state.identities) {
-    if (idn.kind === "bearer" && idn.token) byBearerToken.set(idn.token, idn.id);
     if (idn.kind === "oauth2_cc") byCcKey.set(`${idn.tokenUrl}::${idn.clientId}`, idn.id);
   }
 
-  // 1) bookmark.auth (bearer 文字列) → bearer identity
+  // 旧バージョンが bookmark.auth (生 Bearer token) から自動生成した bearer identity を撤去。
+  // (一覧に生トークンを出さない方針へ移行)。3 条件で auto 生成のみ限定し、ユーザ作成の
+  // bearer identity は残す: 名前が " · token" で終わる / token が bookmark.auth と一致 /
+  // その bookmark の authRef が指している。bookmark は b.auth を直接使うよう authRef を外す。
+  const autoBearerIds = new Set();
   for (const b of (state.bookmarks || [])) {
-    if (b.authRef || !b.auth) continue;
-    let id = byBearerToken.get(b.auth);
-    if (!id) {
-      id = `idn-${++idnCounter}`;
-      let label; try { label = `${new URL(b.url).host} · token`; } catch { label = (b.name || "token"); }
-      state.identities.push({
-        id, name: label, kind: "bearer", scheme: "Bearer", headerName: "Authorization",
-        token: b.auth, createdAt: Date.now(), updatedAt: Date.now()
-      });
-      byBearerToken.set(b.auth, id);
+    if (!b.authRef || !b.auth) continue;
+    const idn = state.identities.find(i => i.id === b.authRef);
+    if (idn && idn.kind === "bearer" && idn.token === b.auth && / · token$/.test(idn.name || "")) {
+      autoBearerIds.add(idn.id);
+      b.authRef = undefined;   // 生トークン (b.auth) を直接使う
     }
-    b.authRef = id;
-    // b.auth は後方互換のため残す (resolve は authRef 優先)
   }
+  if (autoBearerIds.size) state.identities = state.identities.filter(i => !autoBearerIds.has(i.id));
 
-  // 2) catalog OAuth → oauth2_cc / oauth2_authcode identity (catalog は複製のみ、破壊しない)
+  // 注: bookmark.auth (生 Bearer token) は identity 化しない。
+  //   Manual token として貼った生トークンを AUTHENTICATION 一覧に出さないため。
+  //   生トークンは bookmark.auth / config.auth のまま直接 Bearer に使われる
+  //   (window settings では "(custom token)" と表示、 一覧には載らない)。
+
+  // catalog OAuth → oauth2_cc / oauth2_authcode identity (catalog は複製のみ、破壊しない)
   for (const c of (state.catalogs || [])) {
     if (c.authRef || !c.clientId) continue;
     const key = `${c.tokenUrl}::${c.clientId}`;
