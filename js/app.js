@@ -2067,7 +2067,8 @@ function setDetailMode(mode) {
   const urlRow = $("#detailUrlRow"), rtmRow = $("#detailRtmRow"), testBtn = $("#detailTest");
   if (urlRow) urlRow.hidden = mode === "rtm";
   if (rtmRow) rtmRow.hidden = mode !== "rtm";
-  if (testBtn) testBtn.hidden = mode !== "rtm";
+  // test ボタンは api / rtm どちらのモードでも使えるようにする
+  if (testBtn) testBtn.hidden = false;
 }
 
 function openAssetDetail(asset, cat) {
@@ -2101,10 +2102,12 @@ function openAssetDetail(asset, cat) {
   } else {
     urlInput.placeholder = "https://...example.com/agent  (override / fill if template)";
   }
+  const testBtn = $("#detailTest");
   const refreshFoot = () => {
     const v = urlInput.value.trim();
     const valid = /^https?:\/\/.+/i.test(v);
     btn.disabled = !valid;
+    if (testBtn) testBtn.disabled = !valid;
     $("#detailFootMeta").textContent = valid ? v : (v ? "invalid URL" : "no instance URL");
   };
   refreshFoot();
@@ -2285,14 +2288,28 @@ function connectRtmApp(app, cat) {
 }
 
 // RTM アプリへ接続テスト (connect せず A2A AgentCard / MCP initialize を確認)。
-async function testRtmDetail() {
-  const cat  = state._detailCat;
-  const full = rtmFullUrl();
+// detail の test ボタン: mode に応じてテスト対象 URL を選ぶ。
+//   rtm  → public endpoint + resource path (rtmFullUrl)
+//   api  → instance url 入力欄 (managed instance の gateway 経由 URL 等)
+async function testDetail() {
+  const url = state._detailMode === "rtm"
+    ? rtmFullUrl()
+    : ($("#detailUrlInput")?.value.trim() || "");
+  await runDetailTest(url);
+}
+
+// 後方互換 (既存呼び出し用)。
+async function testRtmDetail() { await testDetail(); }
+
+// 指定 URL に対し proto (a2a/mcp) で疎通テストし、結果を footer に表示する。
+async function runDetailTest(url) {
   const foot = $("#detailFootMeta");
   const btn  = $("#detailTest");
-  if (!cat || !/^https?:\/\/.+/i.test(full)) return;
+  if (!/^https?:\/\/.+/i.test(url)) return;
+  const cat = state._detailCat;
   const proto = state._detailProto === "mcp" ? "mcp" : "a2a";
-  const authRef = $("#detailAuthRef")?.value || cat.authRef || "";
+  // managed instance (gateway 経由) は通常 public だが、authRef があれば付与する。
+  const authRef = $("#detailAuthRef")?.value || cat?.authRef || "";
   const resolved = await resolveAuthForConnection({ authRef });
   const auth = resolved.auth || "";
   const authHeaders = resolved.authHeaders || null;
@@ -2302,10 +2319,10 @@ async function testRtmDetail() {
   const t0 = performance.now();
   try {
     if (proto === "mcp") {
-      const r = await testMcp(full, auth, authHeaders);
+      const r = await testMcp(url, auth, authHeaders);
       foot.textContent = `✓ MCP initialize OK · ${r.serverName || "(no name)"} · ${Math.round(performance.now() - t0)}ms`;
     } else {
-      const r = await testA2a(full, auth, authHeaders);
+      const r = await testA2a(url, auth, authHeaders);
       foot.textContent = `✓ AgentCard OK · ${r.card?.name || "(no name)"} · ${r.card?.skills?.length || 0} skills · ${Math.round(performance.now() - t0)}ms`;
     }
     foot.classList.add("is-ok");
@@ -2450,7 +2467,7 @@ function wireDrawer() {
       connectAssetInstance();
     }
   });
-  $("#detailTest").addEventListener("click", testRtmDetail);
+  $("#detailTest").addEventListener("click", testDetail);
   $("#drawerShowAllCb")?.addEventListener("change", (e) => {
     state._rtmShowAll = e.target.checked;
     const cat = state.catalogs.find(c => c.id === state._drawerCatalogId);
