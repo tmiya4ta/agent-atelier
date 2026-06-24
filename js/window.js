@@ -1322,7 +1322,7 @@ export class AgentWindow {
             <div class="set-row-title">Discovery URL <span class="set-row-help" aria-hidden="true">?</span></div>
             <div class="set-row-sub">${this.protoMode === "mcp" ? "POST /mcp に直接送信します。" : "AgentCard を取得する起点 URL。 メッセージ送信先ではない。"}</div>
           </div>
-          <input class="set-input" value="${escapeHtml(configuredUrl)}" readonly />
+          ${copyFieldHtml(configuredUrl)}
         </div>
         ${this.protoMode !== "mcp" ? `
         <div class="set-row" title="${cardTip}">
@@ -1330,7 +1330,7 @@ export class AgentWindow {
             <div class="set-row-title">Effective endpoint <span class="set-row-help" aria-hidden="true">?</span></div>
             <div class="set-row-sub">${effectiveUrl ? "AgentCard の url。 メッセージはここに POST されます。" : "AgentCard 未取得 — 接続中…"}</div>
           </div>
-          <input class="set-input ${urlMismatch ? "is-warn" : ""}" value="${escapeHtml(effectiveUrl)}" placeholder="(loading…)" readonly title="${cardTip}" />
+          ${copyFieldHtml(effectiveUrl, { cls: urlMismatch ? "is-warn" : "", placeholder: "(loading…)", title: cardTip })}
         </div>
         ${urlMismatch ? `<div class="set-warn">⚠ 参考: Discovery URL と Effective endpoint が異なります。 AgentCard の url フィールドに従い、 メッセージは Effective endpoint に送信されます (gateway/proxy 経由などで意図的に異なる場合もあります)。 意図しない場合はサーバ側で agent-card の url を見直してください。</div>` : ""}
         ` : ""}
@@ -1375,6 +1375,22 @@ export class AgentWindow {
         </div>
       </div>
     `;
+
+    // URL 等の読み取り専用フィールドのコピーボタン (hover で出現、 chat の copy と同じ挙動)
+    box.querySelectorAll(".set-copy-btn").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const input = btn.parentElement?.querySelector(".set-input");
+        const src = input ? input.value : "";
+        if (!src) return;
+        const done = () => {
+          btn.classList.add("is-copied"); btn.textContent = "copied";
+          setTimeout(() => { btn.classList.remove("is-copied"); btn.textContent = "copy"; }, 1200);
+        };
+        if (navigator.clipboard?.writeText) navigator.clipboard.writeText(src).then(done).catch(() => { fallbackCopy(src); done(); });
+        else { fallbackCopy(src); done(); }
+      });
+    });
 
     // Display name 編集を反映 (タイトル / 永続化)
     const nameInput = box.querySelector(".set-input-name");
@@ -1786,6 +1802,17 @@ function escapeHtml(s) {
 
 function stripTrailingSlash(s) {
   return String(s || "").replace(/\/+$/, "");
+}
+
+// 読み取り専用の値フィールド + hover で出るコピーボタン (URL 等)。
+function copyFieldHtml(value, opts = {}) {
+  const cls = opts.cls ? ` ${opts.cls}` : "";
+  const ph = opts.placeholder ? ` placeholder="${escapeHtml(opts.placeholder)}"` : "";
+  const title = opts.title ? ` title="${escapeHtml(opts.title)}"` : "";
+  return `<div class="set-copyfield">`
+    + `<input class="set-input${cls}" value="${escapeHtml(value)}"${ph} readonly${title} />`
+    + `<button type="button" class="set-copy-btn" title="Copy" aria-label="Copy">copy</button>`
+    + `</div>`;
 }
 
 // JWT (header.payload.signature) を decode。失敗時は null。
