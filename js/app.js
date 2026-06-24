@@ -2749,6 +2749,17 @@ function refreshIdentityDialog() {
   // redirectUri を authcode 用フィールドにセット
   const redirectInput = $("#idnRedirect");
   if (redirectInput) redirectInput.value = redirectUri();
+
+  // test ボタンのラベル: トークン取得を伴う kind は "authenticate"
+  // (authcode は実際にログインが走る)。bearer は静的なので "test"。
+  const testBtn = $("#idnTest");
+  if (testBtn) {
+    const doesAuth = (kind !== "bearer");
+    testBtn.textContent = doesAuth ? "authenticate" : "test";
+    testBtn.title = doesAuth
+      ? "入力値で実際に認証/トークン取得を試す (保存せず)"
+      : "入力値を検証 (保存せず)";
+  }
 }
 
 function detectProvider(editing) {
