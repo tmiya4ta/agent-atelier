@@ -3728,8 +3728,8 @@ body.is-dark .dbg-body {
 
 /* manual token col: textarea + decode button */
 .set-rawtoken-col { display: flex; flex-direction: column; gap: 6px; align-items: stretch; min-width: 0; }
-.set-decode-btn {
-  align-self: flex-end;
+.set-rawtoken-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.set-decode-btn, .set-rawtoken-copy {
   padding: 3px 10px;
   font-family: var(--f-mono);
   font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
@@ -3739,7 +3739,9 @@ body.is-dark .dbg-body {
   border-radius: 4px;
   cursor: pointer;
 }
-.set-decode-btn:hover { color: var(--ink); border-color: var(--ink-3); }
+.set-rawtoken-copy { letter-spacing: 0.06em; text-transform: uppercase; font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1)); }
+.set-decode-btn:hover, .set-rawtoken-copy:hover { color: var(--accent-ink); border-color: var(--accent); }
+.set-rawtoken-copy.is-copied { color: #14834A; border-color: #14834A; background: #E8F6EE; }
 /* 読み取り専用フィールド + hover コピーボタン (URL 等) */
 .set-copyfield { position: relative; min-width: 0; }
 .set-copyfield .set-input { padding-right: 52px; }
