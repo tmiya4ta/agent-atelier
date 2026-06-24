@@ -2118,6 +2118,13 @@ function openAssetDetail(asset, cat) {
   // managed instances が複数あれば pill で選べる UI を入れる
   renderManagedInstancesPicker(asset, urlInput, refreshFoot);
 
+  // platform credential 選択: catalog の一覧取得は Anypoint 認証だが、
+  // 実際の接続/テストにはターゲット側(例: Entra)の identity が要る。
+  // ここで選び、asset ごとに記憶する。既定は none (Anypoint 認証へはフォールバックしない)。
+  renderDetailAuthRef(asset._authRef || "");
+  const authSel = $("#detailAuthRef");
+  if (authSel) authSel.onchange = () => { asset._authRef = authSel.value || ""; };
+
   // skill 行の展開を toggle
   $("#detailBody").querySelectorAll(".skill-row.has-desc").forEach(row => {
     row.addEventListener("click", () => row.classList.toggle("is-expanded"));
@@ -2310,8 +2317,9 @@ async function runDetailTest(url) {
   if (!/^https?:\/\/.+/i.test(url)) return;
   const cat = state._detailCat;
   const proto = state._detailProto === "mcp" ? "mcp" : "a2a";
-  // managed instance (gateway 経由) は通常 public だが、authRef があれば付与する。
-  const authRef = $("#detailAuthRef")?.value || cat?.authRef || "";
+  // detail で選んだ platform identity を使う (catalog の Anypoint 認証へはフォールバックしない)。
+  // rtm モードでは renderDetailAuthRef が cat.authRef を既定選択にするのでそのまま使われる。
+  const authRef = $("#detailAuthRef")?.value || "";
   const resolved = await resolveAuthForConnection({ authRef });
   const auth = resolved.auth || "";
   const authHeaders = resolved.authHeaders || null;
@@ -2430,6 +2438,9 @@ function connectAsset(asset, cat, overrideUrl) {
   const url = overrideUrl || asset._a2aUrl;
   if (!url) return;
   const proto = asset._proto === "mcp" ? "mcp" : "a2a";
+  // この接続で使う platform identity。detail で選んだ値は asset._authRef に同期済
+  // (quick-connect で detail 未表示でも asset._authRef が真)。catalog の Anypoint 認証は使わない。
+  const authRef = asset._authRef || "";
   // A2A: base URL → /.well-known/agent-card.json で discovery。
   // MCP: /mcp エンドポイントを直接叩くので URL はそのまま使う。
   const connectUrl = proto === "mcp"
@@ -2443,7 +2454,8 @@ function connectAsset(asset, cat, overrideUrl) {
   connect({
     protoId: proto,
     url:     connectUrl,
-    name:    asset._a2aCard?.name || asset.name || asset.assetId
+    name:    asset._a2aCard?.name || asset.name || asset.assetId,
+    authRef: authRef || undefined
   });
 }
 

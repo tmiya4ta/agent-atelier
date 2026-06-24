@@ -337,7 +337,11 @@
         <label class="detail-url-label" for="detailPathInput">resource path</label>
         <input type="text" id="detailPathInput" class="detail-url-input"
                placeholder="/a2a" autocomplete="off" />
-        <label class="detail-url-label" for="detailAuthRef">auth</label>
+      </div>
+      <!-- platform credential: 一覧取得(catalog の Anypoint 認証)とは別に、
+           この接続で使う identity を選ぶ。api/rtm 両モードで表示。 -->
+      <div class="detail-url-row detail-auth-row" id="detailAuthRow">
+        <label class="detail-url-label" for="detailAuthRef">auth (platform credential)</label>
         <select id="detailAuthRef" class="detail-url-input detail-authref"></select>
       </div>
       <div class="detail-foot-meta" id="detailFootMeta"></div>
