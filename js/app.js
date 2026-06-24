@@ -2578,6 +2578,19 @@ function countAuthRefs(idnId) {
   return (state.bookmarks || []).filter(b => b.authRef === idnId).length;
 }
 
+// 選択した identity の設定を複製して新規 identity を作り、編集ダイアログを開く。
+// 認証情報 (clientSecret/token/password 等) は引き継ぎ、 取得済みトークン/セッションは破棄。
+function duplicateIdentity(src) {
+  if (!src) return;
+  const copy = { ...src, id: `idn-${++idnCounter}`, name: `${src.name} copy`,
+    createdAt: Date.now(), updatedAt: Date.now() };
+  delete copy.accessToken; delete copy.tokenExpiresAt; delete copy.refreshToken;
+  state.identities.push(copy);
+  renderIdentities();
+  dirty();
+  openIdentityDialog(copy);   // 複製を編集状態で開く (名前など調整して保存)
+}
+
 function renderIdentities() {
   const root  = $("#identityList");
   const empty = $("#identitiesEmpty");
@@ -2612,19 +2625,18 @@ function renderIdentities() {
       dirty();
     };
     li.addEventListener("click", (e) => {
-      if (e.target.closest(".row-edit")) {
-        e.stopPropagation();
-        openIdentityDialog(idn);
-        return;
-      }
       if (e.target.closest(".row-kebab")) {
         e.stopPropagation();
         openRowMenu(e.target.closest(".row-kebab"), [
-          { label: "Edit",   onClick: () => openIdentityDialog(idn) },
+          { label: "Edit",      onClick: () => openIdentityDialog(idn) },
+          { label: "Duplicate", onClick: () => duplicateIdentity(idn) },
           { label: "Delete", danger: true, onClick: doDelete }
         ]);
         return;
       }
+      // アイテム本体 (鉛筆含む) クリックで編集ダイアログを開く (鉛筆と同じ挙動)
+      e.stopPropagation();
+      openIdentityDialog(idn);
     });
     li.addEventListener("dblclick", (e) => {
       e.stopPropagation();

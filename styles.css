@@ -3740,6 +3740,30 @@ body.is-dark .dbg-body {
   cursor: pointer;
 }
 .set-decode-btn:hover { color: var(--ink); border-color: var(--ink-3); }
+/* 読み取り専用フィールド + hover コピーボタン (URL 等) */
+.set-copyfield { position: relative; min-width: 0; }
+.set-copyfield .set-input { padding-right: 52px; }
+.set-copy-btn {
+  position: absolute;
+  top: 50%; right: 5px; transform: translateY(-50%);
+  padding: 1px 7px;
+  font-family: var(--f-mono);
+  font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.set-copyfield:hover .set-copy-btn,
+.set-copy-btn:focus-visible { opacity: 1; }
+.set-copy-btn:hover { color: var(--accent-ink); border-color: var(--accent); background: var(--paper); }
+.set-copy-btn.is-copied { opacity: 1; color: #14834A; border-color: #14834A; background: #E8F6EE; }
+
 .set-jwt-wrap { position: relative; margin: 4px 0 12px; }
 .set-jwt-copy {
   position: absolute;
