@@ -1270,7 +1270,8 @@ async function fetchBgAssets(cat, bg) {
   let offset = 0;
   const orgFilter = `&organizationId=${encodeURIComponent(bg.bgId)}`;
   while (offset < HARD_CAP) {
-    const url = `https://anypoint.mulesoft.com/exchange/api/v2/assets?types=agent&limit=${PAGE}&offset=${offset}${orgFilter}`;
+    // Exchange API は types のカンマ区切り不可 → 繰り返しパラメータで指定する。
+    const url = `https://anypoint.mulesoft.com/exchange/api/v2/assets?types=agent&types=mcp&limit=${PAGE}&offset=${offset}${orgFilter}`;
     const res = await fetch(`/proxy?url=${encodeURIComponent(url)}`, {
       headers: { Authorization: `Bearer ${cat.accessToken}` }
     });
@@ -1295,8 +1296,10 @@ async function fetchBgAssets(cat, bg) {
 
   // 各アセットの a2a-card.json + asset 詳細 (managed instances) を並列取得
   await Promise.allSettled(assets.map(async (a) => {
-    // 1) a2a-card.json (instance URL がテンプレでなければそのまま採用)
-    const card = findA2ACardFile(a);
+    // proto 判定: Exchange の type が "mcp" なら MCP、それ以外(agent)は A2A。
+    a._proto = a.type === "mcp" ? "mcp" : "a2a";
+    // 1) A2A は a2a-card.json から url を採用 (テンプレでなければ)。MCP は card 無し → instances へ。
+    const card = a._proto === "a2a" ? findA2ACardFile(a) : null;
     if (card) {
       try {
         const r = await fetch(`/proxy?url=${encodeURIComponent(card.downloadURL)}`, {
@@ -1314,6 +1317,11 @@ async function fetchBgAssets(cat, bg) {
     //    (Exchange UI の "Managed instances" 相当 = 実稼働 deployment の URL)
     if (!a._a2aUrl) {
       await fetchAssetInstances(cat, a);
+    }
+    // 3) instances はあるが endpointUri が空 (API Manager のインスタンス) → API Manager の
+    //    API instance 詳細から gateway public endpoint / 実装 URL を解決する。
+    if (!a._a2aUrl && Array.isArray(a._instances) && a._instances.length) {
+      await resolveManagedInstanceUrl(cat, a);
     }
   }));
 
@@ -1355,6 +1363,32 @@ async function fetchAssetInstances(cat, a) {
       }
       // 一部 deployment 系では asset.detail に直接 endpoint URL があることも
       if (d.endpointUri) { a._a2aUrl = d.endpointUri; return; }
+    } catch {}
+  }
+}
+
+// managed instance に endpointUri が無い (= API Manager のインスタンス) 場合、
+// API Manager の API instance 詳細から到達可能な URL を解決する。
+// 優先: gateway 経由の proxyUri (public なら) → 実装 endpoint.uri (base path 込み)。
+async function resolveManagedInstanceUrl(cat, asset) {
+  const gid = asset.groupId || asset.organizationId || asset.organization?.id;
+  const isPublic = (u) =>
+    /^https?:\/\//i.test(u || "") &&
+    !/^https?:\/\/(0\.0\.0\.0|127\.0\.0\.1|localhost|\[?::1\]?)\b/i.test(u || "");
+  for (const inst of (asset._instances || [])) {
+    const envId = inst.environmentId, apiId = inst.id;
+    if (!gid || !envId || !apiId) continue;
+    const url = `https://anypoint.mulesoft.com/apimanager/api/v1/organizations/${gid}/environments/${envId}/apis/${apiId}`;
+    try {
+      const r = await fetch(`/proxy?url=${encodeURIComponent(url)}`, {
+        headers: { Authorization: `Bearer ${cat.accessToken}` }
+      });
+      if (!r.ok) continue;
+      const d = await r.json();
+      const ep = d.endpoint || {};
+      // gateway の public endpoint (proxyUri) を最優先、 無ければ実装 endpoint.uri。
+      const cand = [ep.proxyUri, ep.uri, d.endpointUri, inst.endpointUri].find(isPublic);
+      if (cand) { asset._a2aUrl = cand; return; }
     } catch {}
   }
 }
@@ -1678,7 +1712,7 @@ function showDrawerTab(cat, bg, tab) {
 // API タブ: Exchange アセット (キャッシュ有りは即表示、 無ければ取得)。
 function renderApiTab(cat, bg) {
   if (Array.isArray(bg.assets)) {
-    const withInst = bg.assets.filter(a => a._a2aUrl && !isInternalCh2Url(a._a2aUrl)).length;
+    const withInst = bg.assets.filter(a => (Array.isArray(a._instances) && a._instances.length > 0) || (a._a2aUrl && !isInternalCh2Url(a._a2aUrl))).length;
     const ageSec = Math.round((Date.now() - (bg.assetsFetchedAt || Date.now())) / 1000);
     $("#drawerSpinner").hidden = true;
     $("#drawerMeta").classList.remove("is-error");
@@ -1860,7 +1894,7 @@ async function loadDrawerAssets(cat, bg) {
     spinner.hidden = true;
     bg.assets = assets;
     bg.assetsFetchedAt = Date.now();
-    const withInst = assets.filter(a => a._a2aUrl && !isInternalCh2Url(a._a2aUrl)).length;
+    const withInst = assets.filter(a => (Array.isArray(a._instances) && a._instances.length > 0) || (a._a2aUrl && !isInternalCh2Url(a._a2aUrl))).length;
     meta.textContent = `${assets.length} assets · ${withInst} connectable · ${elapsed}ms · BG: ${bg.bgName || bg.input}`;
     renderAssetList(assets);
     applyDrawerFilter();
@@ -1920,24 +1954,28 @@ function renderAssetList(assets) {
   const body = $("#drawerBody");
   body.innerHTML = "";
   if (!assets?.length) {
-    body.innerHTML = `<div class="drawer-empty">No A2A assets</div>`;
+    body.innerHTML = `<div class="drawer-empty">No A2A / MCP assets</div>`;
     return;
   }
   const cat = state.catalogs.find(c => c.id === state._drawerCatalogId);
   assets.forEach((a, i) => {
     const hasUrl       = !!a._a2aUrl;
     const isInternal   = hasUrl && isInternalCh2Url(a._a2aUrl);
-    const hasInstance  = hasUrl && !isInternal;        // 外部到達可能 → connectable
-    const hasCard      = !hasUrl && !!a._a2aCard;      // card だけ取れている
+    const hasInstance  = hasUrl && !isInternal;        // 到達URLあり → quick connect 可
+    // 「URL の有無」ではなく「managed instance が割り当てられているか」で判定する。
+    // API Manager のインスタンスは endpointUri が空でも "割当済 = 接続候補" なので拾う。
+    const hasManagedInstance = Array.isArray(a._instances) && a._instances.length > 0;
+    const hasCard      = !hasUrl && !hasManagedInstance && !!a._a2aCard;
+    const selectable   = hasUrl || hasManagedInstance || hasCard;
     const item = document.createElement("div");
     item.className = "asset-item"
       + (hasInstance ? " has-instance" : "")
+      + ((!hasInstance && hasManagedInstance) ? " has-managed" : "")
       + (isInternal  ? " has-internal" : "")
       + (hasCard     ? " has-card"     : "");
     item.style.animationDelay = `${Math.min(i * 30, 800)}ms`;
     const niceName = (a.name || a.assetId || "").replace(/\s*\(.*?\)\s*$/, "");
     const detail   = (a.name || "").match(/\((.+)\)/)?.[1] || a.description || "";
-    const showArrow = hasInstance || hasCard;
     item.innerHTML = `
       ${hasInstance ? `
       <button class="asset-quick-connect" title="Quick connect" aria-label="connect">
@@ -1954,26 +1992,30 @@ function renderAssetList(assets) {
         ${a.version ? `<span class="asset-tag">v${escapeHtml(a.version)}</span>` : ""}
         ${a.assetId ? `<span class="asset-tag">${escapeHtml(a.assetId)}</span>` : ""}
         ${hasInstance ? `<span class="asset-tag is-accent">instance</span>` : ""}
+        ${(!hasInstance && hasManagedInstance) ? `<span class="asset-tag is-accent" title="Managed instance が割り当て済み — 開いてエンドポイントを解決/入力">instance · ${a._instances.length}</span>` : ""}
         ${isInternal  ? `<span class="asset-tag is-muted" title="VPC-internal endpoint — Atelier からは接続できません">internal</span>` : ""}
         ${hasCard     ? `<span class="asset-tag">card only</span>`         : ""}
       </span>
-      ${showArrow ? `<span class="asset-go" aria-hidden="true">→</span>` : ""}
+      ${selectable ? `<span class="asset-go" aria-hidden="true">→</span>` : ""}
     `;
+    if (selectable) {
+      item.style.cursor = "pointer";
+      item.addEventListener("click", () => openAssetDetail(a, cat));
+    }
     if (hasInstance) {
       item.title = a._a2aUrl;
-      item.addEventListener("click", () => openAssetDetail(a, cat));
       item.querySelector(".asset-quick-connect").addEventListener("click", (ev) => {
         ev.stopPropagation();
         connectAsset(a, cat);
       });
+    } else if (hasManagedInstance) {
+      item.title = `Managed instance 割り当て済 (${a._instances.length}) — 開いてエンドポイントを選択/入力`;
     } else if (isInternal) {
-      item.title = `Internal CH2 endpoint (${a._a2aUrl}) — VPC 外からは到達できません`;
-      // クリックしても detail 開かない (URL を見ても connect できないので静かに)
+      item.title = `Internal CH2 endpoint (${a._a2aUrl}) — 公開URLを detail で入力してください`;
     } else if (hasCard) {
-      item.title = "Agent card available (instance URL unresolved) — detail viewable";
-      item.addEventListener("click", () => openAssetDetail(a, cat));
+      item.title = "Agent card available — open to set instance URL";
     } else {
-      item.title = "No agent card or instance URL";
+      item.title = "No managed instance / card";
     }
     body.appendChild(item);
   });
@@ -1997,6 +2039,7 @@ function openAssetDetail(asset, cat) {
   state._detailAsset = asset;
   state._detailCat   = cat;
   state._detailRtmApp = null;
+  state._detailProto  = asset._proto === "mcp" ? "mcp" : "a2a";
 
   const drawer = $("#assetDetailDrawer");
   drawer.classList.add("is-open");
@@ -2325,15 +2368,20 @@ function connectAsset(asset, cat, overrideUrl) {
   if (!asset || !cat) return;
   const url = overrideUrl || asset._a2aUrl;
   if (!url) return;
-  const cardUrl = /\.well-known\/agent-card\.json$/.test(url)
+  const proto = asset._proto === "mcp" ? "mcp" : "a2a";
+  // A2A: base URL → /.well-known/agent-card.json で discovery。
+  // MCP: /mcp エンドポイントを直接叩くので URL はそのまま使う。
+  const connectUrl = proto === "mcp"
     ? url
-    : `${url.replace(/\/+$/, "")}/.well-known/agent-card.json`;
+    : (/\.well-known\/agent-card\.json$/.test(url)
+        ? url
+        : `${url.replace(/\/+$/, "")}/.well-known/agent-card.json`);
   // 両drawerをClose
   closeAssetDetail();
   closeCatalogDrawer();
   connect({
-    protoId: "a2a",
-    url:     cardUrl,
+    protoId: proto,
+    url:     connectUrl,
     name:    asset._a2aCard?.name || asset.name || asset.assetId
   });
 }

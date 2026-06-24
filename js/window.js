@@ -1154,14 +1154,20 @@ export class AgentWindow {
       ${skills ? `<h4 class="card-section-title">Skills · ${(card.skills || []).length}</h4>
       <div class="card-skills">${skills}</div>` : ""}
 
-      <button class="card-raw-toggle" type="button" aria-expanded="false">
-        <span class="crt-branch">├─</span>
-        <span class="crt-caret">▸</span>
-        <span class="crt-bracket-l">[</span>
-        <span class="crt-label">JSON</span>
-        <span class="crt-bracket-r">]</span>
-        <span class="crt-meta">${JSON.stringify(card).length} bytes</span>
-      </button>
+      <div class="card-raw-head">
+        <button class="card-raw-toggle" type="button" aria-expanded="false">
+          <span class="crt-branch">├─</span>
+          <span class="crt-caret">▸</span>
+          <span class="crt-bracket-l">[</span>
+          <span class="crt-label">JSON</span>
+          <span class="crt-bracket-r">]</span>
+          <span class="crt-meta">${JSON.stringify(card).length} bytes</span>
+        </button>
+        <span class="card-raw-actions">
+          <button class="card-copy" type="button" title="AgentCard JSON をコピー">copy</button>
+          <button class="card-download" type="button" title="AgentCard JSON をダウンロード">download</button>
+        </span>
+      </div>
       <pre class="card-raw" hidden>${syntaxJson(card)}</pre>
     `;
 
@@ -1177,6 +1183,35 @@ export class AgentWindow {
         tBtn.setAttribute("aria-expanded", String(opening));
         caretEl.textContent  = opening ? "▾" : "▸";
         branchEl.textContent = opening ? "└─" : "├─";
+      });
+    }
+
+    // AgentCard JSON の copy / download
+    const jsonStr = JSON.stringify(card, null, 2);
+    const slug = String(card.name || "agent").toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "agent";
+
+    const copyBtn = box.querySelector(".card-copy");
+    if (copyBtn) {
+      copyBtn.addEventListener("click", () => {
+        const done = () => { copyBtn.textContent = "copied"; setTimeout(() => copyBtn.textContent = "copy", 1200); };
+        if (navigator.clipboard?.writeText) {
+          navigator.clipboard.writeText(jsonStr).then(done).catch(() => { fallbackCopy(jsonStr); done(); });
+        } else { fallbackCopy(jsonStr); done(); }
+      });
+    }
+
+    const dlBtn = box.querySelector(".card-download");
+    if (dlBtn) {
+      dlBtn.addEventListener("click", () => {
+        const blob = new Blob([jsonStr], { type: "application/json" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `${slug}-agent-card.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
       });
     }
   }
