@@ -1286,6 +1286,8 @@ export class AgentWindow {
     // Authorization: identity から選べる場合は select、 そうでなければ readonly のマスク表示。
     const cfg = this.adapter.config;
     const curRef = cfg.authRef || "";
+    // identity を使わず直接貼られた raw token (authRef 無しで auth がある場合)
+    const rawTokenVal = (!curRef && cfg.auth) ? cfg.auth : "";
     let authControl;
     if (this.authApi) {
       const ids = this.authApi.list();
@@ -1338,6 +1340,13 @@ export class AgentWindow {
             <div class="set-row-sub">Auth (identity) を選択 / Bearer &lt;token&gt; ヘッダ</div>
           </div>
           ${authControl}
+        </div>
+        <div class="set-row" title="identity を使わず Bearer token を直接貼り付けます。 入力すると identity 選択より優先され、 そのまま Authorization: Bearer に使われます (自動更新なし)。">
+          <div class="set-row-text">
+            <div class="set-row-title">Manual token <span class="set-row-help" aria-hidden="true">?</span></div>
+            <div class="set-row-sub">Bearer token を直接貼り付け (identity より優先)</div>
+          </div>
+          <textarea class="set-input set-input-rawtoken" rows="2" spellcheck="false" autocomplete="off" placeholder="paste a Bearer token…">${escapeHtml(rawTokenVal)}</textarea>
         </div>
       </div>
 
@@ -1403,6 +1412,28 @@ export class AgentWindow {
         this.onChange?.();
         this._renderSettings();   // 表示を更新 (badge / custom token 表示の整理)
       });
+    }
+
+    // 手入力トークン: identity を使わず Bearer token を直接適用する (identity より優先)。
+    const rawInput = box.querySelector(".set-input-rawtoken");
+    if (rawInput) {
+      const commitRaw = () => {
+        const tok = rawInput.value.trim();
+        const hadRaw = !this.adapter.config.authRef && !!this.adapter.config.auth;
+        if (tok) {
+          this.adapter.config.authRef = undefined;      // raw token モード (自動更新なし)
+          this.adapter.config.auth = tok;
+          this.adapter.config.authHeaders = undefined;
+        } else if (hadRaw) {
+          this.adapter.config.auth = undefined;         // 空にしたら raw token 解除
+        } else {
+          return;                                       // 変化なし
+        }
+        this.onChange?.();
+        this._renderSettings();
+      };
+      rawInput.addEventListener("change", commitRaw);
+      rawInput.addEventListener("blur", commitRaw);
     }
   }
 
