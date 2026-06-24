@@ -115,15 +115,15 @@ export async function runAuthCodeFlow(cat, opts = {}) {
   //    redirect URI に対してのみ CORS で token redemption を許可するため、
   //    /proxy (サーバ側 = Origin 無し) だと AADSTS9002327 で拒否される。直 fetch なら
   //    ブラウザが Origin を付けるので通る (PKCE で secret 不要)。
-  const params = {
+  const tokenParams = {
     grant_type:    "authorization_code",
     code,
     redirect_uri:  redirectUri(),
     client_id:     cat.clientId,
     code_verifier: verifier
   };
-  if (cat.clientSecret) params.client_secret = cat.clientSecret;
-  const body = new URLSearchParams(params);
+  if (cat.clientSecret) tokenParams.client_secret = cat.clientSecret;
+  const body = new URLSearchParams(tokenParams);
 
   const isPublicClient = !cat.clientSecret;
   const fetchUrl = isPublicClient ? cat.tokenUrl : `/proxy?url=${encodeURIComponent(cat.tokenUrl)}`;
