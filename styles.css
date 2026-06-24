@@ -1136,6 +1136,18 @@ body.is-resizing-side .sidebar { transition: none !important; }
 }
 .asset-item.has-card .asset-go { color: var(--ink-3); }
 .asset-item.has-card:hover .asset-go { transform: translateX(3px); }
+/* managed instance 割当済だが endpoint URL 未解決 */
+.asset-item.has-managed { cursor: pointer; }
+.asset-item.has-managed:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: var(--accent-soft);
+}
+.asset-item.has-managed .asset-status-dot {
+  background: var(--warn, #D9831A);
+  box-shadow: 0 0 0 3px rgba(217, 131, 26, 0.10);
+}
+.asset-item.has-managed .asset-go { color: var(--accent); }
+.asset-item.has-managed:hover .asset-go { transform: translateX(3px); }
 .asset-item.is-loading { opacity: 0.6; pointer-events: none; }
 @keyframes asset-slide-in {
   0%   { opacity: 0; transform: translateX(-24px); }
@@ -3446,6 +3458,34 @@ body.is-dark .compose-caps[aria-expanded="true"] {
   background: rgba(45,75,255, 0.05);
 }
 .card-raw-toggle[aria-expanded="true"] { color: var(--accent-ink); }
+
+/* AgentCard JSON: toggle + copy/download アクション */
+.card-raw-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+}
+.card-raw-head .card-raw-toggle { margin-top: 0; }
+.card-raw-actions { display: inline-flex; gap: 6px; flex-shrink: 0; }
+.card-copy, .card-download {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--panel-soft, transparent);
+  border-radius: 5px;
+  padding: 3px 9px;
+  font-family: var(--f-mono);
+  font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.card-copy:hover, .card-download:hover {
+  color: var(--accent-ink);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: rgba(45, 75, 255, 0.06);
+}
 
 .crt-branch {
   color: var(--ink-4);
