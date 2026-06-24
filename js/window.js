@@ -1346,8 +1346,12 @@ export class AgentWindow {
             <div class="set-row-title">Manual token <span class="set-row-help" aria-hidden="true">?</span></div>
             <div class="set-row-sub">Bearer token を直接貼り付け (identity より優先)</div>
           </div>
-          <textarea class="set-input set-input-rawtoken" rows="2" spellcheck="false" autocomplete="off" placeholder="paste a Bearer token…">${escapeHtml(rawTokenVal)}</textarea>
+          <div class="set-rawtoken-col">
+            <textarea class="set-input set-input-rawtoken" rows="2" spellcheck="false" autocomplete="off" placeholder="paste a Bearer token…">${escapeHtml(rawTokenVal)}</textarea>
+            <button type="button" class="set-decode-btn" hidden>decode JWT ▾</button>
+          </div>
         </div>
+        <pre class="set-jwt-decoded" hidden></pre>
       </div>
 
       <div class="set-section">
@@ -1434,6 +1438,26 @@ export class AgentWindow {
       };
       rawInput.addEventListener("change", commitRaw);
       rawInput.addEventListener("blur", commitRaw);
+    }
+
+    // JWT decode: textarea (無ければ現在の auth) が JWT 形式なら decode ボタンを出す。
+    const decodeBtn = box.querySelector(".set-decode-btn");
+    const decodedPre = box.querySelector(".set-jwt-decoded");
+    if (rawInput && decodeBtn && decodedPre) {
+      const tokenNow = () => (rawInput.value.trim() || this.adapter.config.auth || "");
+      const looksJwt = (s) => /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(s || "");
+      const syncBtn = () => {
+        decodeBtn.hidden = !looksJwt(tokenNow());
+        if (decodeBtn.hidden) decodedPre.hidden = true;
+      };
+      rawInput.addEventListener("input", syncBtn);
+      decodeBtn.addEventListener("click", () => {
+        if (!decodedPre.hidden) { decodedPre.hidden = true; return; }   // toggle off
+        const dec = decodeJwt(tokenNow());
+        decodedPre.textContent = dec ? formatJwt(dec) : "(JWT としてデコードできません)";
+        decodedPre.hidden = false;
+      });
+      syncBtn();
     }
   }
 
@@ -1742,6 +1766,47 @@ function escapeHtml(s) {
 
 function stripTrailingSlash(s) {
   return String(s || "").replace(/\/+$/, "");
+}
+
+// JWT (header.payload.signature) を decode。失敗時は null。
+function decodeJwt(token) {
+  const parts = String(token || "").trim().split(".");
+  if (parts.length < 2) return null;
+  const seg = (s) => {
+    s = s.replace(/-/g, "+").replace(/_/g, "/");
+    s += "=".repeat((4 - (s.length % 4)) % 4);
+    try {
+      // atob の binary string を UTF-8 として正しく decode (日本語 claim 等)
+      const json = decodeURIComponent(
+        atob(s).split("").map(c => "%" + c.charCodeAt(0).toString(16).padStart(2, "0")).join("")
+      );
+      return JSON.parse(json);
+    } catch { return null; }
+  };
+  const header = seg(parts[0]);
+  const payload = seg(parts[1]);
+  if (!payload) return null;
+  return { header, payload };
+}
+
+// decode 結果を表示用テキストに整形。exp/iat/nbf を可読日時 + 相対表記に。
+function formatJwt(dec) {
+  const now = Math.floor(Date.now() / 1000);
+  const stamp = (v) => {
+    if (typeof v !== "number") return v;
+    let iso = "";
+    try { iso = new Date(v * 1000).toISOString().replace(".000", ""); } catch {}
+    const rel = v - now;
+    const human = Math.abs(rel) >= 3600
+      ? `${(rel / 3600).toFixed(1)}h` : `${Math.round(rel / 60)}m`;
+    return `${v} (${iso} · ${rel >= 0 ? "in " + human : human.replace("-", "") + " ago"})`;
+  };
+  const p = { ...(dec.payload || {}) };
+  ["exp", "iat", "nbf", "auth_time"].forEach(k => { if (k in p) p[k] = stamp(p[k]); });
+  const out = [];
+  if (dec.header) out.push("// header", JSON.stringify(dec.header, null, 2), "");
+  out.push("// payload", JSON.stringify(p, null, 2));
+  return out.join("\n");
 }
 
 // marked / mrkdwnToHtml の出力を innerHTML に流す前に通す sanitizer。
