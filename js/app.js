@@ -2963,6 +2963,7 @@ function clearIdentityTest() {
   const row = $("#idnTestRow"), st = $("#idnTestStatus");
   if (row) row.hidden = true;
   if (st) { st.textContent = ""; st.className = "dialog-test-status"; }
+  state._authTestResult = null;   // kind 変更/ダイアログ開閉で古い取得トークンを破棄
 }
 function setIdentityTest(kind, html) {
   const row = $("#idnTestRow"), st = $("#idnTestStatus");
@@ -3035,6 +3036,13 @@ async function testIdentityDialog() {
     if (!tok) throw new Error("no access_token returned");
     const exp = idn.tokenExpiresAt ? Math.max(0, Math.round((idn.tokenExpiresAt - Date.now()) / 1000)) : null;
     const preview = `${String(tok).slice(0, 6)}…${String(tok).slice(-4)}`;
+    // authenticate(test) で取得したトークンを Save 時に本物の identity へ引き継ぐ
+    // (引き継がないと保存直後の接続で即「再認証」になる)。
+    state._authTestResult = {
+      accessToken:    idn.accessToken,
+      tokenExpiresAt: idn.tokenExpiresAt,
+      refreshToken:   idn.refreshToken,
+    };
     setIdentityTest("ok",
       `<span class='dts-dot'></span> token OK · <code>${escapeHtml(preview)}</code>` +
       (exp != null ? ` · expires in ~${exp}s` : "") + ` · ${ms}ms`);
@@ -3137,6 +3145,14 @@ function submitIdentityDialog() {
       idn.tenant = undefined;
     }
   }
+
+  // authenticate(test) で取得済みのトークンがあれば引き継ぐ (再認証を避ける)。bearer は対象外。
+  if (state._authTestResult && kind !== "bearer") {
+    idn.accessToken    = state._authTestResult.accessToken;
+    idn.tokenExpiresAt = state._authTestResult.tokenExpiresAt;
+    if (state._authTestResult.refreshToken) idn.refreshToken = state._authTestResult.refreshToken;
+  }
+  state._authTestResult = null;
 
   if (!existing) {
     state.identities.push(idn);
