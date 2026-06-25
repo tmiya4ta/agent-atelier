@@ -1251,8 +1251,8 @@ export class AgentWindow {
         <span class="dbg-meta">${meta}</span>
         <div class="dbg-detail">
           ${hasHeaders ? `<div class="dbg-subtabs">
-            <button type="button" class="dbg-subtab is-active" data-sub="payload">payload</button>
             <button type="button" class="dbg-subtab" data-sub="headers">headers</button>
+            <button type="button" class="dbg-subtab is-active" data-sub="payload">payload</button>
           </div>` : ""}
           <div class="dbg-pane-wrap dbg-pane-payload is-active">
             <button type="button" class="dbg-copy" title="Copy" aria-label="Copy">copy</button>
