@@ -4755,6 +4755,7 @@ body.is-dark .tk-mock-text { color: #C8A85A; }
 #dlgDbManual .field-row { grid-template-columns: 1fr; }   /* name を全幅 (auth は db で非表示) */
 .field { display: flex; flex-direction: column; gap: 7px; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.field-row.is-single { grid-template-columns: 1fr; }   /* auth 非表示時は name を全幅 */
 .field-label {
   display: flex; justify-content: space-between; align-items: baseline;
   font-family: var(--f-mono);
