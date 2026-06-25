@@ -2726,17 +2726,18 @@ function countAuthRefs(idnId) {
   return (state.bookmarks || []).filter(b => b.authRef === idnId).length;
 }
 
-// 選択した identity の設定を複製して新規 identity を作り、編集ダイアログを開く。
-// 認証情報 (clientSecret/token/password 等) は引き継ぎ、 取得済みトークン/セッションは破棄。
+// 選択した identity の設定を複製して「新規」ダイアログを開く。
+// Save するまで実体は作らない (Cancel すれば何も残らない)。認証情報
+// (clientSecret/token/password 等) は引き継ぐが、 masked 表示のため実値は
+// state._identityPrefillSource 経由で Save / test 時に復元する。
 function duplicateIdentity(src) {
   if (!src) return;
-  const copy = { ...src, id: `idn-${++idnCounter}`, name: `${src.name} copy`,
-    createdAt: Date.now(), updatedAt: Date.now() };
-  delete copy.accessToken; delete copy.tokenExpiresAt; delete copy.refreshToken;
-  state.identities.push(copy);
-  renderIdentities();
-  dirty();
-  openIdentityDialog(copy);   // 複製を編集状態で開く (名前など調整して保存)
+  const prefill = { ...src, name: `${src.name} copy` };
+  delete prefill.id;            // id 無し → openIdentityDialog は「新規」扱い (editingId=null)
+  delete prefill.accessToken; delete prefill.tokenExpiresAt; delete prefill.refreshToken;
+  delete prefill.createdAt; delete prefill.updatedAt;
+  openIdentityDialog(prefill);              // フォームを複製元の値で埋める (まだ保存しない)
+  state._identityPrefillSource = src;       // openIdentityDialog が null 化した後に設定
 }
 
 function renderIdentities() {
@@ -2922,6 +2923,7 @@ function detectProvider(editing) {
 function openIdentityDialog(editing) {
   $("#identityDialog").hidden = false;
   clearIdentityTest();
+  state._identityPrefillSource = null;   // duplicate 経路はこの後で再設定する
   state.selectedIdentityKind = editing?.kind || "bearer";
   state.selectedIdentityProvider = detectProvider(editing);
   state._editingIdentityId   = editing?.id   || null;
@@ -2969,6 +2971,7 @@ function openIdentityDialog(editing) {
 function closeIdentityDialog() {
   $("#identityDialog").hidden = true;
   state._editingIdentityId = null;
+  state._identityPrefillSource = null;
   clearIdentityTest();
 }
 
@@ -2986,12 +2989,14 @@ function setIdentityTest(kind, html) {
   st.innerHTML = html;
 }
 
-// 入力中の値で「一時 identity」を組み立てる (保存しない)。masked secret は編集中の既存値で補完。
+// 入力中の値で「一時 identity」を組み立てる (保存しない)。masked secret は
+// 編集中の既存値、 複製(新規)時は複製元 (_identityPrefillSource) で補完する。
 function buildTempIdentityFromForm() {
   const kind = state.selectedIdentityKind;
   const scopes = $("#idnScopes").value.trim() || undefined;
   const isMask = (v) => v && /^•+$/.test(v);
-  const existing = state._editingIdentityId ? identityById(state._editingIdentityId) : null;
+  const existing = (state._editingIdentityId ? identityById(state._editingIdentityId) : null)
+    || state._identityPrefillSource;
   const idn = { id: "idn-test", name: "test", kind, scopes };
   if (kind === "oauth2_cc") {
     idn.clientId = $("#idnClientIdCc").value.trim();
@@ -3088,6 +3093,8 @@ function submitIdentityDialog() {
 
   const editingId = state._editingIdentityId;
   const existing  = editingId ? state.identities.find(i => i.id === editingId) : null;
+  // masked secret (••••) の復元元: 編集時は既存、 複製(新規)時は複製元。
+  const secretSrc = existing || state._identityPrefillSource;
 
   // isMask helper
   const isMask = (val) => val && /^•+$/.test(val);
@@ -3102,7 +3109,7 @@ function submitIdentityDialog() {
   if (kind === "bearer") {
     const tokenInput = $("#idnToken").value;
     if (!tokenInput) { $("#idnToken").focus(); return; }
-    idn.token = isMask(tokenInput) ? existing?.token : tokenInput;
+    idn.token = isMask(tokenInput) ? secretSrc?.token : tokenInput;
     idn.scheme = $("#idnScheme").value || "Bearer";
     idn.headerName = $("#idnHeaderName").value.trim() || undefined;
   } else if (kind === "oauth2_cc") {
@@ -3114,7 +3121,7 @@ function submitIdentityDialog() {
     idn.tokenUrl = tokenUrlInput;
     idn.provider = state.selectedIdentityProvider || "custom";
     const secretInput = $("#idnClientSecretCc").value;
-    idn.clientSecret = isMask(secretInput) ? existing?.clientSecret : (secretInput || undefined);
+    idn.clientSecret = isMask(secretInput) ? secretSrc?.clientSecret : (secretInput || undefined);
     idn.scopes = scopes || undefined;
   } else if (kind === "oauth2_authcode") {
     const clientIdInput = $("#idnClientIdCode").value.trim();
@@ -3128,7 +3135,7 @@ function submitIdentityDialog() {
     idn.tokenUrl = tokenUrlInput;
     idn.provider = state.selectedIdentityProvider || "custom";
     const secretInput = $("#idnClientSecretCode").value;
-    idn.clientSecret = isMask(secretInput) ? existing?.clientSecret : (secretInput || undefined);
+    idn.clientSecret = isMask(secretInput) ? secretSrc?.clientSecret : (secretInput || undefined);
     idn.scopes = scopes || undefined;
     idn.redirectUri = redirectUri();
     idn.prompt = $("#idnPrompt").value || "select_account";
@@ -3137,7 +3144,7 @@ function submitIdentityDialog() {
     const tokenUrlInput  = $("#idnTokenUrlJwt").value.trim();
     if (!assertionInput) { $("#idnAssertion").focus(); return; }
     if (!tokenUrlInput)  { $("#idnTokenUrlJwt").focus(); return; }
-    idn.assertion = isMask(assertionInput) ? existing?.assertion : assertionInput;
+    idn.assertion = isMask(assertionInput) ? secretSrc?.assertion : assertionInput;
     idn.tokenUrl  = tokenUrlInput;
     idn.provider = state.selectedIdentityProvider || "custom";
     idn.scopes = scopes || undefined;
@@ -3150,10 +3157,10 @@ function submitIdentityDialog() {
     if (!passwordInput) { $("#idnPassword").focus(); return; }
     idn.tokenUrl = tokenUrlInput;
     idn.username = usernameInput;
-    idn.password = isMask(passwordInput) ? existing?.password : passwordInput;
+    idn.password = isMask(passwordInput) ? secretSrc?.password : passwordInput;
     idn.clientId = $("#idnClientIdPwd").value.trim() || undefined;
     const secretInput = $("#idnClientSecretPwd").value;
-    idn.clientSecret = isMask(secretInput) ? existing?.clientSecret : (secretInput || undefined);
+    idn.clientSecret = isMask(secretInput) ? secretSrc?.clientSecret : (secretInput || undefined);
     idn.provider = state.selectedIdentityProvider || "custom";
     idn.scopes = scopes || undefined;
   }
@@ -3185,6 +3192,7 @@ function submitIdentityDialog() {
   } else {
     Object.assign(existing, idn);
   }
+  state._identityPrefillSource = null;
 
   renderIdentities();
   dirty();
