@@ -4581,6 +4581,8 @@ body.is-dark .tk-mock-text { color: #C8A85A; }
   color: var(--ink-3);
   margin-bottom: 6px;
 }
+.modal-nw-authlabel { margin-top: 12px; }
+.modal-nw-auth + .modal-hint { display: block; margin-top: 6px; }
 .modal-input {
   width: 100%;
   padding: 9px 11px;
