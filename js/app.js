@@ -5471,6 +5471,26 @@ function wireBackup() {
     try {
       // Ensure pending debounced save is flushed so the export reflects the latest state
       persist.save(state);
+      // include-secrets なのに、 元々 secret を持っていた項目が sessionStorage 揮発
+      // (タブ/ブラウザを閉じた) で失われている場合は警告する。 空のまま export されて
+      // 「secret が消えた」と見えるのを防ぐ。
+      if (includeSecrets) {
+        const missing = persist.findMissingSecrets();
+        if (missing.length) {
+          const lines = missing.map(m => `  • ${m.label} (${m.fields.join(", ")})`).join("\n");
+          const proceed = await modalConfirm({
+            title:   "一部の secret が失われています",
+            message: `次の項目の secret はタブ/ブラウザを閉じた際に揮発しており、export には含まれません`
+                   + ` (secret はセキュリティ上ディスクに保存されず、 セッション内のみ保持されます):\n\n${lines}\n\n`
+                   + `各項目を開いて secret を再入力してから export すると、 secret 込みで保存できます。\n`
+                   + `このまま該当 secret 抜きで export を続けますか？`,
+            confirmLabel: "このまま続ける",
+            cancelLabel:  "やめて再入力する",
+            danger: true
+          });
+          if (!proceed) return;
+        }
+      }
       let json;
       if (includeSecrets) {
         // Secret 込み → passphrase でファイル全体を暗号化

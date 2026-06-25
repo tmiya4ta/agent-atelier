@@ -236,6 +236,37 @@ export function exportJson(opts = {}) {
   }, null, 2);
 }
 
+// ユーザーが設定した「資格情報」系の secret フィールド (runtime トークンの
+// accessToken/refreshToken/tokenExpiresAt は含めない — 再取得できるため)。
+const CONFIGURED_SECRET_FIELDS = ["auth", "token", "assertion", "password", "clientSecret"];
+
+// 「元々 secret を持っていたが sessionStorage 揮発 (タブ/ブラウザを閉じた) で
+// 失われた」項目を列挙する。localStorage の値が "" (= strip された痕跡 = 元値あり)
+// なのに sessionStorage に実値が無いものを「失われた secret」とみなす。
+// include-secrets export 前にこれを警告して、 空のまま export されるのを防ぐ。
+// 戻り値: [{ scope, label, fields: string[] }]
+export function findMissingSecrets() {
+  const raw = localStorage.getItem(KEY);
+  if (!raw) return [];
+  let state; try { state = JSON.parse(raw); } catch { return []; }
+  const store = loadSecrets();
+  const missing = [];
+  const check = (scope, idKey, label, obj) => {
+    if (!obj) return;
+    const sec = store[scope]?.[idKey] || {};
+    const lost = CONFIGURED_SECRET_FIELDS.filter(k => obj[k] === "" && !sec[k]);
+    if (lost.length) missing.push({ scope, label: label || idKey, fields: lost });
+  };
+  (state.identities || []).forEach(i => check("identities", i.id, i.name, i));
+  (state.catalogs   || []).forEach(c => check("catalogs", c.id, c.name, c));
+  (state.bookmarks  || []).forEach(b => check("bookmarks", b.key || `${b.protoId}::${b.url || ""}`, b.name || b.url, b));
+  (state.workspaces || []).forEach(ws => (ws.windows || []).forEach(w => {
+    const k = `${w.protoId}::${w.config?.url || ""}`;
+    check("windows", k, w.config?.name || w.config?.url, w.config);
+  }));
+  return missing;
+}
+
 // import 時に「危険な書き換え」を検出する。 共有 snapshot に細工された場合の警告材料。
 // 戻り値: { warnings: string[] }
 function inspectImport(state) {
