@@ -8,7 +8,7 @@ import { AgentWindow, decodeJwt, formatJwt } from "./window.js";
 import { DbWindow }                         from "./dbwindow.js";
 import { ClouderbyClient }                  from "./protocols/db/clouderby.js";
 import * as persist                         from "./persist.js";
-import { modalConfirm, modalAlert, modalPrompt, modalChoice, modalBusinessGroup, modalExport, modalImportScope } from "./modal.js";
+import { modalConfirm, modalAlert, modalPrompt, modalChoice, modalBusinessGroup, modalExport, modalImportScope, modalNewWindow } from "./modal.js";
 import { encryptText, decryptText }          from "./cryptobox.js";
 import { runAuthCodeFlow, redirectUri }     from "./oauth.js";
 import { parseScript, parseMocks, ScriptRunner }        from "./script.js";
@@ -798,6 +798,28 @@ function reorderBookmark(fromKey, targetKey, where /* "before" | "after" */) {
   renderBookmarks();
 }
 
+// 「+」/ kebab「New window」: 表示名 + AUTH(identity) を選んでから新規 window を開く。
+// (毎回 settings タブに行って名前/AUTH を変えるのが面倒、 という要望への対応)
+async function openNewWindowDialog(b, displayName) {
+  const authOptions = [
+    { value: "", label: "manual" },
+    ...(state.identities || []).map(idn => ({ value: idn.id, label: `${idn.name} · ${kindBadge(idn.kind)}` }))
+  ];
+  const r = await modalNewWindow({
+    title: `New window · ${displayName}`,
+    defaultName: displayName,
+    authOptions
+  });
+  if (!r) return;
+  await connect({
+    protoId: b.protoId, url: b.url, name: r.name || displayName,
+    authRef: r.authRef || undefined,
+    persona: b.persona, channel: b.channel,
+    emulate: b.emulate, mockTools: b.mockTools, mockReply: b.mockReply,
+    database: b.database, user: b.user, password: b.password
+  }, { lockName: true });
+}
+
 // CONNECTIONS = 登録済みコネクション (= bookmarks) を主軸に描画。
 // その下に「現在開いているウインドウ」を子要素として並べる。 ウインドウが 0 でも親は残る。
 function renderBookmarks() {
@@ -930,22 +952,10 @@ function renderBookmarks() {
         animateConnExpand(b.key, next);
         return;
       }
-      // + = 新規 window
+      // + = 新規 window (表示名 + AUTH を選ぶダイアログを出す)
       if (e.target.closest(".bookmark-new")) {
         e.stopPropagation();
-        connect({
-          protoId: b.protoId,
-          url:     b.url,
-          name:    displayName,
-          persona: b.persona,
-          channel: b.channel,
-          emulate:   b.emulate,
-          mockTools: b.mockTools,
-          mockReply: b.mockReply,
-          database:  b.database,
-          user:      b.user,
-          password:  b.password
-        }, { lockName: true });
+        openNewWindowDialog(b, displayName);
         return;
       }
       // kebab = メニュー
@@ -953,7 +963,7 @@ function renderBookmarks() {
         e.stopPropagation();
         openRowMenu(e.target.closest(".row-kebab"), [
           { label: "Edit",        onClick: () => openDialog({ editBookmark: b }) },
-          { label: "New window",  onClick: () => connect({ protoId: b.protoId, url: b.url, name: displayName, persona: b.persona, channel: b.channel, emulate: b.emulate, mockTools: b.mockTools, mockReply: b.mockReply, database: b.database, user: b.user, password: b.password }, { lockName: true }) },
+          { label: "New window",  onClick: () => openNewWindowDialog(b, displayName) },
           { label: "Delete", danger: true, onClick: doDelete }
         ]);
         return;

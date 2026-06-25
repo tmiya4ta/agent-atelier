@@ -228,6 +228,59 @@ export function modalPrompt({ title, label, placeholder, defaultValue, confirmLa
   });
 }
 
+// modalNewWindow — 新規 window 作成ダイアログ。表示名 + AUTH(identity) を選ぶ。
+//   authOptions: [{ value, label }] (先頭 manual="" + identity)。
+//   返り値: { name, authRef } または null (cancel)。
+export function modalNewWindow({ title, defaultName, authOptions = [], defaultAuthRef = "" } = {}) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement("div");
+    wrap.className = "modal-backdrop";
+    const optsHtml = authOptions.map(o =>
+      `<option value="${escapeHtml(o.value)}"${o.value === defaultAuthRef ? " selected" : ""}>${escapeHtml(o.label)}</option>`).join("");
+    wrap.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true">
+        <header class="modal-head">
+          <span class="modal-eyebrow">new window</span>
+          <h3 class="modal-title">${escapeHtml(title || "New window")}</h3>
+        </header>
+        <div class="modal-body">
+          <label class="modal-label">display name</label>
+          <input class="modal-input modal-nw-name" type="text" autocomplete="off" placeholder="window name" />
+          <label class="modal-label modal-nw-authlabel">AUTH</label>
+          <select class="modal-input modal-nw-auth" aria-label="auth">${optsHtml}</select>
+          <span class="modal-hint">identity を選ぶと Bearer トークンを自動付与 (manual = 認証なし / 手入力)</span>
+        </div>
+        <footer class="modal-foot">
+          <div class="modal-foot-actions">
+            <button type="button" class="ghost-btn modal-cancel">Cancel</button>
+            <button type="button" class="primary-btn modal-confirm"><span>Open</span><span class="arrow">→</span></button>
+          </div>
+        </footer>
+      </div>
+    `;
+    document.body.appendChild(wrap);
+    requestAnimationFrame(() => wrap.classList.add("is-open"));
+    const nameEl = wrap.querySelector(".modal-nw-name");
+    const authEl = wrap.querySelector(".modal-nw-auth");
+    nameEl.value = defaultName || "";
+    const close = (result) => {
+      wrap.classList.remove("is-open");
+      setTimeout(() => wrap.remove(), 220);
+      document.removeEventListener("keydown", onKey, true);
+      resolve(result);
+    };
+    const submit = () => close({ name: nameEl.value.trim() || (defaultName || ""), authRef: authEl.value || "" });
+    wrap.querySelector(".modal-confirm").addEventListener("click", submit);
+    wrap.querySelector(".modal-cancel").addEventListener("click", () => close(null));
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(null); }
+      else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); submit(); }
+    };
+    document.addEventListener("keydown", onKey, true);
+    setTimeout(() => { nameEl.focus(); nameEl.select(); }, 50);
+  });
+}
+
 // modalExport — Export ダイアログ。 ファイル名 + 「Secret を含める」チェック +
 // チェック時にスライド表示される passphrase 欄。
 //   返り値: { name, includeSecrets, passphrase } または null (cancel)。
