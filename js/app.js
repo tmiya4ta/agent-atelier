@@ -992,11 +992,13 @@ function renderBookmarks() {
             win.close();
             return;
           }
+          // フォーカス (青く光る) した上で chat タブを表示する。
           if (!isActiveWs) {
             switchWorkspace(ws.id);
-            setTimeout(() => win.focus(), 50);
+            setTimeout(() => { win.focus(); win.switchTab("chat"); }, 50);
           } else {
             win.focus();
+            win.switchTab("chat");
           }
         });
         inner.appendChild(btn);
