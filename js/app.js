@@ -827,8 +827,9 @@ function renderBookmarks() {
     if (state._connExpanded[b.key] === undefined) state._connExpanded[b.key] = false;
     const expanded = !!state._connExpanded[b.key];
 
-    // ウインドウから取れる最新 display name を優先 (settings での編集を反映)
-    const displayName = wins[0]?.win.name || b.name || hostFromUrl(b.url) || b.url;
+    // グループ(コネクション)名は bookmark の name を使う。子ウインドウの名前は
+    // 各ウインドウ独立なので、子の rename でグループ名は変わらない。
+    const displayName = b.name || hostFromUrl(b.url) || b.url;
     const host = hostFromUrl(b.url) || b.url || "";
 
     const li = document.createElement("li");
@@ -4007,6 +4008,16 @@ function applyProtoSpecificFields() {
     channelField.hidden = isMock || isDb;                  // Mock / DB では行ごと畳む
     channelField.style.visibility = isSlack ? "" : "hidden"; // A2A/MCP は領域だけ確保
   }
+  // AUTH (identity) はコネクション単位では持たない方針。A2A/MCP は per-window
+  // (window settings で設定)、DB は専用フィールド、Mock は不要なので隠す。
+  // Slack だけは bot token をコネクションに紐付けるので残す。
+  {
+    const authField = $("#dlgAuthRef")?.closest(".field");
+    const nameRow   = $("#dlgName")?.closest(".field-row");
+    const showAuth  = isSlack;
+    if (authField) authField.hidden = !showAuth;
+    if (nameRow) nameRow.classList.toggle("is-single", !showAuth);
+  }
   // mock の「装うプロトコル」選択 (A2A / MCP)。
   // 編集モードでは url が emulate でキー化済みなので変更不可 (toggle を無効化)。
   const mockKindField = $("#dlgMockKindField");
@@ -6392,27 +6403,24 @@ async function submitDialog() {
         b.url = url;
         b.key = bookmarkKey(b.protoId, url);   // url 由来の key を貼り直す
       }
-      // 開いているウインドウを新しい url/auth/name で再接続 (フィルタは旧 url で)
-      const wins = state.workspaces.flatMap(w => w.windows)
-        .filter(w => w.protoId === b.protoId && w.adapter.config.url === oldUrl);
-      const resolved = await resolveAuthForConnection({ authRef: cleanAuthRef, auth: b.auth });
-      for (const win of wins) {
-        win.adapter.config.name = newName;
-        win.adapter.config.authRef = cleanAuthRef;
-        win.adapter.config.auth = resolved.auth;
-        win.adapter.config.authHeaders = resolved.authHeaders;
-        if (urlChanged) {
-          // url を差し替えてフレッシュに再接続 (a2a/mcp は this.endpoint を起点に discovery する)
-          win.adapter.config.url = url;
-          if ("endpoint" in win.adapter) win.adapter.endpoint = url;
-          win.name = newName || win.name;
+      // 開いているウインドウの扱い: コネクションは URL のグルーピングなので、
+      // ウインドウの name/auth は触らない (各ウインドウ独立 = settings で個別設定)。
+      // URL を変えたとき、または DB 接続情報を変えたときだけウインドウを再接続する。
+      if (urlChanged || isDb) {
+        const wins = state.workspaces.flatMap(w => w.windows)
+          .filter(w => w.protoId === b.protoId && w.adapter.config.url === oldUrl);
+        for (const win of wins) {
+          if (urlChanged) {
+            win.adapter.config.url = url;
+            if ("endpoint" in win.adapter) win.adapter.endpoint = url;
+          }
+          if (isDb && win.adapter.client) {
+            // clouderby クライアントの接続情報を更新してセッション張り直し
+            Object.assign(win.adapter.config, { database: b.database, user: b.user, password: b.password });
+            Object.assign(win.adapter.client, { database: b.database, user: b.user, password: b.password, sessionId: null });
+          }
+          try { await win.adapter.connect(); } catch (e) { console.warn("reconnect after edit failed:", e); }
         }
-        if (isDb && win.adapter.client) {
-          // clouderby クライアントの接続情報を更新してセッション張り直し
-          Object.assign(win.adapter.config, { database: b.database, user: b.user, password: b.password });
-          Object.assign(win.adapter.client, { database: b.database, user: b.user, password: b.password, sessionId: null });
-        }
-        try { await win.adapter.connect(); } catch (e) { console.warn("reconnect after edit failed:", e); }
       }
     }
     state._editingBookmarkKey = null;
