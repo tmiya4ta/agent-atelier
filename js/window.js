@@ -1394,12 +1394,14 @@ export class AgentWindow {
       <div class="jwt-pop-body">${dec ? `<pre class="jwt-pop-pre">${formatJwt(dec)}</pre>` : `<span class="jwt-pop-err">JWT としてデコードできません</span>`}</div>
     `;
     document.body.appendChild(pop);
-    // 位置: クリック付近、 画面外に出ないようクランプ
+    // 位置: クリック付近だが少し上めに出す (クリック位置が popover の下寄りに来る)。
+    // 画面外に出ないようクランプ。
     const pw = pop.offsetWidth, ph = pop.offsetHeight;
     let left = Math.min(x, window.innerWidth  - pw - 8);
-    let top  = Math.min(y + 4, window.innerHeight - ph - 8);
+    let top  = y - Math.round(ph * 0.55);   // クリックより上に持ち上げる
+    top = Math.max(8, Math.min(top, window.innerHeight - ph - 8));
     pop.style.left = `${Math.max(8, Math.round(left))}px`;
-    pop.style.top  = `${Math.max(8, Math.round(top))}px`;
+    pop.style.top  = `${Math.round(top)}px`;
     this._jwtPopEl = pop;
     // copy / close
     pop.querySelector(".jwt-pop-close").addEventListener("click", () => this._closeJwtPopover());

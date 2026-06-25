@@ -2281,8 +2281,8 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
 .jwt-popover {
   position: fixed;
   z-index: 210;
-  width: min(440px, 90vw);
-  max-height: min(60vh, 520px);
+  width: min(600px, 92vw);
+  max-height: min(68vh, 600px);
   display: flex; flex-direction: column;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -3685,29 +3685,38 @@ body.is-dark .compose-caps[aria-expanded="true"] {
 /* 白基調の syntax 色 (light テーマ default) */
 .card-raw .k,
 .dbg-body .k,
+.jwt-pop-pre .k,
 .tool-result .k { color: var(--accent-ink); font-weight: 500; }   /* keys     — 濃い青 */
 .card-raw .s,
 .dbg-body .s,
+.jwt-pop-pre .s,
 .tool-result .s { color: #1B7A4A; }                                /* strings  — 緑 */
 .card-raw .n,
 .dbg-body .n,
+.jwt-pop-pre .n,
 .tool-result .n { color: #B45B00; }                                /* numbers  — 橙 */
 .card-raw .b,
 .dbg-body .b,
+.jwt-pop-pre .b,
 .tool-result .b { color: var(--warn); }                            /* booleans — 赤 */
+.jwt-pop-pre .c { color: var(--ink-3); font-style: italic; }       /* comment  — // header/payload */
 
 /* dark テーマでは色を上げて navy 背景でも読みやすく */
 body.is-dark .card-raw .k,
 body.is-dark .dbg-body .k,
+body.is-dark .jwt-pop-pre .k,
 body.is-dark .tool-result .k { color: #8FA0FF; }
 body.is-dark .card-raw .s,
 body.is-dark .dbg-body .s,
+body.is-dark .jwt-pop-pre .s,
 body.is-dark .tool-result .s { color: #C6E48B; }
 body.is-dark .card-raw .n,
 body.is-dark .dbg-body .n,
+body.is-dark .jwt-pop-pre .n,
 body.is-dark .tool-result .n { color: #F0BB29; }
 body.is-dark .card-raw .b,
 body.is-dark .dbg-body .b,
+body.is-dark .jwt-pop-pre .b,
 body.is-dark .tool-result .b { color: #F45D4C; }
 
 /* ─── DEBUG pane ─── */
