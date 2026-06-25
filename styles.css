@@ -101,6 +101,12 @@ body {
 /* sidebar 閉じた時: side カラムを 0 に + アニメーション */
 body { transition: grid-template-columns 0.22s cubic-bezier(.2,.8,.2,1); }
 body.is-sidebar-collapsed { grid-template-columns: 0 1fr; }
+/* 2番目のサイドパネルだけ畳む (rail は残す) */
+body.is-panel-collapsed { grid-template-columns: var(--side-rail-w) 1fr; }
+body.is-panel-collapsed .side-panel,
+body.is-panel-collapsed .side-resize,
+body.is-panel-collapsed .side-footer { display: none; }
+body.is-panel-collapsed .asset-drawer { left: var(--side-rail-w); }
 body.is-sidebar-collapsed .sidebar {
   transform: translateX(-100%);
   opacity: 0;
@@ -597,6 +603,71 @@ body.is-resizing-side .sidebar { transition: none !important; }
 }
 /* カテゴリ切替: hidden は [hidden] グローバルルールで display:none */
 .side-cat { display: block; }
+
+/* rail 下部の折り畳みボタン */
+.rail-spacer { flex: 1 1 auto; }
+.rail-collapse {
+  display: grid; place-items: center;
+  width: 30px; height: 30px;
+  color: var(--ink-3);
+  border-radius: 7px;
+  transition: color 0.15s ease, background 0.15s ease, transform 0.2s ease;
+}
+.rail-collapse:hover { color: var(--ink); background: var(--panel-soft); }
+body.is-panel-collapsed .rail-collapse svg { transform: scaleX(-1); }  /* 畳むと » 展開 */
+
+/* ─── TOOLS パネル: JWT デコーダー ─── */
+.tool-jwt-input {
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  font-family: var(--f-mono);
+  font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  resize: vertical;
+  word-break: break-all;
+}
+.tool-jwt-input:focus { border-color: var(--ink-3); outline: 0; }
+.tool-jwt-status { font-size: 11px; color: var(--caution); margin-bottom: 6px; }
+.tool-jwt-out-wrap { position: relative; }
+.tool-jwt-out {
+  margin: 0; padding: 10px 12px;
+  max-height: 55vh; overflow: auto;
+  white-space: pre-wrap; word-break: break-all;
+  font-family: var(--f-mono);
+  font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line); border-radius: 4px;
+}
+.tool-jwt-out .k { color: var(--accent-ink); font-weight: 500; }
+.tool-jwt-out .s { color: #1B7A4A; }
+.tool-jwt-out .n { color: #B45B00; }
+.tool-jwt-out .b { color: var(--warn); }
+.tool-jwt-out .c { color: var(--ink-3); font-style: italic; }
+body.is-dark .tool-jwt-out .k { color: #8FA0FF; }
+body.is-dark .tool-jwt-out .s { color: #C6E48B; }
+body.is-dark .tool-jwt-out .n { color: #F0BB29; }
+body.is-dark .tool-jwt-out .b { color: #F45D4C; }
+.tool-jwt-copy {
+  position: absolute; top: 6px; right: 6px;
+  padding: 1px 7px;
+  font-family: var(--f-mono);
+  font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--ink-3);
+  background: color-mix(in srgb, var(--panel) 85%, transparent);
+  border: 1px solid var(--line); border-radius: 4px; cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.tool-jwt-out-wrap:hover .tool-jwt-copy,
+.tool-jwt-copy:focus-visible { opacity: 1; }
+.tool-jwt-copy:hover { color: var(--accent-ink); border-color: var(--accent); background: var(--paper); }
+.tool-jwt-copy.is-copied { opacity: 1; color: #14834A; border-color: #14834A; background: #E8F6EE; }
 
 .side-sec { padding: 0 14px 14px; }
 .side-sec + .side-sec {

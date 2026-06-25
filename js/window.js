@@ -1865,7 +1865,7 @@ function copyFieldHtml(value, opts = {}) {
 }
 
 // JWT (header.payload.signature) を decode。失敗時は null。
-function decodeJwt(token) {
+export function decodeJwt(token) {
   const parts = String(token || "").trim().split(".");
   if (parts.length < 2) return null;
   const seg = (s) => {
@@ -1886,7 +1886,7 @@ function decodeJwt(token) {
 }
 
 // decode 結果を表示用テキストに整形。exp/iat/nbf を可読日時 + 相対表記に。
-function formatJwt(dec) {
+export function formatJwt(dec) {
   const now = Math.floor(Date.now() / 1000);
   const stamp = (v) => {
     if (typeof v !== "number") return v;
