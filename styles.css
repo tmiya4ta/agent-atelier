@@ -2274,6 +2274,66 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
 .row-menu-item:hover { background: var(--panel-soft); }
 .row-menu-item.is-danger { color: var(--warn); }
 .row-menu-item.is-danger:hover { background: var(--warn-soft); }
+.row-menu-item:disabled { color: var(--ink-4); cursor: default; }
+.row-menu-item:disabled:hover { background: transparent; }
+
+/* ─── JWT Decode popover (debug の右クリックメニューから) ─── */
+.jwt-popover {
+  position: fixed;
+  z-index: 210;
+  width: min(440px, 90vw);
+  max-height: min(60vh, 520px);
+  display: flex; flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  animation: dlg-fade 0.12s ease;
+}
+.jwt-pop-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 8px 7px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-soft);
+}
+.jwt-pop-title {
+  font-size: calc(11.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  font-family: var(--f-ui);
+  font-weight: 600; letter-spacing: 0.02em;
+  color: var(--ink-2);
+  margin-right: auto;
+}
+.jwt-pop-copy {
+  font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  font-family: var(--f-ui);
+  color: var(--ink-3);
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.jwt-pop-copy:hover { color: var(--ink); border-color: var(--ink-3); }
+.jwt-pop-copy.is-copied { color: var(--ok); border-color: var(--ok); }
+.jwt-pop-close {
+  font-size: 16px; line-height: 1;
+  color: var(--ink-4); background: transparent; border: 0;
+  cursor: pointer; padding: 0 4px;
+}
+.jwt-pop-close:hover { color: var(--ink); }
+.jwt-pop-body { overflow: auto; padding: 10px 12px; }
+.jwt-pop-pre {
+  margin: 0;
+  font-family: var(--f-mono);
+  font-size: calc(11.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--ink);
+}
+.jwt-pop-err { color: var(--warn); font-size: calc(12px * var(--fs-mul, 1.1) * var(--fs, 1)); }
 
 /* ─── Proto list ─── */
 .proto-list { display: flex; flex-direction: column; gap: 3px; }
