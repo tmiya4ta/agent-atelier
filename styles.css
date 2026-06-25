@@ -1718,7 +1718,7 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
 .identity-list { display: flex; flex-direction: column; gap: 3px; }
 .catalog-item {
   display: grid;
-  grid-template-columns: 1fr auto auto auto auto;
+  grid-template-columns: auto 1fr auto auto auto;   /* chevron · name · count · + · kebab */
   align-items: center;
   gap: 6px;
   padding: 6px 8px 6px 10px;
@@ -1950,6 +1950,10 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
 .agent-item.is-expanded .conn-toggle { color: var(--accent); }
 .agent-item.is-expanded .conn-toggle svg { transform: rotate(0deg); }
 .agent-item:not(.is-expanded) .conn-toggle svg { transform: rotate(-90deg); }
+/* catalog も connections と同じ chevron 開閉挙動 */
+.catalog-item.is-expanded .conn-toggle { color: var(--accent); }
+.catalog-item.is-expanded .conn-toggle svg { transform: rotate(0deg); }
+.catalog-item:not(.is-expanded) .conn-toggle svg { transform: rotate(-90deg); }
 .agent-item .agent-name {
   font-size: calc(13px * var(--fs-mul, 1.1) * var(--fs, 1));
   color: var(--ink);
