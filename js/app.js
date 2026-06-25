@@ -342,8 +342,13 @@ function normalizeSidePanelW(v) {
   if (!Number.isFinite(n) || n <= 0) return SIDE_PANEL_W_DEF;
   return Math.max(SIDE_PANEL_W_MIN, Math.min(SIDE_PANEL_W_MAX, Math.round(n)));
 }
+// Tools (JWT 等) カテゴリは内容が横長 (base64 / decoded JSON) なので最大幅で開く。
+// connections/auth 用の base 幅 (state.sidePanelW) は変えず、表示だけ override する。
+function effectiveSidePanelW() {
+  return state.activeSideCat === "tools" ? SIDE_PANEL_W_MAX : state.sidePanelW;
+}
 function applySidePanelW() {
-  document.documentElement.style.setProperty("--side-panel-w", state.sidePanelW + "px");
+  document.documentElement.style.setProperty("--side-panel-w", effectiveSidePanelW() + "px");
 }
 function wireSideResize() {
   const handle = $("#sideResize");
@@ -389,6 +394,8 @@ function wireSideResize() {
 // ═══════════════════════════════════════════════════════
 function selectSideCat(cat) {
   state.activeSideCat = cat;
+  document.body.dataset.sideCat = cat;   // CSS から現在カテゴリを参照 (tools 時の幅/handle 制御)
+  applySidePanelW();                      // tools は最大幅、他は base 幅に戻す
   $$("#sideRail .rail-ico").forEach(b => {
     const on = b.dataset.cat === cat;
     b.classList.toggle("is-active", on);
@@ -1201,7 +1208,10 @@ function migrateAuthToIdentities() {
 function identityById(id) { return (state.identities || []).find(i => i.id === id); }
 
 // identity の token を (必要なら取得して) 返す。oauth/jwt は期限切れなら再取得。
-async function ensureIdentityToken(idn) {
+// opts.rethrow=true: 失敗時に null を返さず例外をそのまま投げる。
+//   authenticate(test) UI で「本当のエラー理由」を表示するため (握り潰すと
+//   常に汎用の "no access_token returned" になり原因が分からない)。
+async function ensureIdentityToken(idn, opts = {}) {
   if (idn.accessToken && Date.now() < (idn.tokenExpiresAt || 0)) return idn.accessToken;
   try {
     if (idn.kind === "oauth2_cc")        await fetchCcTokenForIdentity(idn);
@@ -1215,6 +1225,7 @@ async function ensureIdentityToken(idn) {
     }
   } catch (e) {
     console.warn("[identity] token fetch failed:", idn.id, e?.message || e);
+    if (opts.rethrow) throw e;
     return null;
   }
   dirty();
@@ -3031,9 +3042,10 @@ async function testIdentityDialog() {
   setIdentityTest("info", "<span class='dts-dot'></span> Requesting token…");
   const t0 = performance.now();
   try {
-    // 強制取得 (キャッシュ無視): tokenExpiresAt をクリアしてから ensureIdentityToken
+    // 強制取得 (キャッシュ無視): tokenExpiresAt をクリアしてから ensureIdentityToken。
+    // rethrow:true で本当のエラー理由 (cancel / popup blocked / token exchange 失敗) を拾う。
     idn.accessToken = undefined; idn.tokenExpiresAt = 0;
-    const tok = await ensureIdentityToken(idn);
+    const tok = await ensureIdentityToken(idn, { rethrow: true });
     const ms = Math.round(performance.now() - t0);
     if (!tok) throw new Error("no access_token returned");
     const exp = idn.tokenExpiresAt ? Math.max(0, Math.round((idn.tokenExpiresAt - Date.now()) / 1000)) : null;
@@ -3049,7 +3061,19 @@ async function testIdentityDialog() {
       `<span class='dts-dot'></span> token OK · <code>${escapeHtml(preview)}</code>` +
       (exp != null ? ` · expires in ~${exp}s` : "") + ` · ${ms}ms`);
   } catch (e) {
-    setIdentityTest("err", `<span class='dts-dot'></span> ${escapeHtml(e?.message || String(e))}`);
+    const msg = e?.message || String(e);
+    // ユーザがポップアップを閉じた / キャンセルした場合は「失敗」ではないので赤エラーにしない。
+    // 既に認証済み (state._authTestResult あり) なら そのトークンは保持される旨を添える。
+    if (/cancel/i.test(msg)) {
+      const kept = state._authTestResult?.accessToken
+        ? " · 既存のトークンは保持されています"
+        : "";
+      setIdentityTest("warn", `<span class='dts-dot'></span> 認証をキャンセルしました${kept}`);
+    } else if (/popup blocked/i.test(msg)) {
+      setIdentityTest("warn", `<span class='dts-dot'></span> ポップアップがブロックされました — このサイトのポップアップを許可してください`);
+    } else {
+      setIdentityTest("err", `<span class='dts-dot'></span> ${escapeHtml(msg)}`);
+    }
   } finally {
     btn.disabled = false;
   }
