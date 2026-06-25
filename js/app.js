@@ -758,7 +758,9 @@ function upsertBookmark({ protoId, url, name, auth, authRef, persona, channel, e
   if (idx >= 0) {
     // 既存はユーザーが付けた display name 等を尊重しつつ最新値で更新
     const prev = state.bookmarks[idx];
-    const merged = { ...prev, ...entry, name: name || prev.name };
+    // グループ名は Edit ダイアログでのみ変更する。connect 由来の name (= window 名)で
+    // 上書きしない (上書きすると reload 時の window 復元でグループ名が戻ってしまう)。
+    const merged = { ...prev, ...entry, name: prev.name || name };
     delete merged.auth; delete merged.authRef;   // 旧バージョンが付けた stale auth も除去
     state.bookmarks[idx] = merged;
   } else {
