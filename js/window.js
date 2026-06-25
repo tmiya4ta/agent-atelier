@@ -208,6 +208,10 @@ export class AgentWindow {
       this.debugPaused = !this.debugPaused;
       pauseBtn.textContent = this.debugPaused ? "resume" : "pause";
     });
+    // Debug: 右クリックで「JWT Decode」コンテキストメニュー
+    // (カーソル位置 or 選択範囲の文字列から JWT を取り出して decode し popover 表示)
+    const debugScroll = node.querySelector(".debug-scroll");
+    if (debugScroll) debugScroll.addEventListener("contextmenu", (e) => this._onDebugContextMenu(e));
 
     // Settings pane content (static for now)
     this._renderSettings();
@@ -373,6 +377,8 @@ export class AgentWindow {
   }
 
   close() {
+    this._closeJwtMenu?.();        // 右クリックメニュー/popover が body に残らないように
+    this._closeJwtPopover?.();
     this.adapter.disconnect?.();
     this.el.remove();
     this.onClose?.(this);
@@ -1293,6 +1299,126 @@ export class AgentWindow {
       box.appendChild(entry);
     }
     box.scrollTop = box.scrollHeight;
+  }
+
+  // ── Debug の右クリック「JWT Decode」 ───────────────────
+  // クリック位置 (選択があれば選択範囲) の文字列から JWT を取り出してメニューを出す。
+  _onDebugContextMenu(e) {
+    const pre = e.target.closest(".dbg-body");
+    if (!pre) return;   // JSON/テキスト本文の上でのみ反応 (それ以外は通常メニュー)
+    e.preventDefault();
+    const token = this._jwtTokenAtPoint(e, pre);
+    this._openJwtMenu(e.clientX, e.clientY, token);
+  }
+
+  // base64url + ドットだけを JWT 文字とみなす
+  _extractJwt(str) {
+    const m = String(str || "").match(/[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]*/);
+    return m ? m[0] : "";
+  }
+
+  // クリック位置 (なければ選択範囲) の token を返す。
+  _jwtTokenAtPoint(e, pre) {
+    // 1) 選択範囲があれば最優先
+    const sel = (typeof window.getSelection === "function") ? String(window.getSelection() || "").trim() : "";
+    if (sel) { const t = this._extractJwt(sel); if (t) return t; }
+    // 2) クリック位置の caret から text node + offset を得る
+    let node = null, offset = 0;
+    if (document.caretRangeFromPoint) {
+      const r = document.caretRangeFromPoint(e.clientX, e.clientY);
+      if (r) { node = r.startContainer; offset = r.startOffset; }
+    } else if (document.caretPositionFromPoint) {
+      const p = document.caretPositionFromPoint(e.clientX, e.clientY);
+      if (p) { node = p.offsetNode; offset = p.offset; }
+    }
+    const text = (node && node.nodeType === 3) ? (node.textContent || "") : (pre.textContent || "");
+    if (!text) return "";
+    // 3) offset 周辺を JWT 文字 ([A-Za-z0-9._-]) で左右に広げて候補を切り出す
+    const isTok = (c) => /[A-Za-z0-9._-]/.test(c);
+    let s = Math.min(Math.max(offset, 0), text.length), ei = s;
+    while (s > 0 && isTok(text[s - 1])) s--;
+    while (ei < text.length && isTok(text[ei])) ei++;
+    return this._extractJwt(text.slice(s, ei)) || this._extractJwt(text);
+  }
+
+  _closeJwtMenu() {
+    if (this._jwtMenuEl) { this._jwtMenuEl.remove(); this._jwtMenuEl = null; }
+    if (this._jwtMenuOff) { document.removeEventListener("click", this._jwtMenuOff, true); this._jwtMenuOff = null; }
+  }
+
+  _openJwtMenu(x, y, token) {
+    this._closeJwtMenu();
+    const menu = document.createElement("div");
+    menu.className = "row-menu jwt-ctx-menu";
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "row-menu-item";
+    item.textContent = token ? "JWT Decode" : "JWT Decode (no token here)";
+    if (!token) item.disabled = true;
+    item.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      this._closeJwtMenu();
+      this._showJwtPopover(token, x, y);
+    });
+    menu.appendChild(item);
+    document.body.appendChild(menu);
+    // 画面内にクランプ
+    const mw = menu.offsetWidth, mh = menu.offsetHeight;
+    let left = Math.min(x, window.innerWidth  - mw - 6);
+    let top  = Math.min(y, window.innerHeight - mh - 6);
+    menu.style.left = `${Math.max(6, Math.round(left))}px`;
+    menu.style.top  = `${Math.max(6, Math.round(top))}px`;
+    this._jwtMenuEl = menu;
+    // 外側クリックで閉じる (次フレームで登録)
+    this._jwtMenuOff = () => this._closeJwtMenu();
+    setTimeout(() => document.addEventListener("click", this._jwtMenuOff, true), 0);
+  }
+
+  _closeJwtPopover() {
+    if (this._jwtPopEl) { this._jwtPopEl.remove(); this._jwtPopEl = null; }
+    if (this._jwtPopOff) { document.removeEventListener("mousedown", this._jwtPopOff, true); this._jwtPopOff = null; }
+    if (this._jwtPopEsc) { document.removeEventListener("keydown", this._jwtPopEsc, true); this._jwtPopEsc = null; }
+  }
+
+  _showJwtPopover(token, x, y) {
+    this._closeJwtPopover();
+    const dec = token ? decodeJwt(token) : null;
+    const pop = document.createElement("div");
+    pop.className = "jwt-popover";
+    pop.innerHTML = `
+      <div class="jwt-pop-head">
+        <span class="jwt-pop-title">JWT Decode</span>
+        <button type="button" class="jwt-pop-copy" title="Copy token">copy</button>
+        <button type="button" class="jwt-pop-close" aria-label="close">×</button>
+      </div>
+      <div class="jwt-pop-body">${dec ? `<pre class="jwt-pop-pre">${formatJwt(dec)}</pre>` : `<span class="jwt-pop-err">JWT としてデコードできません</span>`}</div>
+    `;
+    document.body.appendChild(pop);
+    // 位置: クリック付近、 画面外に出ないようクランプ
+    const pw = pop.offsetWidth, ph = pop.offsetHeight;
+    let left = Math.min(x, window.innerWidth  - pw - 8);
+    let top  = Math.min(y + 4, window.innerHeight - ph - 8);
+    pop.style.left = `${Math.max(8, Math.round(left))}px`;
+    pop.style.top  = `${Math.max(8, Math.round(top))}px`;
+    this._jwtPopEl = pop;
+    // copy / close
+    pop.querySelector(".jwt-pop-close").addEventListener("click", () => this._closeJwtPopover());
+    const copyBtn = pop.querySelector(".jwt-pop-copy");
+    copyBtn.addEventListener("click", () => {
+      if (!token) return;
+      const done = () => { copyBtn.classList.add("is-copied"); copyBtn.textContent = "copied";
+        setTimeout(() => { copyBtn.classList.remove("is-copied"); copyBtn.textContent = "copy"; }, 1200); };
+      if (navigator.clipboard?.writeText) navigator.clipboard.writeText(token).then(done).catch(() => { fallbackCopy(token); done(); });
+      else { fallbackCopy(token); done(); }
+    });
+    if (!token) copyBtn.style.display = "none";
+    // 外側クリック / Esc で閉じる (popover 内は除外)
+    this._jwtPopOff = (ev) => { if (!pop.contains(ev.target)) this._closeJwtPopover(); };
+    this._jwtPopEsc = (ev) => { if (ev.key === "Escape") this._closeJwtPopover(); };
+    setTimeout(() => {
+      document.addEventListener("mousedown", this._jwtPopOff, true);
+      document.addEventListener("keydown", this._jwtPopEsc, true);
+    }, 0);
   }
 
   // ───────────────────────────────────────────
