@@ -74,16 +74,24 @@ export async function runAuthCodeFlow(cat, opts = {}) {
   // ことがあるため、 callback は localStorage にも結果を書く (同一オリジンの
   // storage イベントで元タブが拾う)。
   const STORE_KEY = "atelier:oauth-callback";
+  // 前回フローの残骸を掃除する。1 回目が postMessage で完了すると callback が
+  // localStorage に書いた結果が残り、 2 回目開始時の pre-check がそれ (古い state)
+  // を拾って "state mismatch (CSRF guard)" で即 reject していた。開始時に消しておく。
+  try { localStorage.removeItem(STORE_KEY); } catch {}
+
   const code = await new Promise((resolve, reject) => {
     let done = false;
     const finish = (fn) => { if (done) return; done = true; cleanup(); fn(); };
 
     const handle = (d) => {
       if (!d || d.type !== "oauth-callback") return;
+      // state 不一致 = このフロー宛ではない (別フロー / 古い残骸)。reject せず無視して
+      // 待機を続ける。 これが本当の CSRF ガード: 一致しない callback は「採用しない」。
+      if (d.state !== state) return;
+      try { localStorage.removeItem(STORE_KEY); } catch {}  // 一致したものだけ消費・除去
       try { popup.close(); } catch {}
-      if (d.error)               return finish(() => reject(new Error(`${d.error}: ${d.error_description || ""}`)));
-      if (!d.code)               return finish(() => reject(new Error("No code in callback")));
-      if (d.state !== state)     return finish(() => reject(new Error("state mismatch (CSRF guard)")));
+      if (d.error)  return finish(() => reject(new Error(`${d.error}: ${d.error_description || ""}`)));
+      if (!d.code)  return finish(() => reject(new Error("No code in callback")));
       finish(() => resolve(d.code));
     };
 
@@ -91,8 +99,7 @@ export async function runAuthCodeFlow(cat, opts = {}) {
     const onStorage = (e) => {
       if (e.key !== STORE_KEY || !e.newValue) return;
       let d; try { d = JSON.parse(e.newValue); } catch { return; }
-      try { localStorage.removeItem(STORE_KEY); } catch {}
-      handle(d);
+      handle(d);   // 除去は handle (一致時のみ) に任せる
     };
 
     // tab/popup が閉じられても、 直前に書かれた結果があれば拾う猶予を持たせる。
@@ -100,8 +107,9 @@ export async function runAuthCodeFlow(cat, opts = {}) {
       if (!popup.closed) return;
       try {
         const pre = localStorage.getItem(STORE_KEY);
-        if (pre) { localStorage.removeItem(STORE_KEY); return handle(JSON.parse(pre)); }
+        if (pre) handle(JSON.parse(pre));   // 一致すれば消費して finish、不一致は無視
       } catch {}
+      // handle が resolve していれば finish は idempotent で no-op。
       finish(() => reject(new Error("Authentication cancelled")));
     }, 600);
 
@@ -112,10 +120,10 @@ export async function runAuthCodeFlow(cat, opts = {}) {
     };
     window.addEventListener("message", onMsg);
     window.addEventListener("storage", onStorage);
-    // 既に書き込み済みなら即拾う
+    // 既に書き込み済みなら即拾う (一致時のみ消費、 古い残骸は handle が無視)
     try {
       const pre = localStorage.getItem(STORE_KEY);
-      if (pre) { localStorage.removeItem(STORE_KEY); handle(JSON.parse(pre)); }
+      if (pre) handle(JSON.parse(pre));
     } catch {}
   });
 
