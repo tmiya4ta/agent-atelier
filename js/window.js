@@ -1284,6 +1284,10 @@ export class AgentWindow {
           entry.querySelector(".dbg-pane-headers")?.classList.toggle("is-active", sub === "headers");
           return;
         }
+        // 展開部(.dbg-detail)内のクリックでは開閉しない (部分テキスト選択を妨げないため)。
+        if (e.target.closest(".dbg-detail")) return;
+        // ドラッグでテキスト選択した直後のクリックでも開閉しない (mouseup が外で離れたケース)。
+        if (window.getSelection && String(window.getSelection() || "").trim()) return;
         entry.classList.toggle("is-open");
       });
       box.appendChild(entry);
