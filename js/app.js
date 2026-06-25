@@ -3264,14 +3264,16 @@ function renderCatalogs() {
     li.dataset.catId = c.id;
     li.title = `${host}  ·  ${authLabel}  ·  ${c.status || "idle"}`;
     li.innerHTML = `
-      <span class="catalog-name" title="Click to toggle">${escapeHtml(c.name)}</span>
+      <button class="conn-toggle" aria-label="${expanded ? 'collapse' : 'expand'} business groups" title="${hasChildren ? (expanded ? 'collapse' : 'expand') : 'no business groups'}" ${hasChildren ? '' : 'disabled'}>
+        <svg viewBox="0 0 12 12" width="9" height="9"><polyline points="3,4.5 6,8 9,4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <span class="catalog-name" title="Edit catalog">${escapeHtml(c.name)}</span>
       <span class="catalog-meta">
         <span class="bm-count" title="${c.businessGroups.length} BG">${c.businessGroups.length}</span>
       </span>
       <button class="bookmark-new" title="Add business group" aria-label="add bg">
         <svg viewBox="0 0 14 14" width="10" height="10"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
-      ${PENCIL_BTN_HTML}
       ${KEBAB_BTN_HTML}
     `;
     const doDelete = async () => {
@@ -3288,11 +3290,21 @@ function renderCatalogs() {
       dirty();
     };
     li.addEventListener("click", async (e) => {
-      if (e.target.closest(".row-edit")) {
+      // 左の chevron = business group の collapse/expand トグルのみ
+      if (e.target.closest(".conn-toggle")) {
         e.stopPropagation();
-        openCatalogDialog(c);
+        if (!hasChildren) return;   // 子 (BG) が無ければ何もしない
+        state._catalogExpanded[c.id] = !state._catalogExpanded[c.id];
+        renderCatalogs();
         return;
       }
+      // + = business group 追加
+      if (e.target.closest(".bookmark-new")) {
+        e.stopPropagation();
+        addBusinessGroupToCatalog(c);
+        return;
+      }
+      // kebab = メニュー
       if (e.target.closest(".row-kebab")) {
         e.stopPropagation();
         openRowMenu(e.target.closest(".row-kebab"), [
@@ -3302,23 +3314,7 @@ function renderCatalogs() {
         ]);
         return;
       }
-      if (e.target.closest(".bookmark-new")) {
-        e.stopPropagation();
-        addBusinessGroupToCatalog(c);
-        return;
-      }
-      // name / count クリック → 開閉トグル (子があれば)
-      if (e.target.closest(".catalog-name, .bm-count")) {
-        if (!hasChildren) {
-          // 子なしの場合は即 BG 追加 UI を出す
-          addBusinessGroupToCatalog(c);
-          return;
-        }
-        state._catalogExpanded[c.id] = !state._catalogExpanded[c.id];
-        renderCatalogs();
-      }
-    });
-    li.addEventListener("dblclick", (e) => {
+      // それ以外 (名前 / count / 余白 = 文字のあるところ以降) = EDIT ダイアログ
       e.stopPropagation();
       openCatalogDialog(c);
     });
