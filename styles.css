@@ -105,6 +105,8 @@ body.is-sidebar-collapsed { grid-template-columns: 0 1fr; }
    fade + overflow クリップで滑らかに消す (display:none のポップを避ける)。 */
 body.is-panel-collapsed { grid-template-columns: var(--side-rail-w) 1fr; }
 body.is-panel-collapsed .side-resize { display: none; }
+/* Tools (JWT) は最大幅固定なのでリサイズハンドルは隠す (動かせない誤解を避ける) */
+body[data-side-cat="tools"] .side-resize { display: none; }
 body.is-panel-collapsed .side-panel,
 body.is-panel-collapsed .side-footer { opacity: 0; pointer-events: none; }
 body.is-panel-collapsed .asset-drawer { left: var(--side-rail-w); }

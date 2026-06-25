@@ -8,6 +8,11 @@
 
 const REDIRECT_PATH = "/oauth/callback.html";
 
+// ポップアップ名は呼び出しごとにユニークにする。固定名 ("atelier-oauth") だと
+// 再認証 (2 回目) で直前に閉じたばかりの同名 window が一瞬 reuse され、
+// checkClosed が「閉じられた」と誤検知して "Authentication cancelled" になることがある。
+let _popupSeq = 0;
+
 function base64url(buf) {
   return btoa(String.fromCharCode(...new Uint8Array(buf)))
     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -59,7 +64,8 @@ export async function runAuthCodeFlow(cat, opts = {}) {
     const top  = Math.max(0, Math.floor((screen.height - h) / 2));
     features = `width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,location=yes,status=no`;
   }
-  const popup = window.open(authUrl, opts.tab ? "_blank" : "atelier-oauth", features);
+  const popupName = opts.tab ? "_blank" : `atelier-oauth-${++_popupSeq}`;
+  const popup = window.open(authUrl, popupName, features);
 
   if (!popup) throw new Error("Popup blocked. Allow popups for this site.");
 
