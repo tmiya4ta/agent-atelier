@@ -4,7 +4,7 @@
 
 import { PROTOCOLS, getProtocol }           from "./protocols/index.js";
 import { mockUrl }                          from "./protocols/mock.js";
-import { AgentWindow }                      from "./window.js";
+import { AgentWindow, decodeJwt, formatJwt } from "./window.js";
 import { DbWindow }                         from "./dbwindow.js";
 import { ClouderbyClient }                  from "./protocols/db/clouderby.js";
 import * as persist                         from "./persist.js";
@@ -236,6 +236,8 @@ function init() {
   renderTabs();
   wireRail();
   wireSideRail();
+  wirePanelCollapse();
+  wireTools();
   wireIdentityDialog();
   wireDialog();
   wireCatalogDialog();
@@ -397,12 +399,65 @@ function selectSideCat(cat) {
   });
   dirty();
 }
+function isPanelCollapsed() { return document.body.classList.contains("is-panel-collapsed"); }
+function setPanelCollapsed(collapsed) {
+  document.body.classList.toggle("is-panel-collapsed", collapsed);
+  try { localStorage.setItem("atelier:panelCollapsed", collapsed ? "1" : ""); } catch {}
+}
 function wireSideRail() {
   $$("#sideRail .rail-ico").forEach(b => {
-    b.addEventListener("click", () => selectSideCat(b.dataset.cat));
+    b.addEventListener("click", () => {
+      if (isPanelCollapsed()) {
+        // 畳んだ状態でアイコンを押したら開いてそのカテゴリを表示
+        setPanelCollapsed(false);
+        selectSideCat(b.dataset.cat);
+      } else if (b.dataset.cat === state.activeSideCat) {
+        // 既にアクティブなカテゴリを再クリック → パネルを畳む
+        setPanelCollapsed(true);
+      } else {
+        selectSideCat(b.dataset.cat);
+      }
+    });
   });
   const start = state.activeSideCat || "connections";
   selectSideCat(start);
+}
+
+// 2番目のサイドパネルの折り畳み (rail は残す)
+function wirePanelCollapse() {
+  try { if (localStorage.getItem("atelier:panelCollapsed") === "1") document.body.classList.add("is-panel-collapsed"); } catch {}
+  const btn = $("#panelCollapseBtn");
+  if (btn) btn.addEventListener("click", () => setPanelCollapsed(!isPanelCollapsed()));
+}
+
+// Tools パネル: JWT デコーダー (入力に応じて即デコード、色付き表示 + copy)
+function wireTools() {
+  const input  = $("#toolJwtInput");
+  const out    = $("#toolJwtOut");
+  const wrap   = $("#toolJwtOutWrap");
+  const status = $("#toolJwtStatus");
+  const copyBtn = $("#toolJwtCopy");
+  if (!input || !out || !wrap) return;
+  const render = () => {
+    const tok = input.value.trim();
+    if (!tok) { wrap.hidden = true; status.textContent = ""; return; }
+    const dec = decodeJwt(tok);
+    if (dec) { out.innerHTML = formatJwt(dec); wrap.hidden = false; status.textContent = ""; }
+    else     { wrap.hidden = true; status.textContent = "JWT としてデコードできません"; }
+  };
+  input.addEventListener("input", render);
+  if (copyBtn) {
+    copyBtn.addEventListener("click", () => {
+      const src = out.textContent || "";
+      if (!src) return;
+      const done = () => {
+        copyBtn.classList.add("is-copied"); copyBtn.textContent = "copied";
+        setTimeout(() => { copyBtn.classList.remove("is-copied"); copyBtn.textContent = "copy"; }, 1200);
+      };
+      if (navigator.clipboard?.writeText) navigator.clipboard.writeText(src).then(done).catch(done);
+      else done();
+    });
+  }
 }
 
 // ═══════════════════════════════════════════════════════
