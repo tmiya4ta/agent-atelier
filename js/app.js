@@ -6488,18 +6488,10 @@ async function connect({ protoId, url, name, auth, authRef, persona, channel, em
   }
 
   const ws = activeWorkspace();
-  // 同じ proto + url の既存ウインドウから「使われている番号」を集めて、最小の空き番号を割り当てる
-  // (#2 を削除して再作成しても #3 と衝突せず #2 が再利用される)
-  const existing = state.workspaces
-    .flatMap(w => w.windows)
-    .filter(w => w.protoId === protoId && w.adapter.config.url === url);
-  const usedNums = new Set(existing.map(w => {
-    const m = (w.instanceSuffix || "").match(/#(\d+)/);
-    return m ? parseInt(m[1], 10) : 1;
-  }));
-  let n = 1;
-  while (usedNums.has(n)) n++;
-  const instanceSuffix = n === 1 ? "" : ` #${n}`;
+  // 連番 (#2 等) は「同じ proto + url + 同じ表示名」が複数ある時だけ付ける。
+  // URL が同じでも名前が違えば (Ichiro / Misaki 等) 連番は付かない。
+  // 実際の採番は window を ws に積んだ後 recomputeInstanceSuffixes() が動的に行う。
+  const instanceSuffix = "";
 
   // authRef があれば identity から実トークン/ヘッダを解決 (無ければ旧 auth 文字列を後方互換で使用)
   const resolved = await resolveAuthForConnection({ authRef, auth });
@@ -6537,7 +6529,7 @@ async function connect({ protoId, url, name, auth, authRef, persona, channel, em
       layer: ws.layer,
       onClose: removeWindow,
       onFocus: () => {},
-      onChange: () => { dirty(); renderBookmarks(); },
+      onChange: () => { dirty(); recomputeInstanceSuffixes(); renderBookmarks(); },
       instanceSuffix,
       restore: opts.restore
     });
@@ -6547,7 +6539,7 @@ async function connect({ protoId, url, name, auth, authRef, persona, channel, em
       layer: ws.layer,
       onClose: removeWindow,
       onFocus: () => {},
-      onChange: () => { dirty(); renderBookmarks(); },  // display name 変更等を左サイドバーに即反映
+      onChange: () => { dirty(); recomputeInstanceSuffixes(); renderBookmarks(); },  // display name 変更等を左サイドバーに即反映
       instanceSuffix,
       restore: opts.restore,
       // ユーザが connect dialog で display name を明示入力した場合、 AgentCard.name で上書きしない
@@ -6562,6 +6554,7 @@ async function connect({ protoId, url, name, auth, authRef, persona, channel, em
   }
   win._wsId = ws.id;
   ws.windows.push(win);
+  recomputeInstanceSuffixes();   // 同名衝突時のみ #2... を付与
 
   // bookmark 登録: 同じ proto+url が無ければ追加、 あれば最新の name/authRef/etc に更新
   upsertBookmark({
@@ -6595,11 +6588,40 @@ function removeWindow(win) {
   const ws = state.workspaces.find(w => w.id === win._wsId);
   if (!ws) return;
   ws.windows = ws.windows.filter(w => w !== win);
+  recomputeInstanceSuffixes();   // 窓を閉じたら残りの連番を詰め直す
   renderTabs();
   renderBookmarks();   // bookmark tree からも除外
   updateStatusLine();
   updateEmptyState();
   dirty();
+}
+
+// 連番サフィックス (#2 等) を全 window 横断で再計算する。
+// 「同じ proto + url + 同じ表示名」が 2 つ以上ある時だけ 2 つ目以降に #2, #3... を付ける。
+// 名前が一意なら (リネーム後の Ichiro / Misaki 等) サフィックスは付かない。
+// display name 変更 (card 名上書き / settings リネーム) や window の追加/削除で都度呼ぶ。
+function recomputeInstanceSuffixes() {
+  const groups = new Map();
+  for (const ws of state.workspaces) {
+    for (const w of ws.windows) {
+      const key = `${w.protoId} ${w.adapter?.config?.url || ""} ${(w.name || "").trim()}`;
+      let arr = groups.get(key);
+      if (!arr) { arr = []; groups.set(key, arr); }
+      arr.push(w);
+    }
+  }
+  for (const arr of groups.values()) {
+    arr.forEach((w, i) => {
+      const suf = (arr.length <= 1 || i === 0) ? "" : ` #${i + 1}`;
+      if (w.instanceSuffix === suf) return;
+      w.instanceSuffix = suf;
+      const label = (w.name || "") + suf;
+      const titleEl = w.el?.querySelector?.(".aw-title");
+      if (titleEl) titleEl.textContent = label;
+      const wm = w.el?.querySelector?.(".aw-watermark");
+      if (wm) wm.textContent = label;
+    });
+  }
 }
 
 // ─── Status / empty ──────────────────────────────────────
