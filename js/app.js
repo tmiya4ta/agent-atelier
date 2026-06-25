@@ -2250,7 +2250,16 @@ function openAssetDetail(asset, cat) {
   // ここで選び、asset ごとに記憶する。既定は none (Anypoint 認証へはフォールバックしない)。
   renderDetailAuthRef(asset._authRef || "");
   const authSel = $("#detailAuthRef");
-  if (authSel) authSel.onchange = () => { asset._authRef = authSel.value || ""; };
+  if (authSel) authSel.onchange = () => {
+    if (authSel.value === "__new__") {
+      // 「+ new identity…」→ identity 作成ダイアログを開き、保存後この select に反映する
+      authSel.value = asset._authRef || "";   // 開いている間は元の値に戻す (cancel 対策)
+      state._authRefReturn = (newId) => { renderDetailAuthRef(newId); asset._authRef = newId || ""; };
+      openIdentityDialog();
+      return;
+    }
+    asset._authRef = authSel.value || "";
+  };
 
   // skill 行の展開を toggle
   $("#detailBody").querySelectorAll(".skill-row.has-desc").forEach(row => {
@@ -4326,6 +4335,9 @@ function renderDetailAuthRef(selectedId) {
     o.textContent = `${idn.name} · ${kindBadge(idn.kind)}`;
     sel.appendChild(o);
   });
+  const add = document.createElement("option");
+  add.value = "__new__"; add.textContent = "+ new identity…";
+  sel.appendChild(add);
   sel.value = (selectedId && identityById(selectedId)) ? selectedId : "";
 }
 
