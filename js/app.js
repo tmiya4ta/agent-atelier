@@ -904,7 +904,6 @@ function renderBookmarks() {
       <button class="bookmark-new" title="${wins.length ? 'Open another window to the same agent' : 'Open a window'}" aria-label="new window">
         <svg viewBox="0 0 14 14" width="10" height="10"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
-      ${PENCIL_BTN_HTML}
       ${KEBAB_BTN_HTML}
     `;
     const doDelete = async () => {
@@ -922,20 +921,16 @@ function renderBookmarks() {
       renderBookmarks();
     };
     li.addEventListener("click", async (e) => {
-      if (e.target.closest(".row-edit")) {
+      // 左の chevron = アコーディオンの collapse/expand トグルのみ
+      if (e.target.closest(".conn-toggle")) {
         e.stopPropagation();
-        openDialog({ editBookmark: b });
+        if (!canExpand) return;   // 開いている window が無ければ何もしない
+        const next = !state._connExpanded[b.key];
+        state._connExpanded[b.key] = next;
+        animateConnExpand(b.key, next);
         return;
       }
-      if (e.target.closest(".row-kebab")) {
-        e.stopPropagation();
-        openRowMenu(e.target.closest(".row-kebab"), [
-          { label: "Edit",        onClick: () => openDialog({ editBookmark: b }) },
-          { label: "New window",  onClick: () => connect({ protoId: b.protoId, url: b.url, name: displayName, persona: b.persona, channel: b.channel, emulate: b.emulate, mockTools: b.mockTools, mockReply: b.mockReply, database: b.database, user: b.user, password: b.password }, { lockName: true }) },
-          { label: "Delete", danger: true, onClick: doDelete }
-        ]);
-        return;
-      }
+      // + = 新規 window
       if (e.target.closest(".bookmark-new")) {
         e.stopPropagation();
         connect({
@@ -953,27 +948,19 @@ function renderBookmarks() {
         }, { lockName: true });
         return;
       }
-      // 行全体のクリック (`>` chevron / 名前 / count / 余白) は単一の動作にまとめる:
-      //   wins=0 → connect、wins=1 → focus、wins>1 → アコーディオン toggle
-      if (wins.length === 0) {
-        connect({
-          protoId: b.protoId, url: b.url, name: displayName,
-          persona: b.persona, channel: b.channel,
-          emulate: b.emulate, mockTools: b.mockTools, mockReply: b.mockReply,
-          database: b.database, user: b.user, password: b.password
-        }, { lockName: true });
+      // kebab = メニュー
+      if (e.target.closest(".row-kebab")) {
+        e.stopPropagation();
+        openRowMenu(e.target.closest(".row-kebab"), [
+          { label: "Edit",        onClick: () => openDialog({ editBookmark: b }) },
+          { label: "New window",  onClick: () => connect({ protoId: b.protoId, url: b.url, name: displayName, persona: b.persona, channel: b.channel, emulate: b.emulate, mockTools: b.mockTools, mockReply: b.mockReply, database: b.database, user: b.user, password: b.password }, { lockName: true }) },
+          { label: "Delete", danger: true, onClick: doDelete }
+        ]);
         return;
       }
-      if (wins.length === 1) {
-        const { win, ws } = wins[0];
-        if (ws.id !== state.activeWs) { switchWorkspace(ws.id); setTimeout(() => win.focus(), 50); }
-        else win.focus();
-        // 1 つだけの時もアコーディオンを toggle (focus と両立)
-      }
-      const cur  = state._connExpanded[b.key] !== false;
-      const next = !cur;
-      state._connExpanded[b.key] = next;
-      animateConnExpand(b.key, next);
+      // それ以外 (proto バッジ / 名前 / count / 余白 = 文字のあるところ以降) = EDIT ダイアログ
+      e.stopPropagation();
+      openDialog({ editBookmark: b });
     });
     root.appendChild(li);
 
