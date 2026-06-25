@@ -3654,9 +3654,30 @@ body.is-dark .tool-result .b { color: #F45D4C; }
   line-height: 1.55;
   white-space: pre;
   overflow-x: auto;
-  display: none;
 }
-.dbg-body.is-active { display: block; }
+/* pane の表示切替は wrapper(.dbg-pane-wrap) 側で行い、 中に hover コピーボタンを置く */
+.dbg-pane-wrap { display: none; position: relative; }
+.dbg-pane-wrap.is-active { display: block; }
+.dbg-copy {
+  position: absolute;
+  top: 6px; right: 6px; z-index: 1;
+  padding: 1px 7px;
+  font-family: var(--f-mono);
+  font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  background: color-mix(in srgb, var(--panel) 85%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.dbg-pane-wrap:hover .dbg-copy,
+.dbg-copy:focus-visible { opacity: 1; }
+.dbg-copy:hover { color: var(--accent-ink); border-color: var(--accent); background: var(--paper); }
+.dbg-copy.is-copied { opacity: 1; color: #14834A; border-color: #14834A; background: #E8F6EE; }
 body.is-dark .dbg-body {
   background: #0A1B3F;
   color: #D6E0F0;

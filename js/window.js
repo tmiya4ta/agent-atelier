@@ -1248,12 +1248,33 @@ export class AgentWindow {
             <button type="button" class="dbg-subtab is-active" data-sub="payload">payload</button>
             <button type="button" class="dbg-subtab" data-sub="headers">headers</button>
           </div>` : ""}
-          <pre class="dbg-body dbg-pane-payload is-active">${bodyHtml}</pre>
-          ${hasHeaders ? `<pre class="dbg-body dbg-pane-headers">${headersHtml}</pre>` : ""}
+          <div class="dbg-pane-wrap dbg-pane-payload is-active">
+            <button type="button" class="dbg-copy" title="Copy" aria-label="Copy">copy</button>
+            <pre class="dbg-body">${bodyHtml}</pre>
+          </div>
+          ${hasHeaders ? `<div class="dbg-pane-wrap dbg-pane-headers">
+            <button type="button" class="dbg-copy" title="Copy" aria-label="Copy">copy</button>
+            <pre class="dbg-body">${headersHtml}</pre>
+          </div>` : ""}
         </div>
       `;
       // 行クリックで開閉。 サブタブのクリックは開閉させず pane だけ切り替える。
       entry.addEventListener("click", (e) => {
+        const copyBtn = e.target.closest(".dbg-copy");
+        if (copyBtn) {
+          e.stopPropagation();
+          const pre = copyBtn.parentElement?.querySelector(".dbg-body");
+          const src = pre ? pre.textContent || "" : "";
+          if (src) {
+            const done = () => {
+              copyBtn.classList.add("is-copied"); copyBtn.textContent = "copied";
+              setTimeout(() => { copyBtn.classList.remove("is-copied"); copyBtn.textContent = "copy"; }, 1200);
+            };
+            if (navigator.clipboard?.writeText) navigator.clipboard.writeText(src).then(done).catch(() => { fallbackCopy(src); done(); });
+            else { fallbackCopy(src); done(); }
+          }
+          return;
+        }
         const subBtn = e.target.closest(".dbg-subtab");
         if (subBtn) {
           e.stopPropagation();
