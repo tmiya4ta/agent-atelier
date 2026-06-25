@@ -1319,7 +1319,7 @@ export class AgentWindow {
     if (this.authApi) {
       const ids = this.authApi.list();
       const hasRawToken = !curRef && !!cfg.auth;
-      const opts = [`<option value=""${!curRef && !hasRawToken ? " selected" : ""}>none</option>`];
+      const opts = [`<option value=""${!curRef && !hasRawToken ? " selected" : ""}>manual</option>`];
       ids.forEach(idn => {
         const sel = idn.id === curRef ? " selected" : "";
         opts.push(`<option value="${escapeHtml(idn.id)}"${sel}>${escapeHtml(idn.name)} · ${escapeHtml(this.authApi.badge(idn.kind))}</option>`);
