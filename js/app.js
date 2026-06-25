@@ -4008,16 +4008,6 @@ function applyProtoSpecificFields() {
     channelField.hidden = isMock || isDb;                  // Mock / DB では行ごと畳む
     channelField.style.visibility = isSlack ? "" : "hidden"; // A2A/MCP は領域だけ確保
   }
-  // AUTH (identity) はコネクション単位では持たない方針。A2A/MCP は per-window
-  // (window settings で設定)、DB は専用フィールド、Mock は不要なので隠す。
-  // Slack だけは bot token をコネクションに紐付けるので残す。
-  {
-    const authField = $("#dlgAuthRef")?.closest(".field");
-    const nameRow   = $("#dlgName")?.closest(".field-row");
-    const showAuth  = isSlack;
-    if (authField) authField.hidden = !showAuth;
-    if (nameRow) nameRow.classList.toggle("is-single", !showAuth);
-  }
   // mock の「装うプロトコル」選択 (A2A / MCP)。
   // 編集モードでは url が emulate でキー化済みなので変更不可 (toggle を無効化)。
   const mockKindField = $("#dlgMockKindField");
@@ -4053,7 +4043,12 @@ function applyProtoSpecificFields() {
   if (urlHint  && isDb) urlHint.textContent  = "clouderby (JDBC over HTTP) base URL";
   if (urlPrefix && isDb) urlPrefix.textContent = "url";
   if (nameField) nameField.hidden = isMock && !isEditing;
-  if (authField) authField.hidden = isMock || isDb;   // DB は inline user/password を使う
+  // AUTH(identity) はコネクション単位では持たない。A2A/MCP は per-window (window settings)、
+  // DB は inline user/password、Mock は不要。Slack だけ bot token をコネクションに紐付ける。
+  if (authField) authField.hidden = !isSlack;
+  // auth を隠したら display name を全幅に (field-row を 1 カラムへ)
+  const nameRowEl = $("#dlgName")?.closest(".field-row");
+  if (nameRowEl) nameRowEl.classList.toggle("is-single", !isSlack);
   if (testBtn)   testBtn.hidden   = isMock;            // DB は接続(session)テスト可
   if (advanced)  advanced.hidden  = isMock || isDb;
 
