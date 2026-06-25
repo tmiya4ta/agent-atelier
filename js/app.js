@@ -629,11 +629,15 @@ function upsertBookmark({ protoId, url, name, auth, authRef, persona, channel, e
   const key = bookmarkKey(protoId, url);
   state.bookmarks = state.bookmarks || [];
   const idx = state.bookmarks.findIndex(b => b.key === key);
-  const entry = { key, protoId, url, name, auth, authRef, persona, channel, emulate, mockTools, mockReply, database, user, password };
+  // コネクション(bookmark)は URL のみを保持する。AUTH は window ごとに設定する
+  // (親=URL、子=window が各自 AUTH)。よって auth/authRef は bookmark に保存しない。
+  const entry = { key, protoId, url, name, persona, channel, emulate, mockTools, mockReply, database, user, password };
   if (idx >= 0) {
     // 既存はユーザーが付けた display name 等を尊重しつつ最新値で更新
     const prev = state.bookmarks[idx];
-    state.bookmarks[idx] = { ...prev, ...entry, name: name || prev.name };
+    const merged = { ...prev, ...entry, name: name || prev.name };
+    delete merged.auth; delete merged.authRef;   // 旧バージョンが付けた stale auth も除去
+    state.bookmarks[idx] = merged;
   } else {
     state.bookmarks.push(entry);
   }
@@ -794,7 +798,7 @@ function renderBookmarks() {
         e.stopPropagation();
         openRowMenu(e.target.closest(".row-kebab"), [
           { label: "Edit",        onClick: () => openDialog({ editBookmark: b }) },
-          { label: "New window",  onClick: () => connect({ protoId: b.protoId, url: b.url, name: displayName, auth: b.auth, authRef: b.authRef, persona: b.persona, channel: b.channel, emulate: b.emulate, mockTools: b.mockTools, mockReply: b.mockReply, database: b.database, user: b.user, password: b.password }, { lockName: true }) },
+          { label: "New window",  onClick: () => connect({ protoId: b.protoId, url: b.url, name: displayName, persona: b.persona, channel: b.channel, emulate: b.emulate, mockTools: b.mockTools, mockReply: b.mockReply, database: b.database, user: b.user, password: b.password }, { lockName: true }) },
           { label: "Delete", danger: true, onClick: doDelete }
         ]);
         return;
@@ -805,8 +809,6 @@ function renderBookmarks() {
           protoId: b.protoId,
           url:     b.url,
           name:    displayName,
-          auth:    b.auth,
-          authRef: b.authRef,
           persona: b.persona,
           channel: b.channel,
           emulate:   b.emulate,
@@ -823,7 +825,7 @@ function renderBookmarks() {
       if (wins.length === 0) {
         connect({
           protoId: b.protoId, url: b.url, name: displayName,
-          auth: b.auth, authRef: b.authRef, persona: b.persona, channel: b.channel,
+          persona: b.persona, channel: b.channel,
           emulate: b.emulate, mockTools: b.mockTools, mockReply: b.mockReply,
           database: b.database, user: b.user, password: b.password
         }, { lockName: true });
@@ -6252,7 +6254,7 @@ async function submitDialog() {
       const oldUrl  = b.url;
       const urlChanged = !isMock && !!url && url !== oldUrl;
       b.name = newName;
-      b.authRef = cleanAuthRef;
+      delete b.authRef; delete b.auth;   // コネクションは URL のみ (AUTH は window ごと)
       if (state.selectedProto === "slack") b.channel = channel || "general";
       if (isDb) {
         b.database = dbDatabase || "default";
