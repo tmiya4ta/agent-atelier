@@ -430,33 +430,101 @@ function wirePanelCollapse() {
   if (btn) btn.addEventListener("click", () => setPanelCollapsed(!isPanelCollapsed()));
 }
 
-// Tools パネル: JWT デコーダー (入力に応じて即デコード、色付き表示 + copy)
+// base64url ヘルパ
+function _b64urlStr(str) {
+  return btoa(unescape(encodeURIComponent(str))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function _b64urlBytes(bytes) {
+  let s = ""; for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+// JWT エンコード (HS256/384/512 を Web Crypto で署名、none は無署名)
+async function encodeJwt(headerObj, payloadObj, secret) {
+  const alg = String(headerObj.alg || "HS256").toUpperCase();
+  const signingInput = _b64urlStr(JSON.stringify(headerObj)) + "." + _b64urlStr(JSON.stringify(payloadObj));
+  if (alg === "NONE") return signingInput + ".";
+  const hashMap = { HS256: "SHA-256", HS384: "SHA-384", HS512: "SHA-512" };
+  const hash = hashMap[alg];
+  if (!hash) throw new Error(`alg ${alg} は未対応 (HS256/384/512 / none のみ)`);
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(secret || ""), { name: "HMAC", hash }, false, ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(signingInput));
+  return signingInput + "." + _b64urlBytes(new Uint8Array(sig));
+}
+// copy ボタン共通配線
+function _wireCopyBtn(btn, getSrc) {
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    const src = getSrc() || "";
+    if (!src) return;
+    const done = () => {
+      btn.classList.add("is-copied"); btn.textContent = "copied";
+      setTimeout(() => { btn.classList.remove("is-copied"); btn.textContent = "copy"; }, 1200);
+    };
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(src).then(done).catch(done);
+    else done();
+  });
+}
+
+// Tools パネル: JWT デコーダー / エンコーダー
 function wireTools() {
+  // ── mode 切替 (decode / encode) ──
+  const modeSeg = $("#toolJwtMode");
+  if (modeSeg) {
+    modeSeg.querySelectorAll(".seg-opt").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const mode = btn.dataset.mode;
+        modeSeg.querySelectorAll(".seg-opt").forEach(b => {
+          const on = b === btn;
+          b.classList.toggle("is-active", on);
+          b.setAttribute("aria-checked", on ? "true" : "false");
+        });
+        document.querySelectorAll(".tool-jwt-pane").forEach(p => { p.hidden = p.dataset.mode !== mode; });
+      });
+    });
+  }
+
+  // ── decode (入力に応じて即デコード) ──
   const input  = $("#toolJwtInput");
   const out    = $("#toolJwtOut");
   const wrap   = $("#toolJwtOutWrap");
   const status = $("#toolJwtStatus");
-  const copyBtn = $("#toolJwtCopy");
-  if (!input || !out || !wrap) return;
-  const render = () => {
-    const tok = input.value.trim();
-    if (!tok) { wrap.hidden = true; status.textContent = ""; return; }
-    const dec = decodeJwt(tok);
-    if (dec) { out.innerHTML = formatJwt(dec); wrap.hidden = false; status.textContent = ""; }
-    else     { wrap.hidden = true; status.textContent = "JWT としてデコードできません"; }
-  };
-  input.addEventListener("input", render);
-  if (copyBtn) {
-    copyBtn.addEventListener("click", () => {
-      const src = out.textContent || "";
-      if (!src) return;
-      const done = () => {
-        copyBtn.classList.add("is-copied"); copyBtn.textContent = "copied";
-        setTimeout(() => { copyBtn.classList.remove("is-copied"); copyBtn.textContent = "copy"; }, 1200);
-      };
-      if (navigator.clipboard?.writeText) navigator.clipboard.writeText(src).then(done).catch(done);
-      else done();
+  if (input && out && wrap) {
+    const render = () => {
+      const tok = input.value.trim();
+      if (!tok) { wrap.hidden = true; status.textContent = ""; return; }
+      const dec = decodeJwt(tok);
+      if (dec) { out.innerHTML = formatJwt(dec); wrap.hidden = false; status.textContent = ""; }
+      else     { wrap.hidden = true; status.textContent = "JWT としてデコードできません"; }
+    };
+    input.addEventListener("input", render);
+    _wireCopyBtn($("#toolJwtCopy"), () => out.textContent);
+  }
+
+  // ── encode ──
+  const encBtn  = $("#toolEncBtn");
+  const encOut  = $("#toolEncOut");
+  const encWrap = $("#toolEncOutWrap");
+  const encStat = $("#toolEncStatus");
+  if (encBtn && encOut && encWrap) {
+    encBtn.addEventListener("click", async () => {
+      encStat.textContent = ""; encStat.classList.remove("is-error");
+      let header, payload;
+      try { header = JSON.parse($("#toolEncHeader").value); }
+      catch { encStat.textContent = "header が JSON ではありません"; encStat.classList.add("is-error"); return; }
+      try { payload = JSON.parse($("#toolEncPayload").value); }
+      catch { encStat.textContent = "payload が JSON ではありません"; encStat.classList.add("is-error"); return; }
+      try {
+        const tok = await encodeJwt(header, payload, $("#toolEncSecret").value);
+        encOut.textContent = tok;
+        encWrap.hidden = false;
+      } catch (e) {
+        encWrap.hidden = true;
+        encStat.textContent = e?.message || String(e); encStat.classList.add("is-error");
+      }
     });
+    _wireCopyBtn($("#toolEncCopy"), () => encOut.textContent);
   }
 }
 

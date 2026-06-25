@@ -238,13 +238,40 @@
       <!-- ─── TOOLS (よく使うツール) ─── -->
       <div class="side-cat" data-cat="tools" hidden>
         <section class="side-sec">
-          <h4 class="side-title"><span>JWT DECODER</span></h4>
-          <textarea id="toolJwtInput" class="tool-jwt-input" rows="4" spellcheck="false" autocomplete="off"
-                    placeholder="paste a JWT (header.payload.signature)"></textarea>
-          <div class="tool-jwt-status" id="toolJwtStatus"></div>
-          <div class="tool-jwt-out-wrap" id="toolJwtOutWrap" hidden>
-            <button type="button" class="tool-jwt-copy" id="toolJwtCopy" title="Copy" aria-label="Copy">copy</button>
-            <pre class="tool-jwt-out" id="toolJwtOut"></pre>
+          <h4 class="side-title"><span>JWT</span></h4>
+          <div class="seg-toggle tool-jwt-mode" id="toolJwtMode" role="radiogroup" aria-label="JWT mode">
+            <button type="button" class="seg-opt is-active" data-mode="decode" role="radio" aria-checked="true">decode</button>
+            <button type="button" class="seg-opt" data-mode="encode" role="radio" aria-checked="false">encode</button>
+          </div>
+
+          <!-- decode -->
+          <div class="tool-jwt-pane" data-mode="decode">
+            <textarea id="toolJwtInput" class="tool-jwt-input" rows="4" spellcheck="false" autocomplete="off"
+                      placeholder="paste a JWT (header.payload.signature)"></textarea>
+            <div class="tool-jwt-status" id="toolJwtStatus"></div>
+            <div class="tool-jwt-out-wrap" id="toolJwtOutWrap" hidden>
+              <button type="button" class="tool-jwt-copy" id="toolJwtCopy" title="Copy" aria-label="Copy">copy</button>
+              <pre class="tool-jwt-out" id="toolJwtOut"></pre>
+            </div>
+          </div>
+
+          <!-- encode (HS256/384/512 / none) -->
+          <div class="tool-jwt-pane" data-mode="encode" hidden>
+            <label class="tool-jwt-label" for="toolEncHeader">header</label>
+            <textarea id="toolEncHeader" class="tool-jwt-input" rows="2" spellcheck="false" autocomplete="off">{ "alg": "HS256", "typ": "JWT" }</textarea>
+            <label class="tool-jwt-label" for="toolEncPayload">payload</label>
+            <textarea id="toolEncPayload" class="tool-jwt-input" rows="4" spellcheck="false" autocomplete="off">{
+  "sub": "1234567890",
+  "name": "John Doe"
+}</textarea>
+            <label class="tool-jwt-label" for="toolEncSecret">secret (HS* のみ)</label>
+            <input id="toolEncSecret" class="tool-jwt-input" type="text" autocomplete="off" placeholder="your-256-bit-secret" value="secret" />
+            <button type="button" class="side-cta tool-enc-btn" id="toolEncBtn"><span class="side-cta-label">encode →</span></button>
+            <div class="tool-jwt-status" id="toolEncStatus"></div>
+            <div class="tool-jwt-out-wrap" id="toolEncOutWrap" hidden>
+              <button type="button" class="tool-jwt-copy" id="toolEncCopy" title="Copy" aria-label="Copy">copy</button>
+              <pre class="tool-jwt-out tool-enc-out" id="toolEncOut"></pre>
+            </div>
           </div>
         </section>
       </div>
