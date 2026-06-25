@@ -217,13 +217,16 @@ attributes.statusCode default 200]]></ee:set-variable>
 output application/java
 var rh = (attributes.headers default {})
 var ct = rh."content-type" default "application/octet-stream"
+// upstream の x-* カスタムヘッダを透過する (debug 用。 X-Snowflake-Access-Token 等)。
+var xh = rh filterObject ((v, k) -> (lower(k as String)) startsWith "x-")
+var expose = (["Mcp-Session-Id"] ++ namesOf(xh)) joinBy ", "
 ---
 {
     "Content-Type":                ct,
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Expose-Headers": "Mcp-Session-Id",
+    "Access-Control-Expose-Headers": expose,
     "Cache-Control":               "no-store"
-} ++ (if (rh."mcp-session-id"?) { "Mcp-Session-Id": rh."mcp-session-id" } else {})]]></ee:set-variable>
+} ++ xh ++ (if (rh."mcp-session-id"?) { "Mcp-Session-Id": rh."mcp-session-id" } else {})]]></ee:set-variable>
                         </ee:variables>
                     </ee:transform>
                         </when>
