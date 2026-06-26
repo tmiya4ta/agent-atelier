@@ -118,6 +118,15 @@ export class AnypointClient {
     return this._get(`${AMC}/organizations/${orgId}/environments/${envId}/deployments/${deploymentId}/specs`);
   }
 
+  // runtime target 一覧 = RTF fabric + CloudHub 2.0 shared/private space を統合した配信先一覧。
+  // deployment.target.targetId は provider="MC" で CH2/RTF を区別しないため、ここで
+  // targetId → { name, type } を解決する (type: runtime-fabric / private-space / shared-space)。
+  async runtimeTargets(orgId) {
+    const j = await this._get(`runtimefabric/api/organizations/${orgId}/targets`);
+    const arr = Array.isArray(j) ? j : (j?.items || j?.data || []);
+    return arr.map(t => ({ id: t.id, name: t.name, type: t.type, status: t.status }));
+  }
+
   // ── 書き込み操作 ─────────────────────────────────────────
   // !! confirm + prod ガードは UI 側の責務。ここは API 機構だけ。
   // !! CH2/RTF の Application Manager v2 には専用 "restart" verb が無い。
@@ -169,31 +178,51 @@ export function flattenOrgTree(node, acc = []) {
   return acc;
 }
 
-// API のバージョン差・provider 差を吸収し、Fleet 表が必要とする平らな形へ。
+// API のバージョン差・list/detail 差を吸収し、Fleet 表が必要とする平らな形へ。
 // 元データは _raw に保持 (detail 表示・PATCH 再利用のため)。
+//
+// 重要 (実データ T1/Sandbox で確認):
+//  - 生 API は camelCase (yaac の kebab は Clojure 変換)。
+//  - 一覧 (list) item は痩せていて version / replicas / vCores / desiredState /
+//    deploymentSettings を含まない。代わりに top-level currentRuntimeVersion を持つ。
+//    → これらは detail (単一 GET) でのみ埋まる。表は list 由来、drawer は detail 由来。
+//  - target.provider は CH2/RTF 双方で "MC"。判別は targetId → runtimeTargets() の type。
 export function normalizeDeployment(d, envId, detail = false) {
   const app = d.application || {};
   const tgt = d.target || {};
   const ds  = tgt.deploymentSettings || {};
   const ref = app.ref || {};
+  const res = ds.resources || {};
+  const fmtRes = (r) => r ? `${r.reserved ?? ""}${r.reserved != null && r.limit != null ? "/" : ""}${r.limit ?? ""}` : null;
   return {
-    id:        d.id,
-    name:      d.name,
-    status:    app.status || d.status || "",     // RUNNING / STARTED / FAILED / APPLYING / ...
-    desired:   app.desiredState || "",           // STARTED / STOPPED
-    provider:  tgt.provider || "",               // CloudHub 2.0 / Runtime Fabric の判別軸 (raw のまま)
-    targetId:  tgt.targetId || "",
-    runtime:   ds.runtimeVersion || "",
-    replicas:  tgt.replicas ?? (Array.isArray(d.replicas) ? d.replicas.length : null),
-    vCores:    app.vCores ?? null,
-    version:   ref.version || "",
-    artifact:  ref.artifactId || "",
-    clustered: !!ds.clustered,
-    updatedAt: d.lastModifiedDate || d.lastModified || d.creationDate || null,
+    id:           d.id,
+    name:         d.name,
+    appStatus:    app.status || "",              // RUNNING / NOT_RUNNING / STARTED ... (app 稼働状態)
+    deployStatus: d.status || "",                // APPLIED / FAILED / APPLYING ... (デプロイ状態)
+    desired:      app.desiredState || "",        // STARTED / STOPPED (detail のみ)
+    provider:     tgt.provider || "",            // CH2/RTF 双方 "MC" — 判別不可。targetId で解決する
+    targetId:     tgt.targetId || "",
+    runtime:      d.currentRuntimeVersion || ds.runtimeVersion || "",  // 一覧は currentRuntimeVersion
+    replicas:     tgt.replicas ?? (Array.isArray(d.replicas) ? d.replicas.length : null),  // 一覧は null
+    vCores:       app.vCores ?? null,            // CH2 のみ (detail)
+    cpu:          fmtRes(res.cpu),               // RTF は cpu/mem (detail)
+    mem:          fmtRes(res.memory),
+    version:      ref.version || "",             // detail のみ
+    artifact:     ref.artifactId || "",
+    clustered:    !!ds.clustered,
+    updatedAt:    d.lastModifiedDate || d.creationDate || null,
     envId,
     replicaList: detail && Array.isArray(d.replicas)
       ? d.replicas.map(r => ({ id: r.id, state: r.state, version: r.currentDeploymentVersion, reason: r.reason }))
       : undefined,
     _raw: d
   };
+}
+
+// runtime target の type → 短ラベル (Fleet 表の Target 列バッジ)。
+export function targetKind(type) {
+  const t = String(type || "").toLowerCase();
+  if (t.includes("fabric")) return "RTF";        // runtime-fabric
+  if (t.includes("space"))  return "CH2";        // shared-space / private-space
+  return "";
 }

@@ -51,12 +51,20 @@ function statusTone(s) {
   if (/FAIL|ERROR|UNDEPLOY|UNAVAILABLE/.test(t)) return "bad";
   return "idle";
 }
-// provider → 短ラベル (CloudHub 2.0 / Runtime Fabric)。値は env により揺れるので lenient に判定。
+// provider → 短ラベル。実データでは CH2/RTF 双方が provider="MC" のため判別不可。
+// MC 等は空を返し、判別は targetKind(runtimeTargets の type) に委ねる。
 function providerLabel(p) {
   const t = String(p || "").toUpperCase();
-  if (/MC|CLOUDHUB|SHARED/.test(t)) return "CH2";
-  if (/RTF|FABRIC|RF/.test(t)) return "RTF";
-  return p || "—";
+  if (/FABRIC|RTF|RF/.test(t)) return "RTF";
+  if (/CLOUDHUB|SHARED|PRIVATE/.test(t)) return "CH2";
+  return "";
+}
+// runtime target の type → 短ラベル。
+function targetKind(type) {
+  const t = String(type || "").toLowerCase();
+  if (t.includes("fabric")) return "RTF";        // runtime-fabric
+  if (t.includes("space"))  return "CH2";        // shared-space / private-space
+  return "";
 }
 function fmtVCores(v) { return v == null ? "—" : (Number.isInteger(v) ? String(v) : v.toFixed(2)); }
 function fmtAgo(ts) {
@@ -152,6 +160,7 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
   const ctx = {
     idnId: null, client: null,
     bgId: null, bgName: "", envs: [], selEnv: new Set(),
+    targets: new Map(),   // targetId → { id, name, type } (CH2/RTF 判別 + 名前解決)
     rows: [], prevStatus: new Map(),
     filter: "", sort: { key: "name", dir: 1 },
     selId: null, busy: new Set(),
@@ -183,12 +192,12 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
 
   // ─── table + drawer ───────────────────────────────────────
   const tbody = el("tbody");
+  // 列は一覧 (list) endpoint で取れるフィールドのみ。replicas/version/vCores は
+  // 一覧に無く detail 由来なので drawer に置く。
   const COLS = [
     { key: "name", label: "App" }, { key: "envName", label: "Env" },
-    { key: "provider", label: "Target" }, { key: "status", label: "Status" },
-    { key: "replicas", label: "Repl" }, { key: "runtime", label: "Runtime" },
-    { key: "version", label: "Ver" }, { key: "vCores", label: "vCores" },
-    { key: "updatedAt", label: "Updated" },
+    { key: "_status", label: "Status" }, { key: "_target", label: "Target" },
+    { key: "runtime", label: "Runtime" }, { key: "updatedAt", label: "Updated" },
   ];
   const thead = el("thead", {}, el("tr", {}, ...COLS.map(c =>
     el("th", { dataset: { key: c.key }, on: { click: () => setSort(c.key) } }, c.label, el("span.ar")))));
@@ -230,8 +239,13 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
     if (!bgId || !ctx.client) { note(""); return; }
     note("loading environments…");
     try {
-      const envs = await ctx.client.environments(bgId);
+      // env と runtime target を並行取得 (target は CH2/RTF 判別 + 名前解決に使う)
+      const [envs, targets] = await Promise.all([
+        ctx.client.environments(bgId),
+        ctx.client.runtimeTargets(bgId).catch(() => []),
+      ]);
       ctx.envs = envs;
+      ctx.targets = new Map(targets.map(t => [t.id, t]));
       // 既定: 非 prod を選択 (prod は明示選択させる)。全部非 prod / env 1個なら全選択。
       const nonProd = envs.filter(e => !e.isProduction);
       const initial = nonProd.length ? nonProd : envs;
@@ -285,15 +299,38 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
     renderTable();
   }
 
+  // 計算列 (_status / _target) の sort 値を解決。
+  function sortVal(r, key) {
+    if (key === "_status") return rowStatusText(r);
+    if (key === "_target") return targetOf(r).name;
+    return r[key];
+  }
   function visibleRows() {
     let rows = ctx.rows;
     if (ctx.filter) rows = rows.filter(r => (r.name || "").toLowerCase().includes(ctx.filter));
     const { key, dir } = ctx.sort;
     return rows.slice().sort((a, b) => {
-      let av = a[key], bv = b[key];
-      if (key === "replicas" || key === "vCores" || key === "updatedAt") { av = av ?? -1; bv = bv ?? -1; return (av - bv) * dir; }
+      let av = sortVal(a, key), bv = sortVal(b, key);
+      if (key === "updatedAt") { av = av ?? -1; bv = bv ?? -1; return (av - bv) * dir; }
       return String(av ?? "").localeCompare(String(bv ?? "")) * dir;
     });
+  }
+
+  // ─── 行の状態/ターゲット解決 ──────────────────────────────
+  function rowStatusText(r) {
+    if (/FAIL|ERROR/i.test(r.deployStatus)) return "FAILED";
+    return r.appStatus || r.deployStatus || "—";
+  }
+  function rowTone(r) {
+    if (/FAIL|ERROR/i.test(r.deployStatus)) return "bad";
+    if (/APPLYING|UPDATING|PENDING|DEPLOYING/i.test(r.deployStatus)) return "busy";
+    return statusTone(r.appStatus || r.deployStatus);
+  }
+  function targetOf(r) {
+    const t = ctx.targets.get(r.targetId);
+    const name = t?.name || (r.targetId ? r.targetId.slice(0, 8) : "—");
+    const kind = (t && targetKind(t.type)) || providerLabel(r.provider) || "";
+    return { name, kind };
   }
 
   function renderTable() {
@@ -310,16 +347,14 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
       return;
     }
     for (const r of rows) {
+      const tgt = targetOf(r);
       const tr = el("tr", { dataset: { id: r.id }, on: { click: () => selectDeployment(r) } },
         el("td", {}, el("span.ap-name", {},
-          el("span", { class: `ap-dot ${statusTone(r.status)}` }), r.name || r.id)),
+          el("span", { class: `ap-dot ${rowTone(r)}` }), r.name || r.id)),
         el("td", { text: r.envName }),
-        el("td", {}, el("span.ap-tag", { text: providerLabel(r.provider) })),
-        el("td", { text: r.status || "—" }),
-        el("td.ap-mono", { text: r.replicas == null ? "—" : String(r.replicas) }),
+        el("td", { text: rowStatusText(r) }),
+        el("td", {}, el("span.ap-tag", { text: tgt.kind || "—" }), " " + tgt.name),
         el("td.ap-mono", { text: r.runtime || "—" }),
-        el("td.ap-mono", { text: r.version || "—" }),
-        el("td.ap-mono", { text: fmtVCores(r.vCores) }),
         el("td.ap-mono", { text: fmtAgo(r.updatedAt) }),
       );
       if (r.id === ctx.selId) tr.classList.add("is-sel");
@@ -345,19 +380,14 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
     ctx.selId = row.id; renderTable();
     const inner = $(".ap-dr-inner", drawer); inner.innerHTML = "";
     drawer.classList.add("is-open");
-    const tone = statusTone(row.status);
+    const tgt = targetOf(row);
     inner.append(
       el("div.ap-dr-head", {},
         el("button.ap-dr-x", { text: "×", on: { click: closeDrawer } }),
-        el("div.ap-dr-title", {}, el("span", { class: `ap-dot ${tone}` }), row.name || row.id),
-        el("div.ap-dr-sub", { text: `${row.envName} · ${providerLabel(row.provider)} · ${row.targetId || ""}` }),
+        el("div.ap-dr-title", {}, el("span", { class: `ap-dot ${rowTone(row)}` }), row.name || row.id),
+        el("div.ap-dr-sub", { text: `${row.envName} · ${tgt.kind || "?"} · ${tgt.name}` }),
       ),
-      el("div.ap-sec", {}, el("h5", { text: "Overview" }), el("dl.ap-kv", {},
-        kv("Status", row.status), kv("Desired", row.desired || "—"),
-        kv("Runtime", row.runtime || "—"), kv("Replicas", row.replicas == null ? "—" : String(row.replicas)),
-        kv("vCores", fmtVCores(row.vCores)), kv("Version", row.version || "—"),
-        kv("Artifact", row.artifact || "—"), kv("Clustered", row.clustered ? "yes" : "no"),
-      )),
+      el("div.ap-sec", {}, el("h5", { text: "Overview" }), el("dl.ap-kv#ap-overview", {}, ...overviewKvs(row))),
       el("div.ap-sec#ap-replicas", {}, el("h5", { text: "Replicas" }), el("div.ap-note", { text: "loading…" })),
       el("div.ap-sec#ap-specs", {}, el("h5", { text: "Specs (versions)" }),
         el("button.ap-btn", { text: "load specs", on: { click: ev => loadSpecs(row, ev.target) } })),
@@ -365,22 +395,35 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
         el("button.ap-btn.is-danger", { text: "↻ Restart", on: { click: () => doRestart(row) } }),
       ),
     );
-    // detail を取り直して replica 一覧を描画 (一覧 API には replica 内訳が無い)
+    // 一覧 item には version/replicas/desired/resources が無いので detail を取り直し、
+    // overview と replica 一覧を埋め直す。
     try {
-      const d = await ctx.client.deployment(ctx.bgId, row.envId, row.id);
+      const det = await ctx.client.deployment(ctx.bgId, row.envId, row.id);
+      row._raw = det._raw || row._raw;   // restart の PATCH body 用に最新 raw を退避
+      const ov = $("#ap-overview", inner);
+      if (ov) { ov.innerHTML = ""; overviewKvs(det).forEach(f => ov.append(f)); }
       const box = $("#ap-replicas", inner); if (!box) return;
       box.innerHTML = ""; box.append(el("h5", { text: "Replicas" }));
-      const list = d.replicaList || [];
+      const list = det.replicaList || [];
       if (!list.length) box.append(el("div.ap-note", { text: "no replica detail" }));
       for (const rep of list) box.append(el("div.ap-replica", {},
         el("span", { class: `ap-dot ${statusTone(rep.state)}` }),
         rep.state || "—", el("span.ap-mono", { text: rep.version || "" })));
-      // 最新 raw を退避しておく (restart の PATCH body に使う)
-      row._raw = d._raw || row._raw;
     } catch (e) {
       const box = $("#ap-replicas", inner);
       if (box) { box.innerHTML = ""; box.append(el("h5", { text: "Replicas" }), el("div.ap-note.is-err", { text: errMsg(e) })); }
     }
+  }
+  function overviewKvs(r) {
+    const resource = r.vCores != null ? `${fmtVCores(r.vCores)} vCores`
+      : (r.cpu || r.mem) ? `${r.cpu || "—"} cpu · ${r.mem || "—"} mem` : "—";
+    return [
+      kv("App", rowStatusText(r)), kv("Deploy", r.deployStatus || "—"),
+      kv("Desired", r.desired || "—"), kv("Runtime", r.runtime || "—"),
+      kv("Replicas", r.replicas == null ? "—" : String(r.replicas)),
+      kv("Resources", resource), kv("Version", r.version || "—"),
+      kv("Clustered", r.clustered ? "yes" : "no"),
+    ];
   }
   function kv(k, v) {
     // dl.ap-kv の grid (auto 1fr) を保つため、dt/dd を直接子にする fragment を返す。
