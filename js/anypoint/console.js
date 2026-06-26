@@ -77,6 +77,11 @@ function fmtAgo(ts) {
   if (m > 0)   return `${m}m`;
   return "now";
 }
+function fmtTime(ts) {
+  if (!ts) return "";
+  const d = new Date(Number(ts)); const p = n => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
 
 // ─── スタイル (1 回だけ注入・app のテーマ変数を流用 = dark 自動追従) ──
 let _styled = false;
@@ -148,6 +153,23 @@ table.ap-table { width:100%; border-collapse:collapse; font:500 12px var(--f-ui)
 .ap-kv dt { color:var(--ink-3); } .ap-kv dd { margin:0; color:var(--ink); text-align:right; font-family:var(--f-mono); font-size:11px; }
 .ap-replica { display:flex; align-items:center; gap:7px; padding:4px 0; font:500 11px var(--f-mono); color:var(--ink-2); }
 .ap-actions { padding:12px 16px; display:flex; gap:8px; flex-wrap:wrap; }
+
+.ap-logs { position:absolute; inset:0; z-index:3; display:none; flex-direction:column; background:var(--panel); }
+.ap-logs.is-open { display:flex; }
+.ap-logs-head { display:flex; align-items:center; gap:10px; padding:9px 14px; border-bottom:1px solid var(--line); background:var(--panel-soft); flex-wrap:wrap; }
+.ap-logs-title { font:700 13px var(--f-display); color:var(--ink); }
+.ap-logs-title .dim { font:500 11px var(--f-ui); color:var(--ink-3); margin-left:7px; }
+.ap-logs-body { flex:1; overflow:auto; padding:8px 0; background:var(--paper); font:500 12px/1.55 var(--f-mono); }
+.ap-log { display:flex; gap:10px; padding:1px 14px; white-space:pre-wrap; word-break:break-word; }
+.ap-log:hover { background:var(--panel-soft); }
+.ap-log-ts { color:var(--ink-4); flex:0 0 auto; }
+.ap-log-lv { flex:0 0 46px; font-weight:700; }
+.ap-log-lv.INFO{color:var(--ink-3);} .ap-log-lv.WARN{color:var(--caution);} .ap-log-lv.ERROR{color:var(--warn);} .ap-log-lv.DEBUG,.ap-log-lv.TRACE{color:var(--ink-4);}
+.ap-log-msg { color:var(--ink-2); flex:1 1 auto; }
+.ap-log-lg { color:var(--accent-ink); }
+.ap-logs-empty { padding:40px; text-align:center; color:var(--ink-3); font-family:var(--f-ui); }
+.ap-logs-empty.is-err { color:var(--warn); }
+.ap-sel { padding:4px 7px; font:500 11px var(--f-ui); color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); }
 `;
   document.head.appendChild(el("style#anypoint-console-styles", { html: css }));
 }
@@ -164,6 +186,7 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
     rows: [], prevStatus: new Map(),
     filter: "", sort: { key: "name", dir: 1 },
     selId: null, busy: new Set(),
+    logRow: null, logLines: [], logSeen: new Set(), logFilter: "ALL", logSearch: "", logPaused: false, logPoll: null,
     poll: null, autoRefresh: false, loaded: false,
   };
 
@@ -204,7 +227,22 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
   const table = el("table.ap-table", {}, thead, tbody);
   const tablewrap = el("div.ap-tablewrap", {}, table);
   const drawer = el("div.ap-drawer", {}, el("div.ap-dr-inner"));
-  stage.append(toolbar, el("div.ap-body", {}, tablewrap, drawer));
+
+  // ─── logs tail overlay (table+drawer を覆う) ───────────────
+  const logTitle = el("div.ap-logs-title");
+  const logBody  = el("div.ap-logs-body");
+  const logLevelSel = el("select.ap-sel", { on: { change: e => { ctx.logFilter = e.target.value; renderLogs(); } } },
+    ...["ALL", "ERROR", "WARN", "INFO", "DEBUG"].map(l => el("option", { value: l, text: l })));
+  const logSearchInp = el("input.ap-filter", { type: "search", placeholder: "search logs…",
+    on: { input: e => { ctx.logSearch = e.target.value.trim().toLowerCase(); renderLogs(); } } });
+  const logPauseBtn = el("button.ap-btn", { text: "⏸ pause", on: { click: () => toggleLogPause() } });
+  const logsOverlay = el("div.ap-logs", {},
+    el("div.ap-logs-head", {},
+      el("button.ap-dr-x", { text: "×", on: { click: closeLogs } }),
+      logTitle, el("span.ap-spacer"), logLevelSel, logSearchInp, logPauseBtn),
+    logBody);
+
+  stage.append(toolbar, el("div.ap-body", {}, tablewrap, drawer), logsOverlay);
 
   // ─── identity → BG → env の連鎖ロード ─────────────────────
   function fillIdentities() {
@@ -392,6 +430,7 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
       el("div.ap-sec#ap-specs", {}, el("h5", { text: "Specs (versions)" }),
         el("button.ap-btn", { text: "load specs", on: { click: ev => loadSpecs(row, ev.target) } })),
       el("div.ap-actions", {},
+        el("button.ap-btn", { text: "≡ Logs", on: { click: () => openLogs(row) } }),
         el("button.ap-btn.is-danger", { text: "↻ Restart", on: { click: () => doRestart(row) } }),
       ),
     );
@@ -467,6 +506,59 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
     } finally {
       ctx.busy.delete(row.id); renderTable();
     }
+  }
+
+  // ─── logs tail (read-only: poll → docId dedup → 追記) ─────
+  function openLogs(row) {
+    ctx.logRow = row; ctx.logLines = []; ctx.logSeen = new Set(); ctx.logPaused = false;
+    logPauseBtn.textContent = "⏸ pause"; logPauseBtn.classList.remove("is-on");
+    logTitle.innerHTML = ""; logTitle.append(row.name || row.id, el("span.dim", { text: `${row.envName} · live tail` }));
+    logsOverlay.classList.add("is-open");
+    logBody.innerHTML = ""; logBody.append(el("div.ap-logs-empty", { text: "loading…" }));
+    pollLogs(true);
+    if (ctx.logPoll) clearInterval(ctx.logPoll);
+    ctx.logPoll = setInterval(() => { if (!ctx.logPaused && isVisible()) pollLogs(false); }, 4000);
+  }
+  function closeLogs() {
+    logsOverlay.classList.remove("is-open");
+    if (ctx.logPoll) { clearInterval(ctx.logPoll); ctx.logPoll = null; }
+    ctx.logRow = null;
+  }
+  function toggleLogPause() {
+    ctx.logPaused = !ctx.logPaused;
+    logPauseBtn.textContent = ctx.logPaused ? "▶ resume" : "⏸ pause";
+    logPauseBtn.classList.toggle("is-on", ctx.logPaused);
+  }
+  async function pollLogs(first) {
+    const row = ctx.logRow; if (!row) return;
+    let lines;
+    try { lines = await ctx.client.logs(ctx.bgId, row.envId, row.id); }
+    catch (e) { if (first) { logBody.innerHTML = ""; logBody.append(el("div.ap-logs-empty.is-err", { text: errMsg(e) })); } return; }
+    if (ctx.logRow !== row) return;   // 切替後の遅延レスポンスは破棄
+    let added = 0;
+    for (const ln of lines) {
+      const key = ln.docId || `${ln.ts}-${ln.msg}`;
+      if (ctx.logSeen.has(key)) continue;
+      ctx.logSeen.add(key); ctx.logLines.push(ln); added++;
+    }
+    if (added || first) { ctx.logLines.sort((a, b) => (a.ts || 0) - (b.ts || 0)); renderLogs(); }
+  }
+  function renderLogs() {
+    const atBottom = logBody.scrollHeight - logBody.scrollTop - logBody.clientHeight < 48;
+    const lines = ctx.logLines.filter(ln =>
+      (ctx.logFilter === "ALL" || (ln.level || "").toUpperCase() === ctx.logFilter) &&
+      (!ctx.logSearch || (ln.msg || "").toLowerCase().includes(ctx.logSearch) || (ln.logger || "").toLowerCase().includes(ctx.logSearch)));
+    logBody.innerHTML = "";
+    if (!lines.length) {
+      logBody.append(el("div.ap-logs-empty", { text: ctx.logLines.length ? "no lines match filter" : "no recent logs (このアプリは直近ログが空の可能性)" }));
+      return;
+    }
+    for (const ln of lines) logBody.append(el("div.ap-log", {},
+      el("span.ap-log-ts", { text: fmtTime(ln.ts) }),
+      el("span", { class: `ap-log-lv ${(ln.level || "").toUpperCase()}`, text: ln.level || "" }),
+      el("span.ap-log-msg", {}, ln.logger ? el("span.ap-log-lg", { text: `[${ln.logger}] ` }) : null, ln.msg || ""),
+    ));
+    if (atBottom) logBody.scrollTop = logBody.scrollHeight;
   }
 
   // ─── auto-refresh ──────────────────────────────────────────

@@ -127,6 +127,26 @@ export class AnypointClient {
     return arr.map(t => ({ id: t.id, name: t.name, type: t.type, status: t.status }));
   }
 
+  // アプリログ (RTF + CH2 共通)。`/specs/{specId}/logs` は **直近 ~10 件固定** で返る
+  // (limit/tail パラメータは無効)。tail はこれを poll して docId で dedup・追記する。
+  // specId 省略時は最新 spec (createdAt 最大) を解決して使う。
+  async logs(orgId, envId, deploymentId, specId) {
+    let sid = specId;
+    if (!sid) {
+      const specs = await this.specs(orgId, envId, deploymentId);
+      const arr = Array.isArray(specs) ? specs : (specs?.items || specs?.data || []);
+      arr.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      sid = arr[0]?.version;
+      if (!sid) return [];
+    }
+    const j = await this._get(`${AMC}/organizations/${orgId}/environments/${envId}/deployments/${deploymentId}/specs/${sid}/logs`);
+    const arr = Array.isArray(j) ? j : (j?.items || j?.data || []);
+    return arr.map(e => ({
+      docId: e.docId, ts: e.timestamp, level: e.logLevel || "",
+      msg: e.message || "", replicaId: e.replicaId || "", logger: e.context?.logger || "",
+    }));
+  }
+
   // ── 書き込み操作 ─────────────────────────────────────────
   // !! confirm + prod ガードは UI 側の責務。ここは API 機構だけ。
   // !! CH2/RTF の Application Manager v2 には専用 "restart" verb が無い。
