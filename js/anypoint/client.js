@@ -180,10 +180,19 @@ export class AnypointClient {
           label: inst.instanceLabel || "", contracts: inst.activeContractsCount ?? null,
           applicationId: inst.deployment?.applicationId || "", targetId: inst.deployment?.targetId || "",
           autodiscoveryName: inst.autodiscoveryInstanceName || "",
+          endpointUri: inst.endpointUri || "",   // mule4/llm 等は直接 backend URL を持つ
         });
       }
     }
     return out;
+  }
+
+  // API instance の backend (upstream) URL を解決。flexGateway は routing の upstream が
+  // ID 参照なので /apis/{id}/upstreams で URL を引く。endpointUri があればそちらが直接の backend。
+  async apiUpstreams(orgId, envId, apiId) {
+    const j = await this._get(`apimanager/api/v1/organizations/${orgId}/environments/${envId}/apis/${apiId}/upstreams`);
+    const arr = Array.isArray(j) ? j : (j?.upstreams || j?.data || []);
+    return arr.map(u => u.uri || u.url).filter(Boolean);
   }
 
   // ── 書き込み操作 ─────────────────────────────────────────
