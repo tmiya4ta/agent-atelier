@@ -12,6 +12,8 @@ import { modalConfirm, modalAlert, modalPrompt, modalChoice, modalBusinessGroup,
 import { encryptText, decryptText }          from "./cryptobox.js";
 import { runAuthCodeFlow, redirectUri }     from "./oauth.js";
 import { parseScript, parseMocks, ScriptRunner }        from "./script.js";
+import { AnypointClient }                    from "./anypoint/client.js";
+import { mountAnypointConsole }              from "./anypoint/console.js";
 
 // /demo用のフォールバック (ブックマーク0件の時のみ使用)
 const DEMO_AGENTS = [
@@ -243,6 +245,7 @@ function init() {
   wireRail();
   wireSideRail();
   wirePanelCollapse();
+  wireAnypointConsole();
   wireTools();
   wireIdentityDialog();
   wireDialog();
@@ -410,6 +413,7 @@ function selectSideCat(cat) {
   $$(".side-panel .side-cat").forEach(p => {
     p.hidden = p.dataset.cat !== cat;
   });
+  if (cat === "platform" && _apConsole) _apConsole.onShow();
   dirty();
 }
 function isPanelCollapsed() { return document.body.classList.contains("is-panel-collapsed"); }
@@ -441,6 +445,24 @@ function wirePanelCollapse() {
   try { if (localStorage.getItem("atelier:panelCollapsed") === "1") document.body.classList.add("is-panel-collapsed"); } catch {}
   const btn = $("#panelCollapseBtn");
   if (btn) btn.addEventListener("click", () => setPanelCollapsed(!isPanelCollapsed()));
+}
+
+// ─── Anypoint console (Platform mode) の配線 ──────────────
+// 自己完結モジュールに DOM コンテナを渡してマウントするだけ。token 取得と control-plane
+// base は identity からここで注入する (console モジュールは app の state を知らない)。
+let _apConsole = null;
+function wireAnypointConsole() {
+  const railPanel = $('.side-cat[data-cat="platform"]');
+  const stage     = $("#anypointConsole");
+  if (!railPanel || !stage) return;
+  _apConsole = mountAnypointConsole({
+    railPanel, stage,
+    identities: () => state.identities || [],
+    makeClient: (idn) => new AnypointClient({
+      getToken: () => ensureIdentityToken(idn, { rethrow: true }),
+      base:     controlPlaneBase(idn),
+    }),
+  });
 }
 
 // base64url ヘルパ
