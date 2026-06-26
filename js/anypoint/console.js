@@ -82,6 +82,12 @@ function fmtTime(ts) {
   const d = new Date(Number(ts)); const p = n => String(n).padStart(2, "0");
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
+// upstream/backend URL → backend app 名 (host 先頭ラベルから末尾の -shard を剥がす)。
+// 例: https://theorems-relay-23fgzd.pnwfdv.jpn-e1.cloudhub.io/snowapp/ → "theorems-relay"
+function hostApp(url) {
+  try { return new URL(url).host.split(".")[0].replace(/-[a-z0-9]+$/i, ""); }
+  catch { return ""; }
+}
 
 // ─── スタイル (1 回だけ注入・app のテーマ変数を流用 = dark 自動追従) ──
 let _styled = false;
@@ -518,23 +524,33 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
       specRow.append(el("span.ap-lin-v.dim", { text: "— pom 依存に API spec なし" }));
     }
     box.append(specRow);
-    // 3) API Manager (env の API instance 一覧 + soft match)
+    // 3) API Manager (env の API instance) + upstream(backend) 解決で proxy↔deploy を実突合
     try {
       let apis = ctx.apiCache.get(row.envId);
       if (!apis) { apis = await ctx.client.apiInstances(ctx.bgId, row.envId); ctx.apiCache.set(row.envId, apis); }
+      // 各 instance の backend URL を解決 (endpointUri 優先・無ければ upstreams)。結果は cache。
+      await Promise.all(apis.map(async (a) => {
+        if (a._backends) return;
+        if (a.endpointUri) { a._backends = [a.endpointUri]; return; }
+        try { a._backends = await ctx.client.apiUpstreams(ctx.bgId, row.envId, a.id); }
+        catch { a._backends = []; }
+      }));
       if (ctx.selId !== row.id) return;
-      const isMatch = (a) => a.applicationId === row.id
-        || (a.targetId && a.targetId === row.targetId)
+      const backendApp = (a) => { for (const u of (a._backends || [])) { const n = hostApp(u); if (n) return n; } return ""; };
+      const isMatch = (a) => backendApp(a) === row.name
+        || a.applicationId === row.id
         || (a.autodiscoveryName && a.autodiscoveryName === row.name);
       const matched = apis.filter(isMatch).length;
       box.append(el("div.ap-lin", {}, el("span.ap-lin-k", { text: "API Mgr" }),
-        el("span.ap-lin-v.dim", { text: `${apis.length} API${apis.length === 1 ? "" : "s"} in ${row.envName}${matched ? ` · ${matched} matched` : ""}` })));
-      for (const a of apis) {
+        el("span.ap-lin-v.dim", { text: `${apis.length} API${apis.length === 1 ? "" : "s"} in ${row.envName}${matched ? ` · ${matched} → here` : ""}` })));
+      // このデプロイに向く instance を先頭に
+      for (const a of [...apis.filter(isMatch), ...apis.filter(a => !isMatch(a))]) {
+        const ba = backendApp(a);
         box.append(el("div", { class: "ap-api" + (isMatch(a) ? " is-match" : "") },
           el("span", { class: `ap-dot ${/deployed|active/i.test(a.status) ? "ok" : "idle"}` }),
           el("span.ap-api-name", { text: `${a.specName}:${a.specVersion}` }),
           exLink(ctx.client.exchangeUrl(a.specGroupId, a.specAssetId, a.specVersion)),
-          el("span.ap-api-meta", { text: `${a.technology}${a.status ? " · " + a.status : ""}${a.contracts != null ? " · " + a.contracts + "c" : ""}` })));
+          el("span.ap-api-meta", { text: `${a.technology}${ba ? " · → " + ba : ""}${a.contracts != null ? " · " + a.contracts + "c" : ""}` })));
       }
     } catch (e) {
       box.append(el("div.ap-note.is-err", { text: "API Manager: " + errMsg(e) }));
