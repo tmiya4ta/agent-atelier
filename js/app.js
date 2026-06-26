@@ -99,6 +99,11 @@ const state = {
   sidePanelW: 240        // CONNECTIONS パネル領域の幅 (px)。 右端ドラッグで可変
 };
 
+// Anypoint console (Platform mode) のコントローラ。init() が module 評価の早い段階で
+// 呼ばれ、その中の wireAnypointConsole() がこれに代入するため、init() より前に宣言する
+// (後方で let 宣言すると TDZ で "can't access before initialization" になる)。
+let _apConsole = null;
+
 function defaultScriptPanelHeight() {
   return Math.round(window.innerHeight * 0.5);
 }
@@ -245,7 +250,8 @@ function init() {
   wireRail();
   wireSideRail();
   wirePanelCollapse();
-  wireAnypointConsole();
+  // Platform console は使い捨て add-on。失敗してもコア atelier を巻き込まないよう隔離する。
+  try { wireAnypointConsole(); } catch (e) { console.error("[anypoint] console wiring failed:", e); }
   wireTools();
   wireIdentityDialog();
   wireDialog();
@@ -450,7 +456,8 @@ function wirePanelCollapse() {
 // ─── Anypoint console (Platform mode) の配線 ──────────────
 // 自己完結モジュールに DOM コンテナを渡してマウントするだけ。token 取得と control-plane
 // base は identity からここで注入する (console モジュールは app の state を知らない)。
-let _apConsole = null;
+// 注: _apConsole の宣言は init() より前 (state 直後) に置く。init() は module 評価の
+//     早い段階で呼ばれるので、ここで let 宣言すると TDZ で "before initialization" になる。
 function wireAnypointConsole() {
   const railPanel = $('.side-cat[data-cat="platform"]');
   const stage     = $("#anypointConsole");
