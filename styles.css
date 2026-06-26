@@ -3942,6 +3942,8 @@ body.is-dark .dbg-body {
 }
 .set-rawtoken-field:hover .set-rawtoken-copy,
 .set-rawtoken-copy:focus-visible { opacity: 1; }
+/* identity 由来の表示専用トークン (1 行 input) は copy が主操作なので常時表示 */
+.set-rawtoken-field:has(input[readonly].set-input-rawtoken) .set-rawtoken-copy { opacity: 1; }
 .set-rawtoken-copy:hover { color: var(--accent-ink); border-color: var(--accent); background: var(--paper); }
 .set-rawtoken-copy.is-copied { opacity: 1; color: #14834A; border-color: #14834A; background: #E8F6EE; }
 /* 読み取り専用フィールド + hover コピーボタン (URL 等) */
