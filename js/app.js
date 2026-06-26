@@ -4097,12 +4097,16 @@ function applyProtoSpecificFields() {
   if (urlHint  && isDb) urlHint.textContent  = "clouderby (JDBC over HTTP) base URL";
   if (urlPrefix && isDb) urlPrefix.textContent = "url";
   if (nameField) nameField.hidden = isMock && !isEditing;
-  // AUTH(identity) はコネクション単位では持たない。A2A/MCP は per-window (window settings)、
-  // DB は inline user/password、Mock は不要。Slack だけ bot token をコネクションに紐付ける。
-  if (authField) authField.hidden = !isSlack;
+  // AUTH(identity): Slack は bot token をコネクションに紐付ける。A2A/MCP は
+  // コネクション自体は URL のみ (per-window) だが、 test ボタンが 401 回避のために
+  // identity を選べるよう欄を出す (新規作成時は最初の window の AUTH も兼ねる)。
+  // Mock は不要、DB は inline user/password。
+  if (authField) authField.hidden = isMock || isDb;
+  const authHint = authField?.querySelector(".field-hint");
+  if (authHint) authHint.textContent = isSlack ? "identity (bot token)" : "test / 最初の window で使う identity";
   // auth を隠したら display name を全幅に (field-row を 1 カラムへ)
   const nameRowEl = $("#dlgName")?.closest(".field-row");
-  if (nameRowEl) nameRowEl.classList.toggle("is-single", !isSlack);
+  if (nameRowEl) nameRowEl.classList.toggle("is-single", isMock || isDb);
   if (testBtn)   testBtn.hidden   = isMock;            // DB は接続(session)テスト可
   if (advanced)  advanced.hidden  = isMock || isDb;
 
