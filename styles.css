@@ -2099,6 +2099,17 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
 .bookmark-child .bc-remove { flex: 0 0 auto; }
 .bookmark-child:hover .bc-branch { color: var(--accent); }
 .bc-id     { color: var(--accent-ink); font-weight: 600; letter-spacing: 0.02em; }
+/* 閉じた窓スロット: config は残っているがウインドウは無い状態 (薄く表示) */
+.bookmark-child.is-closed { opacity: 0.62; }
+.bookmark-child.is-closed .bc-id { color: var(--ink-4); font-weight: 400; }
+.bookmark-child.is-closed:hover { opacity: 1; }
+.bc-closed-tag {
+  margin-left: 6px;
+  font-size: calc(9px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
 .bc-name   { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -0.005em; }
 .bookmark-child:hover .bc-name { color: var(--ink); }
 .bc-ws {
@@ -3910,23 +3921,26 @@ body.is-dark .dbg-body {
 
 /* manual token col: textarea + decode button */
 .set-rawtoken-col { display: flex; flex-direction: column; gap: 6px; align-items: stretch; min-width: 0; }
-.set-rawtoken-actions { display: flex; gap: 6px; justify-content: flex-end; }
+/* decode / copy を欄の右上にまとめて並べる */
+.set-rawtoken-btns { position: absolute; top: 6px; right: 6px; z-index: 1; display: flex; gap: 4px; }
+/* ボタンと文字が重ならないよう右側に余白 */
+.set-rawtoken-field .set-input-rawtoken { padding-right: 108px; }
 .set-decode-btn {
-  padding: 3px 10px;
+  padding: 1px 7px;
   font-family: var(--f-mono);
-  font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--ink-3);
-  background: var(--panel);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
   border: 1px solid var(--line);
   border-radius: 4px;
   cursor: pointer;
 }
-.set-decode-btn:hover { color: var(--accent-ink); border-color: var(--accent); }
+.set-decode-btn:hover { color: var(--accent-ink); border-color: var(--accent); background: var(--paper); }
 /* raw token textarea 内のコピーボタン (hover で出現、 chat の copy と同じ) */
 .set-rawtoken-field { position: relative; }
 .set-rawtoken-copy {
-  position: absolute;
-  top: 6px; right: 6px; z-index: 1;
   padding: 1px 7px;
   font-family: var(--f-mono);
   font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1));

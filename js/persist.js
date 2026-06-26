@@ -141,6 +141,9 @@ export function save(state) {
       // 「閉じても残るコネクション登録」。 各 entry は { key, protoId, url, name, persona?, channel? }
       // (auth/secret は sessionStorage 側)。
       bookmarks: sanitizedBookmarks,
+      // 閉じた window スロット (名前+authRef 等の config のみ。secret は含まない)。
+      // window を閉じても設定を失わず、再オープンできるようにする。
+      closedWindows: (state.closedWindows || []).map(stripSecrets),
       activeWsIdx: Math.max(0, state.workspaces.findIndex(w => w.id === state.activeWs)),
       workspaces: state.workspaces.map(ws => ({
         name: ws.name,

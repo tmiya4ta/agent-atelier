@@ -1508,10 +1508,10 @@ export class AgentWindow {
                 // スクロールする複数行ボックスにはせず 1 行 (省略表示) + copy/decode のみ。
                 ? `<input class="set-input set-input-rawtoken" spellcheck="false" autocomplete="off" readonly value="${escapeHtml(tokenVal)}" />`
                 : `<textarea class="set-input set-input-rawtoken" rows="2" spellcheck="false" autocomplete="off" placeholder="paste a Bearer token…">${escapeHtml(tokenVal)}</textarea>`}
-              <button type="button" class="set-rawtoken-copy" hidden title="Copy token" aria-label="Copy token">copy</button>
-            </div>
-            <div class="set-rawtoken-actions">
-              <button type="button" class="set-decode-btn" hidden>decode JWT ▾</button>
+              <div class="set-rawtoken-btns">
+                <button type="button" class="set-decode-btn" hidden title="Decode JWT">decode</button>
+                <button type="button" class="set-rawtoken-copy" hidden title="Copy token" aria-label="Copy token">copy</button>
+              </div>
             </div>
           </div>
         </div>

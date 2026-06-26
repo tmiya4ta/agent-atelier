@@ -84,6 +84,10 @@ const state = {
   // 「コネクション登録」一覧。 ウインドウが 0 個になっても残り、 明示的な DELETE のみで消える。
   // entry = { key, protoId, url, name, auth?, persona?, channel? }
   bookmarks: [],
+  // 閉じた window の設定 (名前+AUTH 等) を残しておく「閉じた窓」スロット。
+  // window を閉じても config を失わず、サイドバーから再オープンできる。
+  // [{ id, protoId, url, name, authRef, persona, channel, emulate, mockTools, mockReply, database, user }]
+  closedWindows: [],
   scripts: [],        // [{ id, name, body, createdAt, updatedAt }]
   selectedScriptId: null,
   openScriptIds: [],  // panel に open しているタブの順序
@@ -189,6 +193,7 @@ function init() {
     state.catalogs         = (saved.catalogs || []).map(migrateCatalog);
     state.identities       = saved.identities || [];
     state.bookmarks        = saved.bookmarks || [];
+    state.closedWindows    = saved.closedWindows || [];
     // sessionStorage から secrets を引き戻す (持続中のタブのみ)
     persist.hydrateSecrets(state.catalogs, state.bookmarks, state.identities);
     idnCounter    = state.identities.reduce((m, i) => Math.max(m, parseInt(i.id?.split("-")[1] || 0)), 0);
@@ -208,6 +213,7 @@ function init() {
     state.catalogs  = (saved?.catalogs || []).map(migrateCatalog);
     state.identities = saved?.identities || [];
     state.bookmarks = saved?.bookmarks || [];
+    state.closedWindows = saved?.closedWindows || [];
     persist.hydrateSecrets(state.catalogs, state.bookmarks, state.identities);
     idnCounter    = state.identities.reduce((m, i) => Math.max(m, parseInt(i.id?.split("-")[1] || 0)), 0);
     state.scripts   = saved?.scripts   || [];
@@ -778,6 +784,8 @@ function upsertBookmark({ protoId, url, name, auth, authRef, persona, channel, e
 
 function removeBookmark(key) {
   state.bookmarks = (state.bookmarks || []).filter(b => b.key !== key);
+  // コネクション削除時はその「閉じた窓」スロットも消す
+  state.closedWindows = (state.closedWindows || []).filter(e => bookmarkKey(e.protoId, e.url) !== key);
   dirty();
 }
 
@@ -854,6 +862,8 @@ function renderBookmarks() {
 
   state.bookmarks.forEach(b => {
     const wins = winsByKey.get(b.key) || [];
+    // このコネクションに属する「閉じた窓」スロット (config は残っている)
+    const closed = (state.closedWindows || []).filter(e => bookmarkKey(e.protoId, e.url) === b.key);
     const hasMulti = wins.length > 1;
     if (state._connExpanded[b.key] === undefined) state._connExpanded[b.key] = false;
     const expanded = !!state._connExpanded[b.key];
@@ -864,14 +874,15 @@ function renderBookmarks() {
     const host = hostFromUrl(b.url) || b.url || "";
 
     const li = document.createElement("li");
-    const canExpand = wins.length > 0;
+    const childCount = wins.length + closed.length;   // 開+閉のスロット数
+    const canExpand = childCount > 0;
     li.className = "agent-item conn-group"
       + (canExpand ? " is-expandable" : "")
       + (expanded && canExpand ? " is-expanded" : "")
       + (wins.length > 0 ? " is-open" : " is-disconnected");
     li.title = wins.length
-      ? `${host}  ·  ${wins.length} window(s)`
-      : `${host}  ·  no open window — click + to open`;
+      ? `${host}  ·  ${wins.length} open${closed.length ? ` / ${closed.length} closed` : ""}`
+      : (closed.length ? `${host}  ·  ${closed.length} closed window(s) — クリックで再オープン` : `${host}  ·  no open window — click + to open`);
     li.draggable = true;
     li.dataset.bookmarkKey = b.key;
 
@@ -922,7 +933,7 @@ function renderBookmarks() {
       </button>
       <span class="conn-proto-badge${isMock ? ' is-mock' : ''}" data-proto="${escapeHtml(badgeProto)}" title="${escapeHtml(badgeTitle)}">${escapeHtml(protoLabel)}</span>
       <span class="agent-name">${escapeHtml(displayName)}</span>
-      <span class="bm-count" title="${wins.length} window(s)">${wins.length}</span>
+      <span class="bm-count" title="${wins.length} open${closed.length ? ` / ${closed.length} closed` : ""}">${childCount}</span>
       <button class="bookmark-new" title="${wins.length ? 'Open another window to the same agent' : 'Open a window'}" aria-label="new window">
         <svg viewBox="0 0 14 14" width="10" height="10"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
@@ -937,7 +948,7 @@ function renderBookmarks() {
           danger: true
         });
         if (!ok) return;
-        wins.forEach(({ win }) => win.close());
+        wins.forEach(({ win }) => { win._deleteSlot = true; win.close(); });   // 削除時はスロットも残さない
       }
       removeBookmark(b.key);
       renderBookmarks();
@@ -974,7 +985,7 @@ function renderBookmarks() {
     });
     root.appendChild(li);
 
-    if (wins.length > 0) {
+    if (childCount > 0) {
       const sub = document.createElement("li");
       sub.className = "bookmark-children" + (expanded ? "" : " is-collapsed");
       sub.dataset.connKey = b.key;
@@ -982,7 +993,7 @@ function renderBookmarks() {
       inner.className = "bm-children-inner";
       sub.appendChild(inner);
       wins.forEach(({ win, ws }, i) => {
-        const isLast = i === wins.length - 1;
+        const isLast = (i === wins.length - 1) && closed.length === 0;
         const isActiveWs = ws.id === state.activeWs;
         const btn = document.createElement("button");
         btn.type = "button";
@@ -992,14 +1003,14 @@ function renderBookmarks() {
           <span class="bc-branch">${isLast ? "└─" : "├─"}</span>
           <span class="bc-id">${win.id}</span>
           <span class="bc-name">${escapeHtml(windowDisplayName(win))}</span>
-          <button class="bc-remove" title="Disconnect this window" aria-label="disconnect">
+          <button class="bc-remove" title="閉じる (設定はリストに残す)" aria-label="close">
             <svg viewBox="0 0 12 12" width="8" height="8"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/><line x1="9.5" y1="2.5" x2="2.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/></svg>
           </button>
         `;
         btn.addEventListener("click", (e) => {
           if (e.target.closest(".bc-remove")) {
             e.stopPropagation();
-            win.close();
+            win.close();   // 設定は closedWindows に残る (再オープン可能)
             return;
           }
           // フォーカス (青く光る) した上で chat タブを表示する。
@@ -1010,6 +1021,33 @@ function renderBookmarks() {
             win.focus();
             win.switchTab("chat");
           }
+        });
+        inner.appendChild(btn);
+      });
+      // 閉じた窓スロット (config のみ。 クリックで再オープン、 × でリストから削除)
+      closed.forEach((entry, j) => {
+        const isLast = j === closed.length - 1;
+        const authIdn = entry.authRef ? identityById(entry.authRef) : null;
+        const authLbl = authIdn ? ` · ${escapeHtml(authIdn.name)}` : (entry.authRef ? " · auth" : "");
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "bookmark-child is-closed";
+        btn.title = `閉じた窓 — クリックで再オープン (${entry.name || entry.url || ""})`;
+        btn.innerHTML = `
+          <span class="bc-branch">${isLast ? "└─" : "├─"}</span>
+          <span class="bc-id">—</span>
+          <span class="bc-name">${escapeHtml(entry.name || hostFromUrl(entry.url) || "window")}<span class="bc-closed-tag">closed${authLbl}</span></span>
+          <button class="bc-remove bc-delete" title="リストから削除" aria-label="remove">
+            <svg viewBox="0 0 12 12" width="8" height="8"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/><line x1="9.5" y1="2.5" x2="2.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/></svg>
+          </button>
+        `;
+        btn.addEventListener("click", (e) => {
+          if (e.target.closest(".bc-remove")) {
+            e.stopPropagation();
+            removeClosedWindow(entry.id);
+            return;
+          }
+          reopenClosedWindow(entry);
         });
         inner.appendChild(btn);
       });
@@ -1024,7 +1062,9 @@ function renderBookmarks() {
   // Expand/collapse-all toggle button — show only when at least one connection has open windows
   const toggleAllBtn = $("#connToggleAll");
   if (toggleAllBtn) {
-    const expandable = state.bookmarks.filter(b => (winsByKey.get(b.key) || []).length > 0);
+    const expandable = state.bookmarks.filter(b =>
+      (winsByKey.get(b.key) || []).length > 0
+      || (state.closedWindows || []).some(e => bookmarkKey(e.protoId, e.url) === b.key));
     if (expandable.length === 0) {
       toggleAllBtn.hidden = true;
     } else {
@@ -6639,12 +6679,56 @@ function removeWindow(win) {
   const ws = state.workspaces.find(w => w.id === win._wsId);
   if (!ws) return;
   ws.windows = ws.windows.filter(w => w !== win);
+  // window を閉じても設定 (名前+AUTH 等) は「閉じた窓」スロットとして残す。
+  // (=表示/非表示と設定の有無を分離。再オープン時に名前/AUTH を入れ直さずに済む)
+  if (!win._deleteSlot) saveClosedWindow(win);
   recomputeInstanceSuffixes();   // 窓を閉じたら残りの連番を詰め直す
   renderTabs();
   renderBookmarks();   // bookmark tree からも除外
   updateStatusLine();
   updateEmptyState();
   dirty();
+}
+
+// 閉じた window の config をスロットとして保存する (secret は持たない。authRef のみ)。
+// id は live window の id と衝突しないよう固有 id を発番する。
+function saveClosedWindow(win) {
+  const c = win.adapter?.config || {};
+  if (!c.url && win.protoId !== "mock") return;
+  state.closedWindows = state.closedWindows || [];
+  state.closedWindows.push({
+    id: `cw-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`,
+    protoId: win.protoId,
+    url: c.url,
+    name: win.name,
+    authRef: c.authRef,
+    persona: c.persona, channel: c.channel,
+    emulate: c.emulate, mockTools: c.mockTools, mockReply: c.mockReply,
+    database: c.database, user: c.user
+  });
+}
+
+function removeClosedWindow(id) {
+  state.closedWindows = (state.closedWindows || []).filter(e => e.id !== id);
+  renderBookmarks();
+  dirty();
+}
+
+// 閉じた窓を再オープンする。 保存済み config (名前+AUTH 等) をそのまま使う。
+async function reopenClosedWindow(entry) {
+  state.closedWindows = (state.closedWindows || []).filter(e => e.id !== entry.id);
+  const ok = await connect({
+    protoId: entry.protoId, url: entry.url, name: entry.name,
+    authRef: entry.authRef, persona: entry.persona, channel: entry.channel,
+    emulate: entry.emulate, mockTools: entry.mockTools, mockReply: entry.mockReply,
+    database: entry.database, user: entry.user
+  }, { lockName: true });
+  if (ok === false) {
+    // 接続失敗 → スロットを戻して config を失わないようにする
+    state.closedWindows.push(entry);
+    renderBookmarks();
+    dirty();
+  }
 }
 
 // 連番サフィックス (#2 等) を全 window 横断で再計算する。
