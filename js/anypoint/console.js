@@ -154,6 +154,17 @@ table.ap-table { width:100%; border-collapse:collapse; font:500 12px var(--f-ui)
 .ap-replica { display:flex; align-items:center; gap:7px; padding:4px 0; font:500 11px var(--f-mono); color:var(--ink-2); }
 .ap-actions { padding:12px 16px; display:flex; gap:8px; flex-wrap:wrap; }
 
+.ap-lin { display:flex; gap:10px; padding:3px 0; font:500 12px var(--f-ui); align-items:baseline; }
+.ap-lin-k { flex:0 0 56px; color:var(--ink-3); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+.ap-lin-v { color:var(--ink); display:flex; align-items:center; gap:5px; flex-wrap:wrap; min-width:0; }
+.ap-lin-v.dim { color:var(--ink-3); }
+.ap-ex { color:var(--accent-ink); text-decoration:none; font-weight:700; }
+.ap-ex:hover { color:var(--accent); }
+.ap-api { display:flex; align-items:center; gap:7px; padding:3px 0 3px 56px; font:500 11px var(--f-ui); color:var(--ink-2); }
+.ap-api.is-match { background:var(--accent-soft); border-radius:var(--radius); padding:3px 8px; margin:1px 0 1px 48px; }
+.ap-api-name { font-family:var(--f-mono); font-size:11px; color:var(--ink); }
+.ap-api-meta { color:var(--ink-3); font-size:10px; margin-left:auto; white-space:nowrap; }
+
 .ap-logs { position:absolute; inset:0; z-index:3; display:none; flex-direction:column; background:var(--panel); }
 .ap-logs.is-open { display:flex; }
 .ap-logs-head { display:flex; align-items:center; gap:10px; padding:9px 14px; border-bottom:1px solid var(--line); background:var(--panel-soft); flex-wrap:wrap; }
@@ -192,6 +203,7 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
     filter: "", sort: { key: "name", dir: 1 },
     selId: null, busy: new Set(),
     logRow: null, logLines: [], logSeen: new Set(), logFilter: "ALL", logSearch: "", logPaused: false, logPoll: null,
+    apiCache: new Map(), assetCache: new Map(),   // lineage: env→API instances / asset→info
     poll: null, autoRefresh: false, loaded: false,
   };
 
@@ -431,6 +443,7 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
         el("div.ap-dr-sub", { text: `${row.envName} · ${tgt.kind || "?"} · ${tgt.name}` }),
       ),
       el("div.ap-sec", {}, el("h5", { text: "Overview" }), el("dl.ap-kv#ap-overview", {}, ...overviewKvs(row))),
+      el("div.ap-sec#ap-lineage", {}, el("h5", { text: "Lineage" }), el("div.ap-note", { text: "resolving…" })),
       el("div.ap-sec#ap-replicas", {}, el("h5", { text: "Replicas" }), el("div.ap-note", { text: "loading…" })),
       el("div.ap-sec#ap-specs", {}, el("h5", { text: "Specs (versions)" }),
         el("button.ap-btn", { text: "load specs", on: { click: ev => loadSpecs(row, ev.target) } })),
@@ -444,6 +457,7 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
     try {
       const det = await ctx.client.deployment(ctx.bgId, row.envId, row.id);
       row._raw = det._raw || row._raw;   // restart の PATCH body 用に最新 raw を退避
+      loadLineage(row, inner);           // asset/spec/API Manager の系譜を非同期で埋める
       const ov = $("#ap-overview", inner);
       if (ov) { ov.innerHTML = ""; overviewKvs(det).forEach(f => ov.append(f)); }
       const box = $("#ap-replicas", inner); if (!box) return;
@@ -468,6 +482,63 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
       kv("Resources", resource), kv("Version", r.version || "—"),
       kv("Clustered", r.clustered ? "yes" : "no"),
     ];
+  }
+
+  // ─── Lineage: 走ってるデプロイ → asset / spec / API Manager を 1 枚に ───
+  // Anypoint はこれらを画面跨ぎで散らすので、辿れるものを集約する (自動マッチに頼り切らない)。
+  function exLink(url) {
+    return el("a.ap-ex", { href: url, target: "_blank", rel: "noopener noreferrer", title: "Open in Exchange", text: "↗" });
+  }
+  async function loadLineage(row, inner) {
+    const box = $("#ap-lineage", inner); if (!box) return;
+    const ref = row._raw?.application?.ref;
+    box.innerHTML = ""; box.append(el("h5", { text: "Lineage" }));
+    // 1) deployed asset → Exchange (jar を展開せず中身/依存を見る入口)
+    if (ref?.artifactId) {
+      box.append(el("div.ap-lin", {}, el("span.ap-lin-k", { text: "asset" }),
+        el("span.ap-lin-v", {}, `${ref.artifactId}:${ref.version}`,
+          exLink(ctx.client.exchangeUrl(ref.groupId, ref.artifactId, ref.version)))));
+    }
+    // 2) spec via pom 依存 (Exchange asset の dependencies から)
+    let info;
+    if (ref?.artifactId) {
+      const key = `${ref.groupId}/${ref.artifactId}/${ref.version}`;
+      try {
+        info = ctx.assetCache.get(key) || await ctx.client.assetInfo(ref.groupId, ref.artifactId, ref.version);
+        ctx.assetCache.set(key, info);
+      } catch {}
+    }
+    if (ctx.selId !== row.id) return;   // 切替後の遅延描画を防ぐ
+    const specRow = el("div.ap-lin", {}, el("span.ap-lin-k", { text: "spec" }));
+    if (info?.specs?.length) {
+      const v = el("span.ap-lin-v");
+      info.specs.forEach(s => v.append(`${s.assetId}:${s.version}`, exLink(ctx.client.exchangeUrl(s.groupId, s.assetId, s.version))));
+      specRow.append(v);
+    } else {
+      specRow.append(el("span.ap-lin-v.dim", { text: "— pom 依存に API spec なし" }));
+    }
+    box.append(specRow);
+    // 3) API Manager (env の API instance 一覧 + soft match)
+    try {
+      let apis = ctx.apiCache.get(row.envId);
+      if (!apis) { apis = await ctx.client.apiInstances(ctx.bgId, row.envId); ctx.apiCache.set(row.envId, apis); }
+      if (ctx.selId !== row.id) return;
+      const isMatch = (a) => a.applicationId === row.id
+        || (a.targetId && a.targetId === row.targetId)
+        || (a.autodiscoveryName && a.autodiscoveryName === row.name);
+      const matched = apis.filter(isMatch).length;
+      box.append(el("div.ap-lin", {}, el("span.ap-lin-k", { text: "API Mgr" }),
+        el("span.ap-lin-v.dim", { text: `${apis.length} API${apis.length === 1 ? "" : "s"} in ${row.envName}${matched ? ` · ${matched} matched` : ""}` })));
+      for (const a of apis) {
+        box.append(el("div", { class: "ap-api" + (isMatch(a) ? " is-match" : "") },
+          el("span", { class: `ap-dot ${/deployed|active/i.test(a.status) ? "ok" : "idle"}` }),
+          el("span.ap-api-name", { text: `${a.specName}:${a.specVersion}` }),
+          exLink(ctx.client.exchangeUrl(a.specGroupId, a.specAssetId, a.specVersion)),
+          el("span.ap-api-meta", { text: `${a.technology}${a.status ? " · " + a.status : ""}${a.contracts != null ? " · " + a.contracts + "c" : ""}` })));
+      }
+    } catch (e) {
+      box.append(el("div.ap-note.is-err", { text: "API Manager: " + errMsg(e) }));
+    }
   }
   function kv(k, v) {
     // dl.ap-kv の grid (auto 1fr) を保つため、dt/dd を直接子にする fragment を返す。

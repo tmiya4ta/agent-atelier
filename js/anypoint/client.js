@@ -147,6 +147,45 @@ export class AnypointClient {
     }));
   }
 
+  // ── Lineage (デプロイ → asset / spec / API Manager) ──────
+  // Exchange ポータルの asset URL。
+  exchangeUrl(groupId, assetId, version) {
+    const v = version ? `${encodeURIComponent(version)}/` : "";
+    return `${this.base}/exchange/${groupId}/${assetId}/${v}`;
+  }
+
+  // 公開済み asset のメタ + 依存から spec 系を抽出 (jar 展開せず Exchange から)。
+  async assetInfo(groupId, assetId, version) {
+    const a = await this._get(`exchange/api/v2/assets/${groupId}/${assetId}/${version}`);
+    const SPEC = /rest-api|oas|raml|evented-api|api-spec|wsdl|http-api|soap-api|async-api/i;
+    return {
+      name: a.name || assetId, type: a.type || "", description: a.description || "",
+      dependencyCount: (a.dependencies || []).length,
+      specs: (a.dependencies || []).filter(d => SPEC.test(d.type || ""))
+        .map(d => ({ groupId: d.groupId, assetId: d.assetId, version: d.version, type: d.type })),
+    };
+  }
+
+  // API Manager の API instance 一覧 (各 spec asset 参照 + deployment binding)。
+  async apiInstances(orgId, envId) {
+    const j = await this._get(`apimanager/api/v1/organizations/${orgId}/environments/${envId}/apis?limit=100`);
+    const out = [];
+    for (const a of (j?.assets || [])) {
+      for (const inst of (a.apis || [])) {
+        out.push({
+          id: inst.id,
+          specGroupId: a.groupId, specAssetId: a.assetId,
+          specName: a.exchangeAssetName || a.assetId, specVersion: inst.assetVersion || "",
+          technology: inst.technology || "", status: inst.status || inst.deployment?.expectedStatus || "",
+          label: inst.instanceLabel || "", contracts: inst.activeContractsCount ?? null,
+          applicationId: inst.deployment?.applicationId || "", targetId: inst.deployment?.targetId || "",
+          autodiscoveryName: inst.autodiscoveryInstanceName || "",
+        });
+      }
+    }
+    return out;
+  }
+
   // ── 書き込み操作 ─────────────────────────────────────────
   // !! confirm + prod ガードは UI 側の責務。ここは API 機構だけ。
   // !! CH2/RTF の Application Manager v2 には専用 "restart" verb が無い。
