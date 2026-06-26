@@ -177,6 +177,11 @@ table.ap-table { width:100%; border-collapse:collapse; font:500 12px var(--f-ui)
 // ════════════════════════════════════════════════════════════
 export function mountAnypointConsole({ railPanel, stage, identities, makeClient }) {
   injectStyles();
+  // styles.css に [hidden]{display:none !important} があり、CSS の display:flex では
+  // 上書きできない。hidden 属性自体を外し、表示は .ap-console の display ルール
+  // (body[data-side-cat="platform"] で flex / それ以外 none) に委ねる。
+  stage.hidden = false;
+  stage.removeAttribute("hidden");
   stage.classList.add("ap-console");
 
   const ctx = {
