@@ -11,7 +11,7 @@
          (例: 6/1 の 2 回目 2026.6.12 と 6/12 の 1 回目 2026.6.12 が同一文字列になる)。
          Exchange は同 version 再 publish 不可・削除済みも再利用不可。
          使用済み: 1.0.32〜1.0.44, 2026.5.31, 2026.6.1。 ここから 1.1.x で再出発。 -->
-    <version>1.3.92</version>
+    <version>1.3.93</version>
     <packaging>mule-application</packaging>
 
     <name>atelier-static</name>
