@@ -46,7 +46,7 @@ export class MockAdapter extends ProtocolAdapter {
     const role = (this.config?.role || this.config?.description || "").trim();
     return {
       name,
-      description: role || `${name}。実通信はせず、台本 (Script Editor) のやりとりを再生します。`,
+      description: role || `${name}. No real communication — replays the Script Editor exchange.`,
       url: this.config?.url || `mock://${slug(name)}`,
       version: "1.0.0",
       provider: { organization: this.config?.org || "Atelier Demo" },
@@ -55,7 +55,7 @@ export class MockAdapter extends ProtocolAdapter {
       defaultOutputModes: ["text", "markdown"],
       skills: Array.isArray(this.config?.skills) && this.config.skills.length
         ? this.config.skills
-        : [{ id: "converse", name: "Converse", description: `${name} として応答`, tags: ["agent"] }]
+        : [{ id: "converse", name: "Converse", description: `Respond as ${name}`, tags: ["agent"] }]
     };
   }
 
@@ -98,7 +98,7 @@ export class MockAdapter extends ProtocolAdapter {
     // 案内する定型文を返す (どんな質問でも筋が通る)。無ければ汎用の受領応答。
     const reply = this.config?.mockReply
       ? String(this.config.mockReply).replace(/\\n/g, "\n")
-      : `**${name}** です。ご用件を承ります。`;
+      : `I'm **${name}**. How can I help you?`;
     this._emit("message", { role: "agent", text: reply, final: true });
 
     const rpcIn = {
@@ -115,10 +115,10 @@ export class MockAdapter extends ProtocolAdapter {
   _defaultTools() {
     const name = (this.config?.name || "data").trim();
     return [
-      { name: "query",  description: `${name} を照会する`,
-        inputSchema: { type: "object", properties: { q: { type: "string", description: "検索条件 / ID" } }, required: ["q"] } },
-      { name: "lookup", description: `${name} のレコードを ID で取得する`,
-        inputSchema: { type: "object", properties: { id: { type: "string", description: "レコード ID" } }, required: ["id"] } }
+      { name: "query",  description: `Query ${name}`,
+        inputSchema: { type: "object", properties: { q: { type: "string", description: "search criteria / ID" } }, required: ["q"] } },
+      { name: "lookup", description: `Fetch a ${name} record by ID`,
+        inputSchema: { type: "object", properties: { id: { type: "string", description: "record ID" } }, required: ["id"] } }
     ];
   }
 
@@ -165,7 +165,7 @@ export class MockAdapter extends ProtocolAdapter {
     // tool.mockResult が定義されていればそれを、無ければ汎用の echo 結果を返す。
     const resultObj = (tool && tool.mockResult !== undefined)
       ? tool.mockResult
-      : { ok: true, tool: name, arguments: args || {}, note: "(mock) 疑似結果です。" };
+      : { ok: true, tool: name, arguments: args || {}, note: "(mock) pseudo result." };
     const text = typeof resultObj === "string" ? resultObj : JSON.stringify(resultObj, null, 2);
     const result = { content: [{ type: "text", text }], isError: false };
 

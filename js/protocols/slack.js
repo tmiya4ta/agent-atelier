@@ -39,7 +39,7 @@ export class SlackAdapter extends ProtocolAdapter {
         defaultInputModes:  ["text", "mrkdwn"],
         defaultOutputModes: ["text", "mrkdwn"],
         skills: [
-          { id: "post-message", name: "chat.postMessage", description: "メッセージ投稿", tags: ["slack"] }
+          { id: "post-message", name: "chat.postMessage", description: "Post a message", tags: ["slack"] }
         ]
       };
       this.startedAt = Date.now();

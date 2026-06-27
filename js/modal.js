@@ -248,7 +248,7 @@ export function modalNewWindow({ title, defaultName, authOptions = [], defaultAu
           <input class="modal-input modal-nw-name" type="text" autocomplete="off" placeholder="window name" />
           <label class="modal-label modal-nw-authlabel">AUTH</label>
           <select class="modal-input modal-nw-auth" aria-label="auth">${optsHtml}</select>
-          <span class="modal-hint">identity を選ぶと Bearer トークンを自動付与 (manual = 認証なし / 手入力)</span>
+          <span class="modal-hint">Pick an identity to auto-attach a Bearer token (manual = no auth / enter by hand)</span>
         </div>
         <footer class="modal-foot">
           <div class="modal-foot-actions">
