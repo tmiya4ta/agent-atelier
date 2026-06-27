@@ -271,12 +271,15 @@ export class AnypointClient {
     } catch (e) { return { endpoints: [], note: `spec fetch failed @${host}: ${e?.message || e}` }; }
     if (!res.ok) {
       const b = String(text).replace(/<[^>]+>/g, " ").trim();
-      // proxy の "Illegal character in query at index N: <url>" から該当文字を抽出して見せる
-      // (どの文字が引っかかってるか確定させ、proxy 側の encode 対象に足すため)。
-      let extra = "";
-      const m = b.match(/index (\d+):\s*(\S+)/);
-      if (m) { const ch = (m[2] || "")[Number(m[1])]; if (ch) extra = `  ◆char@${m[1]}="${ch}" U+${ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0")}`; }
-      return { endpoints: [], note: `[${pick.classifier}] ${host} HTTP ${res.status}: ${b.slice(0, 110)}${extra}` };
+      // proxy の "Illegal character in query at index N: <url>" から該当文字を抽出して **先頭に** 出す
+      // (どの文字が弾かれてるか確定させ、proxy の encode 対象に足すため。URL は長く切れるので char を前に)。
+      let head = "";
+      const m = b.match(/index (\d+):\s*([\s\S]+)/);   // url は空白も含めて全部捕捉
+      if (m) {
+        const idx = Number(m[1]); const ch = (m[2] || "")[idx];
+        if (ch != null) head = `◆ FAILING CHAR @${idx} = "${ch}" (U+${ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0")}) — `;
+      }
+      return { endpoints: [], note: `${head}[${pick.classifier}] HTTP ${res.status}: ${b.slice(0, 120)}` };
     }
     let doc; try { doc = JSON.parse(text); }
     catch { return { endpoints: [], note: `non-JSON spec @${host} (${pick.classifier}/${pick.packaging}) — JSON OAS のみ対応` }; }
