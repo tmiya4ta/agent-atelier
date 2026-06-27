@@ -162,14 +162,17 @@ output application/json
                     <choice>
                         <when expression="#[(attributes.statusCode >= 300) and (attributes.statusCode &lt; 400) and (attributes.headers['location'] != null)]">
                             <!-- redirect 先 URL を Java-URI-safe に (Exchange の Location が
-                                 { } | 等を生で含むと http:request が 502 になるため %-encode) -->
+                                 { } | space 等を生で含むと http:request が "Illegal character" で 502)。
+                                 該当文字のみ %-encode。エンコードは inline (SsrfGuard モジュールに
+                                 入れると import 全体を壊しうるため、blast radius を try 配下に限定)。 -->
                             <ee:transform>
                                 <ee:variables>
                                     <ee:set-variable variableName="redirectUrl"><![CDATA[%dw 2.0
-import dw::SsrfGuard
 output application/java
+var loc = (attributes.headers['location'] default "") as String
+var bad = [[" ","%20"],["\"","%22"],["<","%3C"],[">","%3E"],["{","%7B"],["}","%7D"],["|","%7C"],["\\","%5C"],["^","%5E"],["`","%60"],["[","%5B"],["]","%5D"]
 ---
-SsrfGuard::uriSafe(attributes.headers['location'] default "")]]></ee:set-variable>
+bad reduce ((p, acc = loc) -> (acc splitBy p[0]) joinBy p[1])]]></ee:set-variable>
                                 </ee:variables>
                             </ee:transform>
                             <!-- redirect 先にも SSRF ガード (allowlisted host が内部へ飛ばす経路を遮断) -->
