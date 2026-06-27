@@ -161,7 +161,17 @@ output application/json
                     <!-- 3xx の時は Location に Authorization 無しで再リクエスト (S3 presigned URL 対応) -->
                     <choice>
                         <when expression="#[(attributes.statusCode >= 300) and (attributes.statusCode &lt; 400) and (attributes.headers['location'] != null)]">
-                            <set-variable variableName="redirectUrl" value="#[attributes.headers['location']]"/>
+                            <!-- redirect 先 URL を Java-URI-safe に (Exchange の Location が
+                                 { } | 等を生で含むと http:request が 502 になるため %-encode) -->
+                            <ee:transform>
+                                <ee:variables>
+                                    <ee:set-variable variableName="redirectUrl"><![CDATA[%dw 2.0
+import dw::SsrfGuard
+output application/java
+---
+SsrfGuard::uriSafe(attributes.headers['location'] default "")]]></ee:set-variable>
+                                </ee:variables>
+                            </ee:transform>
                             <!-- redirect 先にも SSRF ガード (allowlisted host が内部へ飛ばす経路を遮断) -->
                             <ee:transform>
                                 <ee:variables>

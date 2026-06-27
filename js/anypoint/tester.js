@@ -58,8 +58,9 @@ function injectStyles() {
   const css = `
 /* 埋め込み型: overlay ではなく親 flex-column を満たす block (アコーディオン / 列に差す) */
 .ap-test { display:flex; flex-direction:column; flex:1 1 auto; min-height:0; background:var(--paper); }
-.ap-test-head { display:flex; flex-direction:column; gap:8px; padding:10px 14px; border-bottom:1px solid var(--line); background:var(--panel); }
-.ap-test-r1 { display:flex; align-items:center; gap:12px; }
+.ap-test-head { display:flex; flex-direction:column; gap:8px; padding:9px 14px; border-bottom:1px solid var(--line); background:var(--paper-2,var(--paper)); }
+.ap-test-r1 { display:flex; align-items:center; gap:10px; }
+.ap-test-lead { font:700 calc(10px*var(--fs,1)) var(--f-ui); letter-spacing:.08em; color:var(--accent-ink); flex:0 0 auto; }
 .ap-test-title { font:700 calc(14px*var(--fs,1)) var(--f-display); color:var(--ink); display:flex; align-items:center; gap:8px; min-width:0; }
 .ap-test-title .sub { font:500 calc(11px*var(--fs,1)) var(--f-ui); color:var(--ink-3); }
 .ap-test-tabs { display:flex; gap:4px; }
@@ -182,10 +183,13 @@ export function createTester({ getContext, onClose } = {}) {
     on: { input: e => { customAuth.key = e.target.value; } } });
   const authVal = el("input.ap-test-akv", { type: "text", placeholder: "value",
     on: { input: e => { customAuth.val = e.target.value; } } });
+  // タイトルは出さない (アコーディオン側 detail / explorer 列が APP 名を持つので重複回避)。
+  // ヘッダは「型タブ + base URL + AUTH」だけのスリムな操作行にする。
   const head = el("div.ap-test-head", {},
-    el("div.ap-test-r1", {}, titleEl, el("span.ap-spacer", { style: { flex: "1" } }), tabsEl,
-      el("button.ap-test-x", { text: "×", on: { click: close } })),
-    el("div.ap-test-r2", {}, urlEl, authSel, authKey, authVal));
+    el("div.ap-test-r1", {}, el("span.ap-test-lead", { text: "▶ TEST" }), tabsEl, urlEl),
+    el("div.ap-test-r2", {}, authSel, authKey, authVal,
+      el("span.ap-spacer", { style: { flex: "1" } }),
+      el("button.ap-test-x", { text: "×", title: "close", on: { click: close } })));
   const bodyEl = el("div.ap-test-body");
   const root = el("div.ap-test", {}, head, bodyEl);
 
