@@ -107,7 +107,7 @@ export function createExplorer({ stage, getContext, getDeployments, makeTester, 
     if (spec && spec.deployment && resolveTest) {
       const row = spec.deployment;
       const t = await resolveTest(row);
-      s = { type: t.type, baseUrl: t.baseUrl, oas: t.oas, title: row.name || row.id, sub: `lineage · ${t.type}` };
+      s = { type: t.type, baseUrl: t.baseUrl, oas: t.oas, loadEndpoints: t.loadEndpoints, title: row.name || row.id, sub: `lineage · ${t.type}` };
     }
     if (!makeTester) return;
     if (!_tester) {
