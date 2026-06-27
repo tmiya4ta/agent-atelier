@@ -24,7 +24,7 @@
     </http:request-config>
 
     <flow name="proxy-flow">
-        <http:listener config-ref="http-listener-config" path="/proxy" allowedMethods="GET,POST,PUT,DELETE,OPTIONS">
+        <http:listener config-ref="http-listener-config" path="/proxy" allowedMethods="GET,POST,PUT,PATCH,DELETE,OPTIONS">
             <http:response statusCode="#[vars.proxyStatus default 200]">
                 <http:headers><![CDATA[#[vars.proxyHeaders default {}]]]></http:headers>
             </http:response>
