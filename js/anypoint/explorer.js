@@ -84,13 +84,16 @@ function injectStyles() {
 .ap-exp-filter { width:100%; padding:5px 9px; margin:8px 14px; box-sizing:border-box; width:calc(100% - 28px); font:500 calc(12px*var(--fs,1)) var(--f-ui); color:var(--ink); background:var(--paper); border:1px solid var(--line); border-radius:var(--radius); }
 .ap-note2 { padding:10px 14px; font:500 calc(11px*var(--fs,1)) var(--f-ui); color:var(--ink-3); }
 .ap-note2.is-err { color:var(--warn); }
+.ap-exp-acts { padding:8px 14px; display:flex; gap:6px; flex-wrap:wrap; border-top:1px solid var(--line-3); }
+.ap-exp-act { padding:5px 12px; font:700 calc(11px*var(--fs,1)) var(--f-ui); color:var(--accent-ink); background:var(--accent-soft); border:1px solid var(--accent); border-radius:var(--radius); cursor:pointer; }
+.ap-exp-act:hover { background:var(--accent); color:var(--you-ink); }
 `;
   document.head.appendChild(el("style#anypoint-explorer-styles", {}, css));
   $("#anypoint-explorer-styles").textContent = css;
 }
 
 // ════════════════════════════════════════════════════════════
-export function createExplorer({ stage, getContext, getDeployments }) {
+export function createExplorer({ stage, getContext, getDeployments, openTester }) {
   injectStyles();
   const cache = new Map();
   const cached = (k, fn) => cache.has(k) ? cache.get(k) : (cache.set(k, fn()), cache.get(k));
@@ -139,16 +142,20 @@ export function createExplorer({ stage, getContext, getDeployments }) {
       if (ref?.artifactId) {
         facts.push(["asset", `${ref.artifactId}:${ref.version}`, client.exchangeUrl(ref.groupId, ref.artifactId, ref.version)]);
         const info = await cached(`asset:${ref.groupId}/${ref.artifactId}/${ref.version}`, () => client.assetInfo(ref.groupId, ref.artifactId, ref.version));
-        relations.push({ label: "spec (実装)", items: (info.specs || []).map(specNode), note: (info.specs || []).length ? "" : "pom 依存に API spec なし" });
+        const specTypes = (info.specs || []).map(s => s.type).filter(Boolean);
+        if (specTypes.length) facts.push(["spec type", [...new Set(specTypes)].join(", ")]);
+        relations.push({ label: "spec (impl)", items: (info.specs || []).map(specNode), note: (info.specs || []).length ? "" : "no API spec in pom dependencies" });
       }
-      return { facts, relations };
+      // この deployment を即テスト (型は console 側で判定して開く)。
+      const actions = openTester ? [{ label: "▶ Test", run: () => openTester({ deployment: row }) }] : [];
+      return { facts, relations, actions };
     }
     if (node.type === "spec") {
       const [g, a, v] = node.id.split("|");
-      const facts = [["type", "rest-api"], ["version", v], ["Exchange", "開く ↗", client.exchangeUrl(g, a, v)]];
+      const facts = [["type", "rest-api"], ["version", v], ["Exchange", "open ↗", client.exchangeUrl(g, a, v)]];
       const apis = await cached(`apis:${envId}`, () => client.apiInstances(orgId, envId));
       const users = apis.filter(x => x.specAssetId === a);
-      return { facts, relations: [{ label: "使っている API instance", items: users.map(instNode), note: users.length ? "" : "この spec を使う instance なし" }] };
+      return { facts, relations: [{ label: "API instances using this", items: users.map(instNode), note: users.length ? "" : "no instance uses this spec" }] };
     }
     if (node.type === "instance") {
       const det = await cached(`inst:${node.id}`, () => client.apiInstance(orgId, envId, node.id));
@@ -162,12 +169,12 @@ export function createExplorer({ stage, getContext, getDeployments }) {
         if (gw.publicUrl) consumer = gw.publicUrl + (det.basePath === "/" ? "/" : det.basePath);
         relations.push({ label: "gateway", items: [gwNode(gw)] });
       } else {
-        facts.push(["FGW", "未配備"]);
+        facts.push(["FGW", "not deployed"]);
       }
       if (det.backend) {
         const app = hostApp(det.backend);
         const dep = getDeployments().find(d => d.name === app);
-        relations.push({ label: "backend (実装)", items: dep ? [depNode(dep)] : [], note: dep ? "" : `外部 backend: ${app || det.backend}` });
+        relations.push({ label: "backend (impl)", items: dep ? [depNode(dep)] : [], note: dep ? "" : `external backend: ${app || det.backend}` });
       }
       return { facts, relations, consumer };
     }
@@ -176,7 +183,7 @@ export function createExplorer({ stage, getContext, getDeployments }) {
       const facts = [["name", gw.name], ["public URL", gw.publicUrl || "—", null, true], ["port", gw.port ?? "—"], ["runtime", gw.targetName || gw.targetId || "—"]];
       const apis = await cached(`apis:${envId}`, () => client.apiInstances(orgId, envId));
       const here = apis.filter(x => x.targetId === gw.id);
-      return { facts, relations: [{ label: "配備された API instance", items: here.map(instNode), note: here.length ? "" : "配備された instance なし" }] };
+      return { facts, relations: [{ label: "deployed API instances", items: here.map(instNode), note: here.length ? "" : "no deployed instance" }] };
     }
     return { facts: [], relations: [] };
   }
@@ -190,7 +197,7 @@ export function createExplorer({ stage, getContext, getDeployments }) {
         el("div.ap-col-s", { text: node.sub || t.n })));
     const body = el("div.ap-note2", { text: "resolving…" });
     col.append(body);
-    resolve(node).then(({ facts, relations, consumer }) => {
+    resolve(node).then(({ facts, relations, consumer, actions }) => {
       body.remove();
       // facts
       if (facts?.length) {
@@ -213,7 +220,15 @@ export function createExplorer({ stage, getContext, getDeployments }) {
           el("div.url", { text: consumer }),
           el("div.acts", {},
             el("button", { text: "copy", on: { click: () => navigator.clipboard?.writeText(consumer) } }),
-            el("a", { href: consumer, target: "_blank", rel: "noopener noreferrer", text: "open ↗" }))));
+            el("a", { href: consumer, target: "_blank", rel: "noopener noreferrer", text: "open ↗" }),
+            openTester ? el("button", { text: "Test ▶",
+              on: { click: () => openTester({ type: "rest", baseUrl: consumer, title: node.title, sub: "consumer URL" }) } }) : null)));
+      }
+      // actions (deployment 等を即テスト)
+      if (actions?.length) {
+        const bar = el("div.ap-exp-acts");
+        for (const a of actions) bar.append(el("button.ap-exp-act", { text: a.label, on: { click: a.run } }));
+        col.append(bar);
       }
       // relations
       for (const rel of (relations || [])) {
@@ -255,8 +270,8 @@ export function createExplorer({ stage, getContext, getDeployments }) {
     };
     const { orgId, envId, client } = ctx();
     if (entry === "deployments") fill(getDeployments(), depNode, d => d.name);
-    else if (entry === "specs") client.specAssets(orgId).then(s => fill(s, specNode, x => x.assetId)).catch(() => list.append(el("div.ap-note2.is-err", { text: "specs 取得失敗" })));
-    else if (entry === "gateways") client.gateways(orgId, envId).then(g => fill(g, gwNode, x => x.name)).catch(() => list.append(el("div.ap-note2.is-err", { text: "gateways 取得失敗" })));
+    else if (entry === "specs") client.specAssets(orgId).then(s => fill(s, specNode, x => x.assetId)).catch(() => list.append(el("div.ap-note2.is-err", { text: "failed to load specs" })));
+    else if (entry === "gateways") client.gateways(orgId, envId).then(g => fill(g, gwNode, x => x.name)).catch(() => list.append(el("div.ap-note2.is-err", { text: "failed to load gateways" })));
     return col;
   }
 

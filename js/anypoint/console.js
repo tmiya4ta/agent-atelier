@@ -17,6 +17,7 @@
 
 import { modalConfirm } from "../modal.js";
 import { createExplorer } from "./explorer.js";
+import { createTester } from "./tester.js";
 
 const $  = (s, p = document) => p.querySelector(s);
 const $$ = (s, p = document) => Array.from(p.querySelectorAll(s));
@@ -207,6 +208,7 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
     selId: null, busy: new Set(),
     logRow: null, logLines: [], logSeen: new Set(), logFilter: "ALL", logSearch: "", logPaused: false, logPoll: null,
     apiCache: new Map(), assetCache: new Map(),   // lineage: env→API instances / asset→info
+    typeCache: new Map(),   // tester: deploymentId → { type, baseUrl, oas }
     poll: null, autoRefresh: false, loaded: false,
     _exploreEnv: null,   // Explorer が辿る env (drawer の row から設定)
   };
@@ -221,6 +223,15 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
       client: ctx.client,
     }),
     getDeployments: () => ctx.rows,
+    // consumer 枠は型/URL 確定済みで直 open、deployment ノードは型を解決してから open。
+    openTester: (spec) => spec && spec.deployment ? openTester(spec.deployment) : tester.open(spec),
+  });
+
+  // ─── App Tester (全面オーバーレイ: REST/A2A/MCP を即テスト) ───
+  // identity の Bearer を AUTH に使えるよう getToken を渡す (client が内部に持つ getter)。
+  const tester = createTester({
+    stage,
+    getContext: () => ({ getToken: () => ctx.client?._getToken?.() }),
   });
 
   // ─── rail (サイドバー: identity → perspective → env 多選択) ──────────
@@ -484,7 +495,8 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
     inner.append(
       el("div.ap-dr-head", {},
         el("button.ap-dr-x", { text: "×", on: { click: closeDrawer } }),
-        el("div.ap-dr-title", {}, el("span", { class: `ap-dot ${rowTone(row)}` }), row.name || row.id),
+        el("div.ap-dr-title", {}, el("span", { class: `ap-dot ${rowTone(row)}` }), row.name || row.id,
+          el("span.ap-tag#ap-type-badge", { text: "…", title: "app type (detecting)" })),
         el("div.ap-dr-sub", { text: `${row.envName} · ${tgt.kind || "?"} · ${tgt.name}` }),
       ),
       el("div.ap-sec", {}, el("h5", { text: "Overview" }), el("dl.ap-kv#ap-overview", {}, ...overviewKvs(row))),
@@ -493,6 +505,7 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
       el("div.ap-sec#ap-specs", {}, el("h5", { text: "Specs (versions)" }),
         el("button.ap-btn", { text: "load specs", on: { click: ev => loadSpecs(row, ev.target) } })),
       el("div.ap-actions", {},
+        el("button.ap-btn#ap-test-btn", { text: "▶ Test", title: "Test this app now", on: { click: () => openTester(row) } }),
         el("button.ap-btn", { text: "≡ Logs", on: { click: () => openLogs(row) } }),
         el("button.ap-btn.is-danger", { text: "↻ Restart", on: { click: () => doRestart(row) } }),
       ),
@@ -503,6 +516,14 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
       const det = await ctx.client.deployment(ctx.bgId, row.envId, row.id);
       row._raw = det._raw || row._raw;   // restart の PATCH body 用に最新 raw を退避
       loadLineage(row, inner);           // asset/spec/API Manager の系譜を非同期で埋める
+      // 型判定 (rest/a2a/mcp/http) は detail 取得後 (ref が埋まってから) に非同期で。
+      resolveTest(row).then(t => {
+        if (ctx.selId !== row.id) return;
+        const badge = $("#ap-type-badge", inner);
+        if (badge) { badge.textContent = typeLabel(t.type); badge.title = `app type: ${typeLabel(t.type)}${t.baseUrl ? " · " + t.baseUrl : ""}`; }
+        const tb = $("#ap-test-btn", inner);
+        if (tb) tb.textContent = `▶ Test · ${typeLabel(t.type)}`;
+      }).catch(() => {});
       const ov = $("#ap-overview", inner);
       if (ov) { ov.innerHTML = ""; overviewKvs(det).forEach(f => ov.append(f)); }
       const box = $("#ap-replicas", inner); if (!box) return;
@@ -560,7 +581,7 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
       info.specs.forEach(s => v.append(`${s.assetId}:${s.version}`, exLink(ctx.client.exchangeUrl(s.groupId, s.assetId, s.version))));
       specRow.append(v);
     } else {
-      specRow.append(el("span.ap-lin-v.dim", { text: "— pom 依存に API spec なし" }));
+      specRow.append(el("span.ap-lin-v.dim", { text: "— no API spec in pom dependencies" }));
     }
     box.append(specRow);
     // 3) ここから先 (API instance → FGW → consumer URL) は再描画なしで辿りたいので
@@ -599,6 +620,97 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
   }
   function closeDrawer() { drawer.classList.remove("is-open"); ctx.selId = null; renderTable(); }
 
+  // ─── App Tester: 型判定 + base URL 解決 ────────────────────
+  // 型 (rest/a2a/mcp/http) は選択時に遅延判定し ctx.typeCache に載せる。
+  //   1) base URL (consumer) を解決
+  //   2) Exchange asset の spec 依存に rest-api/oas/raml → rest
+  //   3) rest でなければ base URL を agent-card / mcp initialize でプローブ → a2a/mcp
+  //   4) いずれも不能なら http (generic·手入力で叩ける)
+  function typeLabel(t) { return ({ rest: "REST", http: "HTTP", a2a: "A2A", mcp: "MCP" })[t] || "HTTP"; }
+  function joinUrl(base, path) {
+    const b = String(base || "").replace(/\/+$/, ""); const p = String(path || "");
+    if (!p) return b; return p.startsWith("/") ? b + p : `${b}/${p}`;
+  }
+  async function cachedApis(envId) {
+    if (ctx.apiCache.has(envId)) return ctx.apiCache.get(envId);
+    const apis = await ctx.client.apiInstances(ctx.bgId, envId);
+    ctx.apiCache.set(envId, apis);
+    return apis;
+  }
+  // CH2 直公開アプリ向けヒューリスティック: raw に紛れる公開 URL を拾う。
+  function guessUrlFromRaw(raw) {
+    try {
+      const m = JSON.stringify(raw).match(/https?:\/\/[a-z0-9.\-]+\.(?:cloudhub\.io|mulesoft\.com)[^"'\\ ]*/i);
+      return m ? m[0] : "";
+    } catch { return ""; }
+  }
+  async function resolveBaseUrl(row) {
+    // 1) API Manager 管理下なら consumer URL (gateway publicUrl + basePath) を最優先。
+    try {
+      const apis = await cachedApis(row.envId);
+      const inst = apis.find(a => a.applicationId && a.applicationId === row.id);
+      if (inst) {
+        const det = await ctx.client.apiInstance(ctx.bgId, row.envId, inst.id);
+        if (det.gatewayId) {
+          const gw = await ctx.client.gateway(ctx.bgId, row.envId, det.gatewayId);
+          if (gw.publicUrl) return gw.publicUrl + (det.basePath === "/" ? "/" : det.basePath);
+        }
+        if (inst.endpointUri) return inst.endpointUri;
+      }
+    } catch {}
+    // 2) deployment raw に公開 URL があれば拾う。
+    return guessUrlFromRaw(row._raw);
+  }
+  // base URL を 1〜2 リクエストで叩いて a2a/mcp を判定 (discovery は通常 auth 不要)。
+  async function probeType(base) {
+    try {
+      const r = await fetch(`/proxy?url=${encodeURIComponent(joinUrl(base, "/.well-known/agent-card.json"))}`);
+      if (r.ok) { const j = await r.json().catch(() => null); if (j && (j.name || j.skills || j.capabilities || j.url)) return "a2a"; }
+    } catch {}
+    try {
+      const r = await fetch(`/proxy?url=${encodeURIComponent(joinUrl(base, "/mcp"))}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "application/json, text/event-stream" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize",
+          params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "atelier", version: "1.0" } } }),
+      });
+      if (r.ok) { const t = await r.text(); if (/"result"|"serverInfo"|"protocolVersion"/.test(t)) return "mcp"; }
+    } catch {}
+    return null;
+  }
+  async function resolveTest(row) {
+    if (ctx.typeCache.has(row.id)) return ctx.typeCache.get(row.id);
+    const out = { type: "http", baseUrl: "", oas: null };
+    try { out.baseUrl = await resolveBaseUrl(row); } catch {}
+    // spec 依存から REST 判定 (loadLineage と同じ assetInfo・cache 共有)
+    const ref = row._raw?.application?.ref;
+    if (ref?.artifactId) {
+      const key = `${ref.groupId}/${ref.artifactId}/${ref.version}`;
+      let info = ctx.assetCache.get(key);
+      if (!info) { try { info = await ctx.client.assetInfo(ref.groupId, ref.artifactId, ref.version); ctx.assetCache.set(key, info); } catch {} }
+      const oas = (info?.specs || []).find(s => /rest-api|oas|raml/i.test(s.type || ""));
+      if (oas) { out.type = "rest"; out.oas = oas; }
+    }
+    // REST と確定しなかった場合のみ agent/mcp をプローブ (REST 確定アプリの無駄打ちを避ける)
+    if (out.type === "http" && out.baseUrl) {
+      const probed = await probeType(out.baseUrl);
+      if (probed) out.type = probed;
+    }
+    ctx.typeCache.set(row.id, out);
+    return out;
+  }
+  async function openTester(row) {
+    const tb = $("#ap-test-btn", drawer); if (tb) { tb.disabled = true; tb.textContent = "▶ …"; }
+    let t;
+    try { t = await resolveTest(row); }
+    finally { if (tb) tb.disabled = false; }
+    tester.open({
+      type: t.type, baseUrl: t.baseUrl, oas: t.oas,
+      title: row.name || row.id, sub: `${row.envName} · ${typeLabel(t.type)}`,
+    });
+    if (tb) tb.textContent = `▶ Test · ${typeLabel(t.type)}`;
+  }
+
   async function loadSpecs(row, btn) {
     btn.disabled = true; btn.textContent = "loading…";
     try {
@@ -617,19 +729,19 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
     const isProd = !!row.isProd;
     const ok = await modalConfirm({
       title: isProd ? "⚠ PRODUCTION — Restart" : "Restart deployment",
-      message: `${row.name} を「${row.envName}」で restart します。`
-        + `\nupdateStrategy=rolling で再展開されます (ダウンタイム最小)。`
-        + (isProd ? `\n\n⚠ これは本番環境です。実行前に必ず確認してください。` : ""),
+      message: `Restart ${row.name} in “${row.envName}”.`
+        + `\nIt will be redeployed with updateStrategy=rolling (minimal downtime).`
+        + (isProd ? `\n\n⚠ This is a production environment. Please confirm before proceeding.` : ""),
       danger: isProd, confirmLabel: "Restart", cancelLabel: "Cancel",
     });
     if (!ok) return;
     ctx.busy.add(row.id); renderTable();
     try {
       await ctx.client.restart(ctx.bgId, row.envId, row.id, row._raw);
-      note(`${row.name}: restart 要求を送信しました`);
+      note(`${row.name}: restart requested`);
       setTimeout(() => loadDeployments(), 1500);
     } catch (e) {
-      note(`restart 失敗: ${errMsg(e)}`, true);
+      note(`restart failed: ${errMsg(e)}`, true);
     } finally {
       ctx.busy.delete(row.id); renderTable();
     }
@@ -677,7 +789,7 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
       (!ctx.logSearch || (ln.msg || "").toLowerCase().includes(ctx.logSearch) || (ln.logger || "").toLowerCase().includes(ctx.logSearch)));
     logBody.innerHTML = "";
     if (!lines.length) {
-      logBody.append(el("div.ap-logs-empty", { text: ctx.logLines.length ? "no lines match filter" : "no recent logs (このアプリは直近ログが空の可能性)" }));
+      logBody.append(el("div.ap-logs-empty", { text: ctx.logLines.length ? "no lines match filter" : "no recent logs (this app may have none)" }));
       return;
     }
     for (const ln of lines) logBody.append(el("div.ap-log", {},
