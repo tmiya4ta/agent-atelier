@@ -147,6 +147,15 @@ table.ap-table { width:100%; border-collapse:collapse; font:500 calc(12px*var(--
 .ap-tag { font:600 calc(10px*var(--fs,1))/1 var(--f-mono); padding:2px 5px; border-radius:99px; background:var(--paper-2); color:var(--ink-3); }
 .ap-empty { padding:48px 24px; text-align:center; color:var(--ink-3); font:500 calc(13px*var(--fs,1)) var(--f-ui); }
 .ap-mono { font-family:var(--f-mono); color:var(--ink-3); }
+.ap-caret { display:inline-block; width:12px; color:var(--ink-3); }
+/* 行アコーディオン: 展開行の下に inline 展開 (全面切替なし) */
+.ap-acc-tr > td { padding:0 !important; background:var(--panel-soft); border-bottom:1px solid var(--line); }
+.ap-acc { display:flex; flex-direction:column; height:min(460px,58vh); border-top:2px solid var(--accent); }
+.ap-acc-detail { flex:0 0 auto; display:flex; flex-wrap:wrap; align-items:center; gap:6px 16px; padding:9px 14px; border-bottom:1px solid var(--line); background:var(--panel); }
+.ap-fact { font:500 calc(11px*var(--fs,1)) var(--f-ui); color:var(--ink-2); white-space:nowrap; }
+.ap-fact b { color:var(--ink-3); font-weight:600; margin-right:5px; text-transform:uppercase; letter-spacing:.04em; font-size:calc(9px*var(--fs,1)); }
+.ap-acc-line { font:500 calc(11px*var(--fs,1)) var(--f-mono); color:var(--ink-2); display:inline-flex; align-items:center; gap:3px; flex-wrap:wrap; }
+.ap-acc-line b { color:var(--ink-3); font-weight:600; text-transform:uppercase; letter-spacing:.04em; font-size:calc(9px*var(--fs,1)); }
 
 .ap-drawer { width:0; flex:0 0 auto; overflow:hidden; border-left:1px solid var(--line); background:var(--panel); transition:width .14s ease; }
 .ap-drawer.is-open { width:380px; }
@@ -223,16 +232,23 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
       client: ctx.client,
     }),
     getDeployments: () => ctx.rows,
-    // consumer 枠は型/URL 確定済みで直 open、deployment ノードは型を解決してから open。
-    openTester: (spec) => spec && spec.deployment ? openTester(spec.deployment) : tester.open(spec),
+    // Lineage では Tester を「フィルムストリップの列」として足す (全面切替しない方針)。
+    // 列用の tester を作る factory (onClose で列を畳む) + deployment ノードの型解決を渡す。
+    makeTester: (opts) => createTester({ getContext: () => ({ getToken: () => ctx.client?._getToken?.() }), ...opts }),
+    resolveTest: (row) => resolveTest(row),
   });
 
-  // ─── App Tester (全面オーバーレイ: REST/A2A/MCP を即テスト) ───
-  // identity の Bearer を AUTH に使えるよう getToken を渡す (client が内部に持つ getter)。
+  // ─── App Tester (行アコーディオン内に inline 埋め込み) ───
+  // 全面オーバーレイにしない: 選択行の「下」に展開する。画面を全面切替するのは
+  // ユーザーが perspective を変えたとき (Runtime↔Lineage) だけ、という方針。
+  // tester.el は永続ノード。テーブル再描画 (auto-refresh 等) のたびにアコーディオン
+  // 行へ append で「移動」させ、接続中 adapter / 入力中の状態を保つ。
   const tester = createTester({
-    stage,
     getContext: () => ({ getToken: () => ctx.client?._getToken?.() }),
+    onClose: () => collapseRow(),
   });
+  const accDetail = el("div.ap-acc-detail");
+  const accPanel  = el("div.ap-acc", {}, accDetail, tester.el);
 
   // ─── rail (サイドバー: identity → perspective → env 多選択) ──────────
   // BG (business group) は上部タブへ移したので rail からは外す。
@@ -276,7 +292,6 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
     el("th", { dataset: { key: c.key }, on: { click: () => setSort(c.key) } }, c.label, el("span.ar")))));
   const table = el("table.ap-table", {}, thead, tbody);
   const tablewrap = el("div.ap-tablewrap", {}, table);
-  const drawer = el("div.ap-drawer", {}, el("div.ap-dr-inner"));
 
   // ─── logs tail overlay (table+drawer を覆う) ───────────────
   const logTitle = el("div.ap-logs-title");
@@ -292,7 +307,7 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
       logTitle, el("span.ap-spacer"), logLevelSel, logSearchInp, logPauseBtn),
     logBody);
 
-  stage.append(toolbar, el("div.ap-body", {}, tablewrap, drawer), logsOverlay);
+  stage.append(toolbar, el("div.ap-body", {}, tablewrap), logsOverlay);
   syncPerspUI();   // 既定 perspective (Runtime) を mount 時点で反映 (onShow 前でも active 表示)
 
   // ─── identity → BG → env の連鎖ロード ─────────────────────
@@ -308,7 +323,7 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
     ctx.idnId = idnId || null; ctx.client = null;
     ctx.bgs = []; ctx.bgId = null; renderBgTabs();
     envBox.innerHTML = ""; ctx.envs = []; ctx.selEnv.clear();
-    ctx.rows = []; renderTable(); closeDrawer();
+    ctx.rows = []; renderTable(); collapseRow();
     if (!idnId) { note(""); return; }
     const idn = (identities() || []).find(i => i.id === idnId);
     if (!idn) return;
@@ -339,7 +354,7 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
     ctx.bgId = bgId || null; ctx.bgName = ctx.bgs.find(b => b.id === bgId)?.name || bgId || "";
     renderBgTabs();
     explorer.clearCache();   // env/BG が変わると lineage の cache は無効
-    envBox.innerHTML = ""; ctx.envs = []; ctx.selEnv.clear(); ctx.rows = []; renderTable(); closeDrawer();
+    envBox.innerHTML = ""; ctx.envs = []; ctx.selEnv.clear(); ctx.rows = []; renderTable(); collapseRow();
     if (!bgId || !ctx.client) { note(""); return; }
     note("loading environments…");
     try {
@@ -459,8 +474,10 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
     }
     for (const r of rows) {
       const tgt = targetOf(r);
-      const tr = el("tr", { dataset: { id: r.id }, on: { click: () => selectDeployment(r) } },
+      const open = r.id === ctx.selId;
+      const tr = el("tr", { dataset: { id: r.id }, on: { click: () => toggleExpand(r) } },
         el("td", {}, el("span.ap-name", {},
+          el("span.ap-caret", { text: open ? "▾" : "▸" }),
           el("span", { class: `ap-dot ${rowTone(r)}` }), r.name || r.id)),
         el("td", { text: r.envName }),
         el("td", { text: rowStatusText(r) }),
@@ -468,10 +485,13 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
         el("td.ap-mono", { text: r.runtime || "—" }),
         el("td.ap-mono", { text: fmtAgo(r.updatedAt) }),
       );
-      if (r.id === ctx.selId) tr.classList.add("is-sel");
+      if (open) tr.classList.add("is-sel");
       if (ctx.busy.has(r.id)) tr.classList.add("is-busy");
       if (r._changed) tr.classList.add("is-changed");
       tbody.append(tr);
+      // 展開行の「下」に accordion を差し込む。accPanel は永続ノードなので append で
+      // 移動するだけ → tester の状態 (接続中 adapter / 入力) は再描画を跨いで保たれる。
+      if (open) tbody.append(el("tr.ap-acc-tr", {}, el("td", { colspan: COLS.length }, accPanel)));
     }
   }
 
@@ -486,111 +506,81 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
     );
   }
 
-  // ─── detail drawer ─────────────────────────────────────────
-  async function selectDeployment(row) {
-    ctx.selId = row.id; renderTable();
-    const inner = $(".ap-dr-inner", drawer); inner.innerHTML = "";
-    drawer.classList.add("is-open");
-    const tgt = targetOf(row);
-    inner.append(
-      el("div.ap-dr-head", {},
-        el("button.ap-dr-x", { text: "×", on: { click: closeDrawer } }),
-        el("div.ap-dr-title", {}, el("span", { class: `ap-dot ${rowTone(row)}` }), row.name || row.id,
-          el("span.ap-tag#ap-type-badge", { text: "…", title: "app type (detecting)" })),
-        el("div.ap-dr-sub", { text: `${row.envName} · ${tgt.kind || "?"} · ${tgt.name}` }),
-      ),
-      el("div.ap-sec", {}, el("h5", { text: "Overview" }), el("dl.ap-kv#ap-overview", {}, ...overviewKvs(row))),
-      el("div.ap-sec#ap-lineage", {}, el("h5", { text: "Lineage" }), el("div.ap-note", { text: "resolving…" })),
-      el("div.ap-sec#ap-replicas", {}, el("h5", { text: "Replicas" }), el("div.ap-note", { text: "loading…" })),
-      el("div.ap-sec#ap-specs", {}, el("h5", { text: "Specs (versions)" }),
-        el("button.ap-btn", { text: "load specs", on: { click: ev => loadSpecs(row, ev.target) } })),
-      el("div.ap-actions", {},
-        el("button.ap-btn#ap-test-btn", { text: "▶ Test", title: "Test this app now", on: { click: () => openTester(row) } }),
-        el("button.ap-btn", { text: "≡ Logs", on: { click: () => openLogs(row) } }),
-        el("button.ap-btn.is-danger", { text: "↻ Restart", on: { click: () => doRestart(row) } }),
-      ),
-    );
-    // 一覧 item には version/replicas/desired/resources が無いので detail を取り直し、
-    // overview と replica 一覧を埋め直す。
+  // ─── 行アコーディオン (detail strip + inline Tester) ─────────
+  // 行をクリック → その下に展開。再クリック / × で畳む。別行を開くと付け替え。
+  async function toggleExpand(row) {
+    if (ctx.selId === row.id) { collapseRow(); return; }
+    ctx.selId = row.id;
+    buildAccDetail(row);                 // 既知情報で即ストリップを描く
+    tester.render({ type: "rest", baseUrl: "", title: row.name || row.id, sub: `${row.envName} · detecting…` });
+    renderTable();                       // accPanel を展開行の下へ移動
+    accPanel.scrollIntoView?.({ block: "nearest" });
     try {
       const det = await ctx.client.deployment(ctx.bgId, row.envId, row.id);
-      row._raw = det._raw || row._raw;   // restart の PATCH body 用に最新 raw を退避
-      loadLineage(row, inner);           // asset/spec/API Manager の系譜を非同期で埋める
-      // 型判定 (rest/a2a/mcp/http) は detail 取得後 (ref が埋まってから) に非同期で。
-      resolveTest(row).then(t => {
-        if (ctx.selId !== row.id) return;
-        const badge = $("#ap-type-badge", inner);
-        if (badge) { badge.textContent = typeLabel(t.type); badge.title = `app type: ${typeLabel(t.type)}${t.baseUrl ? " · " + t.baseUrl : ""}`; }
-        const tb = $("#ap-test-btn", inner);
-        if (tb) tb.textContent = `▶ Test · ${typeLabel(t.type)}`;
-      }).catch(() => {});
-      const ov = $("#ap-overview", inner);
-      if (ov) { ov.innerHTML = ""; overviewKvs(det).forEach(f => ov.append(f)); }
-      const box = $("#ap-replicas", inner); if (!box) return;
-      box.innerHTML = ""; box.append(el("h5", { text: "Replicas" }));
-      const list = det.replicaList || [];
-      if (!list.length) box.append(el("div.ap-note", { text: "no replica detail" }));
-      for (const rep of list) box.append(el("div.ap-replica", {},
-        el("span", { class: `ap-dot ${statusTone(rep.state)}` }),
-        rep.state || "—", el("span.ap-mono", { text: rep.version || "" })));
+      row._raw = det._raw || row._raw;   // restart の PATCH body + publicUrl 解決に最新 raw
+      if (ctx.selId !== row.id) return;  // 切替後の遅延を無視
+      buildAccDetail(det);               // version/replicas/resources を det で埋め直し
+      loadLineageStrip(row);             // asset/spec を strip に 1 行で
+      const t = await resolveTest(row);  // 型 + base URL
+      if (ctx.selId !== row.id) return;
+      setTypeBadge(t);
+      tester.render({ type: t.type, baseUrl: t.baseUrl, oas: t.oas,
+        title: row.name || row.id, sub: `${row.envName} · ${typeLabel(t.type)}` });
     } catch (e) {
-      const box = $("#ap-replicas", inner);
-      if (box) { box.innerHTML = ""; box.append(el("h5", { text: "Replicas" }), el("div.ap-note.is-err", { text: errMsg(e) })); }
+      const ln = $(".ap-acc-line", accDetail); if (ln) { ln.innerHTML = ""; ln.append(el("span.ap-note.is-err", { text: errMsg(e) })); }
     }
   }
-  function overviewKvs(r) {
+  function collapseRow() { ctx.selId = null; tester.teardown(); renderTable(); }
+
+  // detail strip: facts を横並び compact + lineage 1 行 + actions。
+  function buildAccDetail(r) {
+    const tgt = targetOf(r);
     const resource = r.vCores != null ? `${fmtVCores(r.vCores)} vCores`
       : (r.cpu || r.mem) ? `${r.cpu || "—"} cpu · ${r.mem || "—"} mem` : "—";
-    return [
-      kv("App", rowStatusText(r)), kv("Deploy", r.deployStatus || "—"),
-      kv("Desired", r.desired || "—"), kv("Runtime", r.runtime || "—"),
-      kv("Replicas", r.replicas == null ? "—" : String(r.replicas)),
-      kv("Resources", resource), kv("Version", r.version || "—"),
-      kv("Clustered", r.clustered ? "yes" : "no"),
-    ];
+    const fact = (k, v) => el("span.ap-fact", {}, el("b", { text: k }), String(v));
+    accDetail.innerHTML = "";
+    accDetail.append(
+      el("span.ap-tag#ap-type-badge", { text: "…", title: "app type (detecting)" }),
+      fact("status", rowStatusText(r)),
+      fact("runtime", r.runtime || "—"),
+      fact("target", `${tgt.kind || "?"} · ${tgt.name}`),
+      fact("replicas", r.replicas == null ? "—" : String(r.replicas)),
+      fact("resources", resource),
+      fact("version", r.version || "—"),
+      el("span.ap-acc-line"),                                  // lineage (asset/spec) を後で埋める
+      el("span.ap-spacer", { style: { flex: "1" } }),
+      el("button.ap-btn", { text: "⬡ Lineage", title: "Explore lineage (switch perspective)", on: { click: () => openExplorer(r) } }),
+      el("button.ap-btn", { text: "≡ Logs", on: { click: () => openLogs(r) } }),
+      el("button.ap-btn.is-danger", { text: "↻ Restart", on: { click: () => doRestart(r) } }),
+      el("button.ap-btn", { text: "×", title: "collapse", on: { click: () => collapseRow() } }),
+    );
+  }
+  function setTypeBadge(t) {
+    const badge = $("#ap-type-badge", accDetail);
+    if (badge) { badge.textContent = typeLabel(t.type); badge.title = `app type: ${typeLabel(t.type)}${t.baseUrl ? " · " + t.baseUrl : ""}`; }
+  }
+  // asset → spec を detail strip の 1 行に。
+  async function loadLineageStrip(row) {
+    const line = $(".ap-acc-line", accDetail); if (!line) return;
+    const ref = row._raw?.application?.ref;
+    line.innerHTML = "";
+    if (!ref?.artifactId) return;
+    line.append(el("b", { text: "asset " }), `${ref.artifactId}:${ref.version}`,
+      exLink(ctx.client.exchangeUrl(ref.groupId, ref.artifactId, ref.version)));
+    const key = `${ref.groupId}/${ref.artifactId}/${ref.version}`;
+    let info = ctx.assetCache.get(key);
+    if (!info) { try { info = await ctx.client.assetInfo(ref.groupId, ref.artifactId, ref.version); ctx.assetCache.set(key, info); } catch {} }
+    if (ctx.selId !== row.id || !info?.specs?.length) return;
+    line.append("  ", el("b", { text: "spec " }));
+    info.specs.forEach(s => line.append(`${s.assetId}:${s.version}`, exLink(ctx.client.exchangeUrl(s.groupId, s.assetId, s.version))));
   }
 
-  // ─── Lineage: 走ってるデプロイ → asset / spec / API Manager を 1 枚に ───
-  // Anypoint はこれらを画面跨ぎで散らすので、辿れるものを集約する (自動マッチに頼り切らない)。
+  // Exchange asset へのリンク (lineage strip の ↗)。
   function exLink(url) {
     return el("a.ap-ex", { href: url, target: "_blank", rel: "noopener noreferrer", title: "Open in Exchange", text: "↗" });
   }
-  async function loadLineage(row, inner) {
-    const box = $("#ap-lineage", inner); if (!box) return;
-    const ref = row._raw?.application?.ref;
-    box.innerHTML = ""; box.append(el("h5", { text: "Lineage" }));
-    // 1) deployed asset → Exchange (jar を展開せず中身/依存を見る入口)
-    if (ref?.artifactId) {
-      box.append(el("div.ap-lin", {}, el("span.ap-lin-k", { text: "asset" }),
-        el("span.ap-lin-v", {}, `${ref.artifactId}:${ref.version}`,
-          exLink(ctx.client.exchangeUrl(ref.groupId, ref.artifactId, ref.version)))));
-    }
-    // 2) spec via pom 依存 (Exchange asset の dependencies から)
-    let info;
-    if (ref?.artifactId) {
-      const key = `${ref.groupId}/${ref.artifactId}/${ref.version}`;
-      try {
-        info = ctx.assetCache.get(key) || await ctx.client.assetInfo(ref.groupId, ref.artifactId, ref.version);
-        ctx.assetCache.set(key, info);
-      } catch {}
-    }
-    if (ctx.selId !== row.id) return;   // 切替後の遅延描画を防ぐ
-    const specRow = el("div.ap-lin", {}, el("span.ap-lin-k", { text: "spec" }));
-    if (info?.specs?.length) {
-      const v = el("span.ap-lin-v");
-      info.specs.forEach(s => v.append(`${s.assetId}:${s.version}`, exLink(ctx.client.exchangeUrl(s.groupId, s.assetId, s.version))));
-      specRow.append(v);
-    } else {
-      specRow.append(el("span.ap-lin-v.dim", { text: "— no API spec in pom dependencies" }));
-    }
-    box.append(specRow);
-    // 3) ここから先 (API instance → FGW → consumer URL) は再描画なしで辿りたいので
-    //    Explorer (横フィルムストリップ) に渡す。drawer には入口ボタンだけ置く。
-    box.append(el("div.ap-lin-act", {},
-      el("button.ap-btn.is-explore", { text: "⬡ Explore lineage →",
-        on: { click: () => openExplorer(row) } })));
-  }
-  // drawer の「Explore →」: Lineage perspective へ切替え、この row を起点に開く。
+  // detail strip の「⬡ Lineage」: Lineage perspective へ切替え、この row を起点に開く
+  // (= 全面切替はユーザーが明示的に perspective を変える操作のときだけ起こる)。
   function openExplorer(row) {
     ctx._exploreEnv = row.envId;
     setPersp("lineage", { seed: { type: "deployment", id: row.id, title: row.name || row.id, sub: "deploy", data: row } });
@@ -612,13 +602,6 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
     // Deployments 入口を埋めるため rows が空なら一度ロードして開き直す (Specs/Gateways は env/org 直引きで先に使える)。
     if (!opts.seed && !ctx.rows.length && ctx.selEnv.size) { await loadDeployments(); explorer.open(null); }
   }
-  function kv(k, v) {
-    // dl.ap-kv の grid (auto 1fr) を保つため、dt/dd を直接子にする fragment を返す。
-    const f = document.createDocumentFragment();
-    f.append(el("dt", { text: k }), el("dd", { text: String(v) }));
-    return f;
-  }
-  function closeDrawer() { drawer.classList.remove("is-open"); ctx.selId = null; renderTable(); }
 
   // ─── App Tester: 型判定 + base URL 解決 ────────────────────
   // 型 (rest/a2a/mcp/http) は選択時に遅延判定し ctx.typeCache に載せる。
@@ -706,31 +689,6 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
     ctx.typeCache.set(row.id, out);
     return out;
   }
-  async function openTester(row) {
-    const tb = $("#ap-test-btn", drawer); if (tb) { tb.disabled = true; tb.textContent = "▶ …"; }
-    let t;
-    try { t = await resolveTest(row); }
-    finally { if (tb) tb.disabled = false; }
-    tester.open({
-      type: t.type, baseUrl: t.baseUrl, oas: t.oas,
-      title: row.name || row.id, sub: `${row.envName} · ${typeLabel(t.type)}`,
-    });
-    if (tb) tb.textContent = `▶ Test · ${typeLabel(t.type)}`;
-  }
-
-  async function loadSpecs(row, btn) {
-    btn.disabled = true; btn.textContent = "loading…";
-    try {
-      const specs = await ctx.client.specs(ctx.bgId, row.envId, row.id);
-      const arr = Array.isArray(specs) ? specs : (specs?.items || specs?.data || []);
-      const box = btn.parentElement; box.innerHTML = ""; box.append(el("h5", { text: "Specs (versions)" }));
-      if (!arr.length) { box.append(el("div.ap-note", { text: "no specs" })); return; }
-      for (const s of arr.slice(0, 20)) box.append(el("div.ap-replica", {},
-        el("span.ap-mono", { text: s.version || s.id || "" }),
-        el("span.ap-note", { text: s.createdAt ? fmtAgo(Date.parse(s.createdAt)) : "" })));
-    } catch (e) { btn.disabled = false; btn.textContent = "retry"; btn.parentElement.append(el("div.ap-note.is-err", { text: errMsg(e) })); }
-  }
-
   // ─── Restart (confirm + prod ガード) ──────────────────────
   async function doRestart(row) {
     const isProd = !!row.isProd;
