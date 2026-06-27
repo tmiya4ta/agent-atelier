@@ -325,6 +325,46 @@ export class AnypointClient {
     const body = { ...cur, target: { ...(cur.target || {}), replicas } };
     return this._patch(this._depPath(orgId, envId, deploymentId), body);
   }
+
+  // デプロイ削除 (アプリ停止 + 取り下げ)。元に戻せないので UI 側で強 confirm 必須。
+  async remove(orgId, envId, deploymentId) {
+    return this._delete(this._depPath(orgId, envId, deploymentId));
+  }
+
+  // replicas / vCores / cpu / memory をまとめて 1 回の PATCH で適用 (指定分だけ差し替え)。
+  // 個別に PATCH すると 2 回目が古い raw を踏むので、control deck の Apply はこれを使う。
+  async applyChanges(orgId, envId, deploymentId, { replicas, vCores, cpu, memory } = {}, raw) {
+    const cur = raw || await this._rawDeployment(orgId, envId, deploymentId);
+    const body = { ...cur, target: { ...(cur.target || {}) } };
+    if (replicas != null) body.target.replicas = replicas;
+    if (vCores != null) body.application = { ...(cur.application || {}), vCores };
+    if (cpu || memory) {
+      const ds = cur.target?.deploymentSettings || {};
+      const res = { ...(ds.resources || {}) };
+      if (cpu) res.cpu = cpu;
+      if (memory) res.memory = memory;
+      body.target.deploymentSettings = { ...ds, resources: res };
+    }
+    return this._patch(this._depPath(orgId, envId, deploymentId), body);
+  }
+
+  // CH2: replica サイズ = vCores (0.1/0.2/0.5/1/2/4)。
+  async setVCores(orgId, envId, deploymentId, vCores, raw) {
+    const cur = raw || await this._rawDeployment(orgId, envId, deploymentId);
+    const body = { ...cur, application: { ...(cur.application || {}), vCores } };
+    return this._patch(this._depPath(orgId, envId, deploymentId), body);
+  }
+
+  // RTF: cpu/memory = { reserved, limit } (例 {reserved:"500m",limit:"2000m"})。指定分だけ差し替え。
+  async setCpuMem(orgId, envId, deploymentId, { cpu, memory } = {}, raw) {
+    const cur = raw || await this._rawDeployment(orgId, envId, deploymentId);
+    const ds = cur.target?.deploymentSettings || {};
+    const res = { ...(ds.resources || {}) };
+    if (cpu) res.cpu = cpu;
+    if (memory) res.memory = memory;
+    const body = { ...cur, target: { ...(cur.target || {}), deploymentSettings: { ...ds, resources: res } } };
+    return this._patch(this._depPath(orgId, envId, deploymentId), body);
+  }
 }
 
 // ── helpers ────────────────────────────────────────────────
