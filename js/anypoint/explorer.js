@@ -87,14 +87,37 @@ function injectStyles() {
 .ap-exp-acts { padding:8px 14px; display:flex; gap:6px; flex-wrap:wrap; border-top:1px solid var(--line-3); }
 .ap-exp-act { padding:5px 12px; font:700 calc(11px*var(--fs,1)) var(--f-ui); color:var(--accent-ink); background:var(--accent-soft); border:1px solid var(--accent); border-radius:var(--radius); cursor:pointer; }
 .ap-exp-act:hover { background:var(--accent); color:var(--you-ink); }
+.ap-col-test { flex:0 0 460px; display:flex; flex-direction:column; border-right:1px solid var(--line); background:var(--paper); }
+.ap-col-test .ap-test { flex:1 1 auto; min-height:0; }
 `;
   document.head.appendChild(el("style#anypoint-explorer-styles", {}, css));
   $("#anypoint-explorer-styles").textContent = css;
 }
 
 // ════════════════════════════════════════════════════════════
-export function createExplorer({ stage, getContext, getDeployments, openTester }) {
+export function createExplorer({ stage, getContext, getDeployments, makeTester, resolveTest }) {
   injectStyles();
+
+  // ─── Tester 列 (Test ボタンで filmstrip の右端に足す inline パネル) ───
+  // 全面オーバーレイにせず「列が 1 つ増える」だけ。tester は永続インスタンスで、
+  // render() で strip を組み直すたびに再 append され状態を保つ。× で列ごと畳む。
+  let _tester = null, _testerCol = null;
+  async function openTesterCol(spec) {
+    let s = spec;
+    if (spec && spec.deployment && resolveTest) {
+      const row = spec.deployment;
+      const t = await resolveTest(row);
+      s = { type: t.type, baseUrl: t.baseUrl, oas: t.oas, title: row.name || row.id, sub: `lineage · ${t.type}` };
+    }
+    if (!makeTester) return;
+    if (!_tester) {
+      _tester = makeTester({ onClose: () => { _tester = null; _testerCol = null; render(); } });
+      _testerCol = el("div.ap-col.ap-col-test", {}, _tester.el);
+    }
+    _tester.render(s);
+    render();
+    requestAnimationFrame(() => { strip.scrollLeft = strip.scrollWidth; });
+  }
   const cache = new Map();
   const cached = (k, fn) => cache.has(k) ? cache.get(k) : (cache.set(k, fn()), cache.get(k));
   const ctx = () => getContext();
@@ -147,7 +170,7 @@ export function createExplorer({ stage, getContext, getDeployments, openTester }
         relations.push({ label: "spec (impl)", items: (info.specs || []).map(specNode), note: (info.specs || []).length ? "" : "no API spec in pom dependencies" });
       }
       // この deployment を即テスト (型は console 側で判定して開く)。
-      const actions = openTester ? [{ label: "▶ Test", run: () => openTester({ deployment: row }) }] : [];
+      const actions = makeTester ? [{ label: "▶ Test", run: () => openTesterCol({ deployment: row }) }] : [];
       return { facts, relations, actions };
     }
     if (node.type === "spec") {
@@ -221,8 +244,8 @@ export function createExplorer({ stage, getContext, getDeployments, openTester }
           el("div.acts", {},
             el("button", { text: "copy", on: { click: () => navigator.clipboard?.writeText(consumer) } }),
             el("a", { href: consumer, target: "_blank", rel: "noopener noreferrer", text: "open ↗" }),
-            openTester ? el("button", { text: "Test ▶",
-              on: { click: () => openTester({ type: "rest", baseUrl: consumer, title: node.title, sub: "consumer URL" }) } }) : null)));
+            makeTester ? el("button", { text: "Test ▶",
+              on: { click: () => openTesterCol({ type: "rest", baseUrl: consumer, title: node.title, sub: "consumer URL" }) } }) : null)));
       }
       // actions (deployment 等を即テスト)
       if (actions?.length) {
@@ -289,6 +312,7 @@ export function createExplorer({ stage, getContext, getDeployments, openTester }
     strip.innerHTML = "";
     strip.append(entryColumn());
     walk.forEach((n, i) => strip.append(nodeColumn(n, i)));
+    if (_testerCol) strip.append(_testerCol);   // Tester 列 (永続ノードを再 append)
     // breadcrumb
     crumbEl.innerHTML = "";
     crumbEl.append(el("span.c", { text: entry, on: { click: () => { walk = []; render(); } } }));

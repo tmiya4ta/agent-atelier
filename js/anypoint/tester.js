@@ -56,8 +56,8 @@ let _styled = false;
 function injectStyles() {
   if (_styled) return; _styled = true;
   const css = `
-.ap-test { position:absolute; inset:0; z-index:5; display:none; flex-direction:column; background:var(--paper); }
-.ap-test.is-open { display:flex; }
+/* 埋め込み型: overlay ではなく親 flex-column を満たす block (アコーディオン / 列に差す) */
+.ap-test { display:flex; flex-direction:column; flex:1 1 auto; min-height:0; background:var(--paper); }
 .ap-test-head { display:flex; flex-direction:column; gap:8px; padding:10px 14px; border-bottom:1px solid var(--line); background:var(--panel); }
 .ap-test-r1 { display:flex; align-items:center; gap:12px; }
 .ap-test-title { font:700 calc(14px*var(--fs,1)) var(--f-display); color:var(--ink); display:flex; align-items:center; gap:8px; min-width:0; }
@@ -137,7 +137,9 @@ function injectStyles() {
 }
 
 // ════════════════════════════════════════════════════════════
-export function createTester({ stage, getContext }) {
+// 埋め込み型: stage には append しない。呼び元が `tester.el` を任意コンテナに差し、
+// `render(spec)` で中身を出す。`onClose` は × 押下時のコラプス用フック。
+export function createTester({ getContext, onClose } = {}) {
   injectStyles();
   const ctx = () => (getContext ? getContext() : {});
 
@@ -173,7 +175,6 @@ export function createTester({ stage, getContext }) {
     el("div.ap-test-r2", {}, urlEl, authSel, authKey, authVal));
   const bodyEl = el("div.ap-test-body");
   const root = el("div.ap-test", {}, head, bodyEl);
-  stage.append(root);
 
   // ─── AUTH 解決 → adapter / proxyFetch に渡す { auth, authHeaders } ──
   function syncAuth() {
@@ -203,10 +204,9 @@ export function createTester({ stage, getContext }) {
     titleEl.innerHTML = "";
     titleEl.append(cur.title || "test", el("span.sub", { text: cur.sub || "" }));
     syncAuth();
-    root.classList.add("is-open");
     render();
   }
-  function close() { root.classList.remove("is-open"); teardown(); }
+  function close() { teardown(); if (onClose) onClose(); }
   function teardown() {
     if (adapter) { try { adapter.disconnect?.(); } catch {} adapter = null; }
     bodyEl.innerHTML = "";
@@ -404,7 +404,7 @@ export function createTester({ stage, getContext }) {
     }
   }
 
-  return { open, close, el: root };
+  return { open, render: open, close, teardown, el: root };
 }
 
 // ─── helpers ────────────────────────────────────────────────
