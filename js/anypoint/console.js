@@ -150,12 +150,22 @@ table.ap-table { width:100%; border-collapse:collapse; font:500 calc(12px*var(--
 .ap-caret { display:inline-block; width:12px; color:var(--ink-3); }
 /* 行アコーディオン: 展開行の下に inline 展開 (全面切替なし) */
 .ap-acc-tr > td { padding:0 !important; background:var(--panel-soft); border-bottom:1px solid var(--line); }
-.ap-acc { display:flex; flex-direction:column; height:min(460px,58vh); border-top:2px solid var(--accent); }
-.ap-acc-detail { flex:0 0 auto; display:flex; flex-wrap:wrap; align-items:center; gap:6px 16px; padding:9px 14px; border-bottom:1px solid var(--line); background:var(--panel); }
-.ap-fact { font:500 calc(11px*var(--fs,1)) var(--f-ui); color:var(--ink-2); white-space:nowrap; }
-.ap-fact b { color:var(--ink-3); font-weight:600; margin-right:5px; text-transform:uppercase; letter-spacing:.04em; font-size:calc(9px*var(--fs,1)); }
-.ap-acc-line { font:500 calc(11px*var(--fs,1)) var(--f-mono); color:var(--ink-2); display:inline-flex; align-items:center; gap:3px; flex-wrap:wrap; }
-.ap-acc-line b { color:var(--ink-3); font-weight:600; text-transform:uppercase; letter-spacing:.04em; font-size:calc(9px*var(--fs,1)); }
+.ap-acc { display:flex; flex-direction:column; height:min(470px,60vh); border-top:2px solid var(--accent); }
+.ap-acc-detail { flex:0 0 auto; display:flex; flex-direction:column; gap:7px; padding:10px 14px; border-bottom:1px solid var(--line); background:var(--panel); }
+.ap-acc-head { display:flex; align-items:center; gap:8px; }
+.ap-acc-name { font:700 calc(14px*var(--fs,1)) var(--f-display); color:var(--ink); }
+.ap-acc-facts { display:flex; flex-wrap:wrap; align-items:center; gap:7px; font:500 calc(11px*var(--fs,1)) var(--f-mono); color:var(--ink-2); }
+.ap-acc-facts .sep { color:var(--ink-4); }
+.ap-acc-facts .k { color:var(--ink-3); text-transform:uppercase; letter-spacing:.04em; font-size:calc(9px*var(--fs,1)); margin-right:3px; }
+/* lineage を |- ツリーで (deploy → asset → spec) */
+.ap-acc-tree { font:500 calc(11px*var(--fs,1))/1.7 var(--f-mono); color:var(--ink-2); }
+.ap-tree-row { display:flex; align-items:center; gap:6px; white-space:nowrap; }
+.ap-tree-conn { color:var(--ink-4); letter-spacing:-1px; }
+.ap-tree-g { font-size:calc(11px*var(--fs,1)); }
+.ap-tree-g.dep { color:var(--ink-3); } .ap-tree-g.asset { color:var(--accent-ink); } .ap-tree-g.spec { color:var(--ok); }
+.ap-tree-k { color:var(--ink-3); text-transform:uppercase; letter-spacing:.05em; font-size:calc(9px*var(--fs,1)); min-width:40px; }
+.ap-tree-v { color:var(--ink); }
+.ap-tree-v.dim { color:var(--ink-4); }
 
 .ap-drawer { width:0; flex:0 0 auto; overflow:hidden; border-left:1px solid var(--line); background:var(--panel); transition:width .14s ease; }
 .ap-drawer.is-open { width:380px; }
@@ -532,47 +542,70 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
   }
   function collapseRow() { ctx.selId = null; tester.teardown(); renderTable(); }
 
-  // detail strip: facts を横並び compact + lineage 1 行 + actions。
+  // detail: ① identity + actions ② facts(· 区切り) ③ lineage を |- ツリーで。
   function buildAccDetail(r) {
     const tgt = targetOf(r);
     const resource = r.vCores != null ? `${fmtVCores(r.vCores)} vCores`
-      : (r.cpu || r.mem) ? `${r.cpu || "—"} cpu · ${r.mem || "—"} mem` : "—";
-    const fact = (k, v) => el("span.ap-fact", {}, el("b", { text: k }), String(v));
+      : (r.cpu || r.mem) ? `${r.cpu || "—"} cpu / ${r.mem || "—"} mem` : "—";
+    const facts = [
+      ["", rowStatusText(r)], ["", r.runtime || "—"],
+      ["", `${tgt.kind || "?"} ${tgt.name}`],
+      ["", `${r.replicas == null ? "—" : r.replicas}×`],
+      ["", resource], ["", `v${r.version || "—"}`],
+    ];
+    const factRow = el("div.ap-acc-facts");
+    facts.forEach(([k, v], i) => {
+      if (i) factRow.append(el("span.sep", { text: "·" }));
+      if (k) factRow.append(el("span.k", { text: k }));
+      factRow.append(el("span", { text: v }));
+    });
     accDetail.innerHTML = "";
     accDetail.append(
-      el("span.ap-tag#ap-type-badge", { text: "…", title: "app type (detecting)" }),
-      fact("status", rowStatusText(r)),
-      fact("runtime", r.runtime || "—"),
-      fact("target", `${tgt.kind || "?"} · ${tgt.name}`),
-      fact("replicas", r.replicas == null ? "—" : String(r.replicas)),
-      fact("resources", resource),
-      fact("version", r.version || "—"),
-      el("span.ap-acc-line"),                                  // lineage (asset/spec) を後で埋める
-      el("span.ap-spacer", { style: { flex: "1" } }),
-      el("button.ap-btn", { text: "⬡ Lineage", title: "Explore lineage (switch perspective)", on: { click: () => openExplorer(r) } }),
-      el("button.ap-btn", { text: "≡ Logs", on: { click: () => openLogs(r) } }),
-      el("button.ap-btn.is-danger", { text: "↻ Restart", on: { click: () => doRestart(r) } }),
-      el("button.ap-btn", { text: "×", title: "collapse", on: { click: () => collapseRow() } }),
+      el("div.ap-acc-head", {},
+        el("span", { class: `ap-dot ${rowTone(r)}` }),
+        el("span.ap-acc-name", { text: r.name || r.id }),
+        el("span.ap-tag#ap-type-badge", { text: "…", title: "app type (detecting)" }),
+        el("span.ap-spacer", { style: { flex: "1" } }),
+        el("button.ap-btn", { text: "⬡ Lineage", title: "Explore lineage (switch perspective)", on: { click: () => openExplorer(r) } }),
+        el("button.ap-btn", { text: "≡ Logs", on: { click: () => openLogs(r) } }),
+        el("button.ap-btn.is-danger", { text: "↻ Restart", on: { click: () => doRestart(r) } }),
+        el("button.ap-btn", { text: "×", title: "collapse", on: { click: () => collapseRow() } })),
+      factRow,
+      el("div.ap-acc-tree"),                                   // lineage tree を後で埋める
     );
   }
   function setTypeBadge(t) {
     const badge = $("#ap-type-badge", accDetail);
     if (badge) { badge.textContent = typeLabel(t.type); badge.title = `app type: ${typeLabel(t.type)}${t.baseUrl ? " · " + t.baseUrl : ""}`; }
   }
-  // asset → spec を detail strip の 1 行に。
+  // tree の 1 行: <conn> <glyph> <KEY> <value> [↗]
+  function treeRow(conn, gcls, glyph, key, value, href, dim) {
+    return el("div.ap-tree-row", {},
+      el("span.ap-tree-conn", { text: conn }),
+      el("span", { class: `ap-tree-g ${gcls}`, text: glyph }),
+      el("span.ap-tree-k", { text: key }),
+      el("span", { class: `ap-tree-v${dim ? " dim" : ""}`, text: value }),
+      href ? exLink(href) : null);
+  }
+  // lineage を deploy → asset → spec の |- ツリーで描く。
   async function loadLineageStrip(row) {
-    const line = $(".ap-acc-line", accDetail); if (!line) return;
+    const tree = $(".ap-acc-tree", accDetail); if (!tree) return;
     const ref = row._raw?.application?.ref;
-    line.innerHTML = "";
-    if (!ref?.artifactId) return;
-    line.append(el("b", { text: "asset " }), `${ref.artifactId}:${ref.version}`,
-      exLink(ctx.client.exchangeUrl(ref.groupId, ref.artifactId, ref.version)));
+    tree.innerHTML = "";
+    tree.append(treeRow("", "dep", "▣", "deploy", row.name || row.id, null));
+    if (!ref?.artifactId) { tree.append(treeRow("└─", "asset", "◆", "asset", "—", null, true)); return; }
+    tree.append(treeRow("├─", "asset", "◆", "asset", `${ref.artifactId}:${ref.version}`,
+      ctx.client.exchangeUrl(ref.groupId, ref.artifactId, ref.version)));
+    const specRow = treeRow("└─", "spec", "◇", "spec", "resolving…", null, true);
+    tree.append(specRow);
     const key = `${ref.groupId}/${ref.artifactId}/${ref.version}`;
     let info = ctx.assetCache.get(key);
     if (!info) { try { info = await ctx.client.assetInfo(ref.groupId, ref.artifactId, ref.version); ctx.assetCache.set(key, info); } catch {} }
-    if (ctx.selId !== row.id || !info?.specs?.length) return;
-    line.append("  ", el("b", { text: "spec " }));
-    info.specs.forEach(s => line.append(`${s.assetId}:${s.version}`, exLink(ctx.client.exchangeUrl(s.groupId, s.assetId, s.version))));
+    if (ctx.selId !== row.id) return;
+    const s = info?.specs?.[0];
+    specRow.replaceWith(s
+      ? treeRow("└─", "spec", "◇", "spec", `${s.assetId}:${s.version}`, ctx.client.exchangeUrl(s.groupId, s.assetId, s.version))
+      : treeRow("└─", "spec", "◇", "spec", "no API spec", null, true));
   }
 
   // Exchange asset へのリンク (lineage strip の ↗)。

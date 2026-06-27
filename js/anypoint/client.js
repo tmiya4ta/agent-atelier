@@ -253,11 +253,13 @@ export class AnypointClient {
     const link = pick && (pick.downloadURL || pick.externalLink || pick.url);
     if (!link) return { endpoints: [], note: `no spec file (classifiers: ${files.map(f => f.classifier).join(",") || "none"})` };
     let host = ""; try { host = new URL(link).host; } catch {}
-    // Exchange の downloadURL は query に Java URI が弾く文字 ([ ] { } | space 等) を
-    // 生で含むことがあり、Mule の http:request が "Illegal character in query" で 502 になる。
-    // proxy は queryParams.url を 1 回 decode するので、ここで該当文字を %-encode しておけば
-    // decode 後も %xx で残り Java URI が通る (既存の %xx は触らない)。
-    const safe = String(link).replace(/[ "<>{}|\\^`\[\]]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+    // Exchange の downloadURL は Java URI が query で弾く文字を生で含むことがあり
+    // (Mule の http:request が "Illegal character in query" で 502)。proxy は
+    // queryParams.url を 1 回 decode するので、Java の query 許可集合
+    // (unreserved + sub-delims + : @ / ? # と %xx) 以外を全部 %-encode しておけば
+    // decode 後も %xx で残り通る。既存の %xx は保持。
+    const safe = String(link).replace(/%[0-9A-Fa-f]{2}|[^A-Za-z0-9\-._~!$&'()*+,;=:@/?#]/g,
+      m => (m.length === 3 && m[0] === "%") ? m : encodeURIComponent(m));
     // presigned S3 (X-Amz-*/Signature 付き) に Authorization を足すと S3 が
     // "Only one auth mechanism allowed" で弾く。presigned なら Bearer を付けない。
     const presigned = /[?&](x-amz-|signature=|awsaccesskeyid=)/i.test(link);
