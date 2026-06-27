@@ -90,7 +90,7 @@ function injectStyles() {
 .ap-ep-b { min-width:0; }
 .ap-ep-p { font:600 calc(11px*var(--fs,1)) var(--f-mono); color:var(--ink); word-break:break-all; }
 .ap-ep-s { font:500 calc(10px*var(--fs,1)) var(--f-ui); color:var(--ink-3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.ap-ep-note { padding:10px 12px; font:500 calc(11px*var(--fs,1)) var(--f-ui); color:var(--ink-3); }
+.ap-ep-note { padding:10px 12px; font:500 calc(11px*var(--fs,1))/1.5 var(--f-ui); color:var(--ink-3); white-space:normal; word-break:break-word; }
 .ap-ep-note.is-err { color:var(--warn); }
 .ap-rest-req { flex:0 0 36%; display:flex; flex-direction:column; border-right:1px solid var(--line); overflow:auto; }
 .ap-rest-res { flex:1; display:flex; flex-direction:column; min-width:0; overflow:auto; }
@@ -293,7 +293,7 @@ export function createTester({ getContext, onClose } = {}) {
       cur.loadEndpoints().then(r => {
         all = (r && r.endpoints) || [];
         if (all.length) draw("");
-        else { list.innerHTML = ""; list.append(el("div.ap-ep-note", { text: (r && r.note) || "no endpoints" })); }
+        else { const n = (r && r.note) || "no endpoints"; list.innerHTML = ""; list.append(el("div.ap-ep-note", { text: n, title: n })); }
       }).catch(e => { list.innerHTML = ""; list.append(el("div.ap-ep-note.is-err", { text: errMsg(e) })); });
       filter.addEventListener("input", () => draw(filter.value.trim().toLowerCase()));
       return el("div.ap-ep-pane", {}, el("div.ap-ep-h", { text: "Endpoints" }), filter, list);

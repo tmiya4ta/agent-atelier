@@ -249,17 +249,22 @@ export class AnypointClient {
     const pick = files.find(f => /oas/i.test(f.classifier || "") && /json/i.test(f.packaging || ""))
               || files.find(f => /oas/i.test(f.classifier || ""))
               || files.find(f => /(raml|rest-api)/i.test(f.classifier || ""));
-    // downloadURL = ファイル本体の取得 endpoint (要 Bearer)。externalLink は portal の閲覧 URL
-    // (ファイル本体でない) なので使わない。app.js の a2a-card 取得と同じ経路。
+    // downloadURL = ファイル本体の取得 endpoint。externalLink は portal の閲覧 URL なので後回し。
     const link = pick && (pick.downloadURL || pick.externalLink || pick.url);
-    if (!link) return { endpoints: [], note: "no downloadable spec file" };
-    const token = await this._getToken().catch(() => null);
-    const res   = await fetch(`/proxy?url=${encodeURIComponent(link)}`,
-      token ? { headers: { Authorization: `Bearer ${token}` } } : {});
-    const text  = await res.text();
-    if (!res.ok) return { endpoints: [], note: `spec download HTTP ${res.status}: ${String(text).replace(/<[^>]+>/g, "").trim().slice(0, 90)}` };
+    if (!link) return { endpoints: [], note: `no spec file (classifiers: ${files.map(f => f.classifier).join(",") || "none"})` };
+    let host = ""; try { host = new URL(link).host; } catch {}
+    // presigned S3 (X-Amz-*/Signature 付き) に Authorization を足すと S3 が
+    // "Only one auth mechanism allowed" で弾く。presigned なら Bearer を付けない。
+    const presigned = /[?&](x-amz-|signature=|awsaccesskeyid=)/i.test(link);
+    const token = presigned ? null : await this._getToken().catch(() => null);
+    let res, text;
+    try {
+      res  = await fetch(`/proxy?url=${encodeURIComponent(link)}`, token ? { headers: { Authorization: `Bearer ${token}` } } : {});
+      text = await res.text();
+    } catch (e) { return { endpoints: [], note: `spec fetch failed @${host}: ${e?.message || e}` }; }
+    if (!res.ok) return { endpoints: [], note: `[${pick.classifier}] ${host} HTTP ${res.status}: ${String(text).replace(/<[^>]+>/g, " ").trim().slice(0, 90)}` };
     let doc; try { doc = JSON.parse(text); }
-    catch { return { endpoints: [], note: "spec が YAML/RAML/非JSON (endpoint 抽出は JSON OAS のみ対応)" }; }
+    catch { return { endpoints: [], note: `non-JSON spec @${host} (${pick.classifier}/${pick.packaging}) — JSON OAS のみ対応` }; }
     return { endpoints: extractOasEndpoints(doc), title: doc?.info?.title || assetId };
   }
 
