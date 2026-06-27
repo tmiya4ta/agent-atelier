@@ -866,7 +866,7 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
     // OAS があれば endpoint を遅延取得する loader を付ける (REST tester の「ボタンで投げる」用)。
     // 結果は out に memo するので開き直しても 1 回だけ。
     if (out.oas) out.loadEndpoints = async () => {
-      if (!out._eps) { try { out._eps = await ctx.client.fetchOas(out.oas.groupId, out.oas.assetId, out.oas.version); } catch (e) { out._eps = { endpoints: [], note: errMsg(e) }; } }
+      if (!out._eps) { try { out._eps = await ctx.client.fetchOas(out.oas.groupId, out.oas.assetId, out.oas.version); } catch (e) { out._eps = { endpoints: [], error: true, note: errMsg(e) }; } }
       return out._eps;
     };
     ctx.typeCache.set(row.id, out);
