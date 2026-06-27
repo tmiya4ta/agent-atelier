@@ -107,25 +107,3 @@ fun check(rawIn: Any, extra: Array = []): Object = do {
         else "ok"
     }
 }
-
-// ── Java URI safe ──────────────────────────────────────────
-// Mule の http:request は URL を java.net.URI でパースし、query に { } | space ^ ` 等を
-// 生で含むと "Illegal character in query" で落ちる (502)。forward 前にこれらを %-encode する
-// (該当文字のみ置換・既存の %xx は不変)。Exchange の downloadURL が 3xx で返す Location が
-// これらを生で含むケース (fat-oas 等) で必要。
-fun uriSafe(u: Any): String = do {
-    var s = trim((u default "") as String)
-    ---
-    s replace / /  with "%20"
-      replace /"/  with "%22"
-      replace /</  with "%3C"
-      replace />/  with "%3E"
-      replace /\{/ with "%7B"
-      replace /\}/ with "%7D"
-      replace /\|/ with "%7C"
-      replace /\\/ with "%5C"
-      replace /\^/ with "%5E"
-      replace /`/  with "%60"
-      replace /\[/ with "%5B"
-      replace /\]/ with "%5D"
-}
