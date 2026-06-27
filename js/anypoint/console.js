@@ -148,10 +148,13 @@ table.ap-table { width:100%; border-collapse:collapse; font:500 calc(12px*var(--
 .ap-empty { padding:48px 24px; text-align:center; color:var(--ink-3); font:500 calc(13px*var(--fs,1)) var(--f-ui); }
 .ap-mono { font-family:var(--f-mono); color:var(--ink-3); }
 .ap-caret { display:inline-block; width:12px; color:var(--ink-3); }
-/* 行アコーディオン: 展開行の下に inline 展開 (全面切替なし) */
-.ap-acc-tr > td { padding:0 !important; background:var(--panel-soft); border-bottom:1px solid var(--line); }
-/* アコーディオン全体に左アクセント枠 = 「ここは選択 APP の範囲」を明示 (scope) */
-.ap-acc { display:flex; flex-direction:column; height:min(480px,62vh); border-top:2px solid var(--accent); border-left:3px solid var(--accent); }
+/* 行アコーディオン: 展開行の「子ノード」として一段右にインデント + |- ツリー接続線。
+   左 gutter に └─ コーナー(上から下りて右へ) を描き、選択 APP の範囲を視覚化。 */
+.ap-acc-tr > td { padding:0 0 12px 32px !important; position:relative; background:var(--panel-soft); border-bottom:1px solid var(--line); }
+.ap-acc-tr > td::before { content:""; position:absolute; left:14px; top:-1px; width:13px; height:22px;
+  border-left:2px solid var(--accent); border-bottom:2px solid var(--accent); border-radius:0 0 0 6px; }
+.ap-acc { display:flex; flex-direction:column; height:min(560px,74vh); border:1px solid var(--line); border-left:3px solid var(--accent);
+  border-radius:0 8px 8px 8px; overflow:hidden; background:var(--paper); box-shadow:0 1px 5px rgba(0,0,0,.06); }
 .ap-acc-detail { flex:0 0 auto; display:flex; flex-direction:column; gap:7px; padding:11px 14px; background:var(--panel); }
 /* detail と tester の境界をはっきり (色かぶり解消): tester ヘッダは一段明るく + 上に実線 */
 .ap-acc .ap-test-head { border-top:1px solid var(--line); }
