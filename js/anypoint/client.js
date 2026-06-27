@@ -195,6 +195,49 @@ export class AnypointClient {
     return arr.map(u => u.uri || u.url).filter(Boolean);
   }
 
+  // ── Lineage explorer 用 (一覧は痩せ・detail がリッチ) ────
+  // API instance の detail。endpoint.uri=backend(実装URL)、proxyUri のパス=base path、
+  // deployment.targetId=配備先 Flex Gateway。
+  async apiInstance(orgId, envId, apiId) {
+    const j = await this._get(`apimanager/api/v1/organizations/${orgId}/environments/${envId}/apis/${apiId}`);
+    const ep = j.endpoint || {};
+    let basePath = "/";
+    try { const p = new URL(ep.proxyUri).pathname; basePath = (p && p !== "/") ? p : "/"; } catch {}
+    return {
+      id: j.id, label: j.instanceLabel || "", technology: j.technology || "", status: j.status || "",
+      specGroupId: j.groupId, specAssetId: j.assetId, specVersion: j.assetVersion,
+      backend: ep.uri || "", basePath,
+      gatewayId: j.deployment?.targetId || "", deployStatus: j.deployment?.expectedStatus || "",
+      _raw: j,
+    };
+  }
+
+  // Flex Gateway の detail。consumer URL の前半 (ingress.publicUrl) を持つ。
+  async gateway(orgId, envId, gatewayId) {
+    const j = await this._get(`gatewaymanager/api/v1/organizations/${orgId}/environments/${envId}/gateways/${gatewayId}`);
+    return {
+      id: j.id, name: j.name || "", status: j.status || "",
+      publicUrl: (j.configuration?.ingress?.publicUrl || "").replace(/\/$/, ""),
+      port: j.portConfiguration?.ingress?.port ?? null,
+      targetId: j.targetId || "", targetName: j.targetName || "",
+    };
+  }
+
+  // env の Flex Gateway 一覧 (Gateways 入口)。
+  async gateways(orgId, envId) {
+    const j = await this._get(`gatewaymanager/api/v1/organizations/${orgId}/environments/${envId}/gateways`);
+    return (j?.content || j?.data || []).map(g => ({ id: g.id, name: g.name, targetId: g.targetId, status: g.status }));
+  }
+
+  // org の API spec asset 一覧 (Specs 入口)。rest-api/oas/raml/evented-api 型のみ。
+  async specAssets(orgId) {
+    const j = await this._get(`exchange/api/v2/assets?organizationId=${orgId}&limit=250`);
+    const arr = Array.isArray(j) ? j : (j?.assets || j?.data || []);
+    const SPEC = /rest-api|oas|raml|evented-api|http-api|soap-api|async-api/i;
+    return arr.filter(a => SPEC.test(a.type || ""))
+      .map(a => ({ groupId: a.groupId, assetId: a.assetId, version: a.version, name: a.name || a.assetId, type: a.type }));
+  }
+
   // ── 書き込み操作 ─────────────────────────────────────────
   // !! confirm + prod ガードは UI 側の責務。ここは API 機構だけ。
   // !! CH2/RTF の Application Manager v2 には専用 "restart" verb が無い。
