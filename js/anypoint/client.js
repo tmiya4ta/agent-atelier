@@ -282,7 +282,7 @@ export class AnypointClient {
       return { endpoints: [], note: `${head}[${pick.classifier}] HTTP ${res.status}: ${b.slice(0, 120)}` };
     }
     let doc; try { doc = JSON.parse(text); }
-    catch { return { endpoints: [], note: `non-JSON spec @${host} (${pick.classifier}/${pick.packaging}) — JSON OAS のみ対応` }; }
+    catch { return { endpoints: [], note: `non-JSON spec @${host} (${pick.classifier}/${pick.packaging}) — only JSON OAS supported` }; }
     return { endpoints: extractOasEndpoints(doc), title: doc?.info?.title || assetId };
   }
 

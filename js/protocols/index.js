@@ -29,7 +29,7 @@ export const PROTOCOLS = [
     id: "slack",
     label: "Slack",
     sub: "web api · mrkdwn",
-    description: "Slack 互換 Web API (chat.postMessage)",
+    description: "Slack-compatible Web API (chat.postMessage)",
     AdapterClass: SlackAdapter,
     status: "ready"
   },
@@ -37,7 +37,7 @@ export const PROTOCOLS = [
     id: "mock",
     label: "Mock",
     sub: "offline · scripted",
-    description: "疑似エージェント · 名前だけで役割を表す · 台本 (Script Editor) を再生",
+    description: "Pseudo agent · role conveyed by name alone · replays a script (Script Editor)",
     AdapterClass: MockAdapter,
     status: "ready"
   },
