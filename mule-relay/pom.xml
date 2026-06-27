@@ -7,7 +7,7 @@
     <groupId>fe1db8fb-8261-4b5c-a591-06fea582f980</groupId>
     <artifactId>atelier-relay</artifactId>
     <!-- version 運用ルール: semver 単調増加。 デプロイのたびに patch +1。 Exchange は同 version 再 publish 不可。 -->
-    <version>1.0.1</version>
+    <version>1.0.2</version>
     <packaging>mule-application</packaging>
 
     <name>atelier-relay</name>
