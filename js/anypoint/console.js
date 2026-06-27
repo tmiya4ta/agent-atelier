@@ -645,7 +645,14 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
     } catch { return ""; }
   }
   async function resolveBaseUrl(row) {
-    // 1) API Manager 管理下なら consumer URL (gateway publicUrl + basePath) を最優先。
+    // 1) デプロイ自身が公開する URL を最優先。generate-default-public-url=true のとき
+    //    Application Manager v2 の raw に直接入る (= そのアプリの権威ある public endpoint)。
+    //    API Manager 照会も URL 推測も不要。CH2 / 公開 URL 付き RTF を一発で解決する。
+    const inb = row._raw?.target?.deploymentSettings?.http?.inbound || {};
+    const pub = inb.publicUrl || inb["public-url"];   // 生 API は camelCase。kebab も一応見る
+    if (pub) return String(pub).replace(/\/+$/, "");
+    // 2) API Manager 管理下なら consumer URL (FGW publicUrl + basePath)。
+    //    アプリ直の public URL を持たず、FGW 越しでのみ叩けるケース。
     try {
       const apis = await cachedApis(row.envId);
       const inst = apis.find(a => a.applicationId && a.applicationId === row.id);
@@ -658,7 +665,7 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
         if (inst.endpointUri) return inst.endpointUri;
       }
     } catch {}
-    // 2) deployment raw に公開 URL があれば拾う。
+    // 3) raw から公開 URL を拾うヒューリスティック (最後の砦)。
     return guessUrlFromRaw(row._raw);
   }
   // base URL を 1〜2 リクエストで叩いて a2a/mcp を判定 (discovery は通常 auth 不要)。
