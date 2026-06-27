@@ -79,7 +79,20 @@ function injectStyles() {
 .ap-rq-send { padding:6px 16px; font:700 calc(12px*var(--fs,1)) var(--f-ui); color:var(--you-ink); background:var(--accent); border:1px solid var(--accent); border-radius:var(--radius); cursor:pointer; }
 .ap-rq-send[disabled] { opacity:.5; cursor:default; }
 .ap-rest-cols { flex:1; min-height:0; display:flex; }
-.ap-rest-req { flex:0 0 42%; display:flex; flex-direction:column; border-right:1px solid var(--line); overflow:auto; }
+.ap-ep-pane { flex:0 0 230px; min-width:0; border-right:1px solid var(--line); overflow:hidden; display:flex; flex-direction:column; background:var(--panel-soft); }
+.ap-ep-h { padding:8px 12px 4px; font:600 calc(10px*var(--fs,1)) var(--f-ui); letter-spacing:.05em; text-transform:uppercase; color:var(--ink-3); }
+.ap-ep-filter { margin:4px 10px 8px; padding:5px 8px; box-sizing:border-box; width:calc(100% - 20px); font:500 calc(11px*var(--fs,1)) var(--f-ui); color:var(--ink); background:var(--paper); border:1px solid var(--line); border-radius:var(--radius); }
+.ap-ep-list { flex:1; overflow:auto; }
+.ap-ep { display:flex; gap:8px; align-items:baseline; padding:5px 10px; cursor:pointer; border-bottom:1px solid var(--line-3); }
+.ap-ep:hover { background:var(--accent-soft); }
+.ap-ep-m { flex:0 0 auto; font:700 calc(9px*var(--fs,1)) var(--f-mono); padding:2px 5px; border-radius:3px; min-width:34px; text-align:center; color:var(--you-ink); background:var(--ink-4); }
+.ap-ep-m.GET{ background:var(--accent); } .ap-ep-m.POST{ background:var(--ok); } .ap-ep-m.PUT,.ap-ep-m.PATCH{ background:var(--caution); } .ap-ep-m.DELETE{ background:var(--warn); }
+.ap-ep-b { min-width:0; }
+.ap-ep-p { font:600 calc(11px*var(--fs,1)) var(--f-mono); color:var(--ink); word-break:break-all; }
+.ap-ep-s { font:500 calc(10px*var(--fs,1)) var(--f-ui); color:var(--ink-3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ap-ep-note { padding:10px 12px; font:500 calc(11px*var(--fs,1)) var(--f-ui); color:var(--ink-3); }
+.ap-ep-note.is-err { color:var(--warn); }
+.ap-rest-req { flex:0 0 36%; display:flex; flex-direction:column; border-right:1px solid var(--line); overflow:auto; }
 .ap-rest-res { flex:1; display:flex; flex-direction:column; min-width:0; overflow:auto; }
 .ap-fld { padding:10px 14px; display:flex; flex-direction:column; gap:5px; }
 .ap-fld > label { font:600 calc(10px*var(--fs,1)) var(--f-ui); letter-spacing:.05em; text-transform:uppercase; color:var(--ink-3); }
@@ -249,13 +262,42 @@ export function createTester({ getContext, onClose } = {}) {
     const resHead = el("div.ap-res-h", { style: { display: "none" } });
     const resBody = el("pre.ap-res-body");
 
-    bodyEl.append(
-      el("div.ap-rq", {}, methodSel, pathInp, sendBtn),
-      el("div.ap-rest-cols", {},
-        el("div.ap-rest-req", {},
-          el("div.ap-fld", {}, el("label", { text: "Headers (JSON)" }), hdrTa),
-          el("div.ap-fld", {}, el("label", { text: "Body" }), bodyTa)),
-        el("div.ap-rest-res", {}, resStatus, resHead, resBody)));
+    // OAS があれば左に endpoint 一覧 (クリックで method+path+body 充填 → Send で投げる)。
+    const cols = el("div.ap-rest-cols", {});
+    if (cur.loadEndpoints) cols.append(buildEndpointsPane());
+    cols.append(
+      el("div.ap-rest-req", {},
+        el("div.ap-fld", {}, el("label", { text: "Headers (JSON)" }), hdrTa),
+        el("div.ap-fld", {}, el("label", { text: "Body" }), bodyTa)),
+      el("div.ap-rest-res", {}, resStatus, resHead, resBody));
+    bodyEl.append(el("div.ap-rq", {}, methodSel, pathInp, sendBtn), cols);
+
+    // endpoint クリック → 入力を充填 (送信はしない。POST/DELETE の誤爆防止)。
+    function applyEndpoint(ep) {
+      restState.method = ep.method; methodSel.value = ep.method;
+      restState.path = ep.path; pathInp.value = ep.path;
+      if (ep.bodyExample && !["GET", "HEAD"].includes(ep.method)) { restState.body = ep.bodyExample; bodyTa.value = ep.bodyExample; }
+    }
+    function buildEndpointsPane() {
+      const list = el("div.ap-ep-list", {}, el("div.ap-ep-note", { text: "loading spec…" }));
+      const filter = el("input.ap-ep-filter", { type: "search", placeholder: "filter endpoints…" });
+      let all = [];
+      const draw = (q) => {
+        list.innerHTML = "";
+        const items = all.filter(e => !q || `${e.method} ${e.path} ${e.summary}`.toLowerCase().includes(q));
+        if (!items.length) { list.append(el("div.ap-ep-note", { text: all.length ? "no match" : "no endpoints" })); return; }
+        for (const ep of items) list.append(el("div.ap-ep", { title: ep.summary || "", on: { click: () => applyEndpoint(ep) } },
+          el("span", { class: `ap-ep-m ${ep.method}`, text: ep.method }),
+          el("div.ap-ep-b", {}, el("div.ap-ep-p", { text: ep.path }), ep.summary ? el("div.ap-ep-s", { text: ep.summary }) : null)));
+      };
+      cur.loadEndpoints().then(r => {
+        all = (r && r.endpoints) || [];
+        if (all.length) draw("");
+        else { list.innerHTML = ""; list.append(el("div.ap-ep-note", { text: (r && r.note) || "no endpoints" })); }
+      }).catch(e => { list.innerHTML = ""; list.append(el("div.ap-ep-note.is-err", { text: errMsg(e) })); });
+      filter.addEventListener("input", () => draw(filter.value.trim().toLowerCase()));
+      return el("div.ap-ep-pane", {}, el("div.ap-ep-h", { text: "Endpoints" }), filter, list);
+    }
 
     async function send() {
       const base = (urlEl.value || cur.baseUrl || "").trim();

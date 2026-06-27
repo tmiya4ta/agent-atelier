@@ -238,6 +238,27 @@ export class AnypointClient {
       .map(a => ({ groupId: a.groupId, assetId: a.assetId, version: a.version, name: a.name || a.assetId, type: a.type }));
   }
 
+  // ── API spec (OAS) 取得 → endpoint 抽出 (REST tester の「ボタンで投げる」用) ──
+  // rest-api asset の files から OAS を落としてパースし [{method, path, summary, bodyExample}] を返す。
+  // OAS 本体は presigned S3 (amazonaws.com·allowlist 済) に置かれるので externalLink を /proxy 経由で取得。
+  // YAML/RAML はブラウザに parser が無いため endpoints は空 (note で理由を返す)。
+  async fetchOas(groupId, assetId, version) {
+    const a = await this._get(`exchange/api/v2/assets/${groupId}/${assetId}/${version}`);
+    const files = a.files || [];
+    // JSON OAS を最優先 (fat-oas = $ref 解決済みで扱いやすい)。次に任意 oas、最後に raml/rest-api。
+    const pick = files.find(f => /oas/i.test(f.classifier || "") && /json/i.test(f.packaging || ""))
+              || files.find(f => /oas/i.test(f.classifier || ""))
+              || files.find(f => /(raml|rest-api)/i.test(f.classifier || ""));
+    const link = pick && (pick.externalLink || pick.downloadURL || pick.url);
+    if (!link) return { endpoints: [], note: "no downloadable spec file" };
+    const res  = await fetch(`/proxy?url=${encodeURIComponent(link)}`);
+    const text = await res.text();
+    if (!res.ok) return { endpoints: [], note: `spec download HTTP ${res.status}` };
+    let doc; try { doc = JSON.parse(text); }
+    catch { return { endpoints: [], note: "spec が YAML/RAML (endpoint 抽出は JSON OAS のみ対応)" }; }
+    return { endpoints: extractOasEndpoints(doc), title: doc?.info?.title || assetId };
+  }
+
   // ── 書き込み操作 ─────────────────────────────────────────
   // !! confirm + prod ガードは UI 側の責務。ここは API 機構だけ。
   // !! CH2/RTF の Application Manager v2 には専用 "restart" verb が無い。
@@ -280,6 +301,41 @@ export class AnypointClient {
 }
 
 // ── helpers ────────────────────────────────────────────────
+
+// OAS (Swagger 2 / OpenAPI 3) doc → [{ method, path, summary, bodyExample }]。
+// path は basePath / servers[0] の path 部分を前置する (spec の意図する完全パス)。
+export function extractOasEndpoints(doc) {
+  if (!doc || typeof doc !== "object") return [];
+  const base = oasBasePath(doc);
+  const out = [];
+  const METHODS = ["get", "post", "put", "patch", "delete", "head", "options"];
+  for (const [p, item] of Object.entries(doc.paths || {})) {
+    if (!item || typeof item !== "object") continue;
+    for (const m of METHODS) {
+      const op = item[m];
+      if (!op || typeof op !== "object") continue;
+      out.push({ method: m.toUpperCase(), path: (base + p) || p,
+        summary: op.summary || op.operationId || "", bodyExample: oasBodyExample(op) });
+    }
+  }
+  return out;
+}
+function oasBasePath(doc) {
+  if (doc.basePath) return String(doc.basePath).replace(/\/+$/, "");   // Swagger 2
+  const u = doc.servers && doc.servers[0] && doc.servers[0].url;       // OpenAPI 3
+  if (u) { try { return new URL(u, "http://_").pathname.replace(/\/+$/, ""); } catch { return /^\//.test(u) ? u.replace(/\/+$/, "") : ""; } }
+  return "";
+}
+function oasBodyExample(op) {
+  try {
+    const j = op.requestBody?.content?.["application/json"];        // OpenAPI 3
+    if (j?.example) return JSON.stringify(j.example, null, 2);
+    if (j?.schema?.example) return JSON.stringify(j.schema.example, null, 2);
+    const bp = (op.parameters || []).find(p => p && p.in === "body");  // Swagger 2
+    if (bp?.schema?.example) return JSON.stringify(bp.schema.example, null, 2);
+  } catch {}
+  return "";
+}
 
 // org 階層ツリーを [{ id, name }] に平坦化 (subOrganizations / children のどれでも辿る)。
 export function flattenOrgTree(node, acc = []) {
