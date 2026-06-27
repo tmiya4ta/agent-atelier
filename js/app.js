@@ -12,6 +12,8 @@ import { modalConfirm, modalAlert, modalPrompt, modalChoice, modalBusinessGroup,
 import { encryptText, decryptText }          from "./cryptobox.js";
 import { runAuthCodeFlow, redirectUri }     from "./oauth.js";
 import { parseScript, parseMocks, ScriptRunner }        from "./script.js";
+import { AnypointClient }                    from "./anypoint/client.js";
+import { mountAnypointConsole }              from "./anypoint/console.js";
 
 // /demo用のフォールバック (ブックマーク0件の時のみ使用)
 const DEMO_AGENTS = [
@@ -96,6 +98,11 @@ const state = {
   scriptPinned: false,   // PIN: ON の間は run してもパネルを閉じない
   sidePanelW: 240        // CONNECTIONS パネル領域の幅 (px)。 右端ドラッグで可変
 };
+
+// Anypoint console (Platform mode) のコントローラ。init() が module 評価の早い段階で
+// 呼ばれ、その中の wireAnypointConsole() がこれに代入するため、init() より前に宣言する
+// (後方で let 宣言すると TDZ で "can't access before initialization" になる)。
+let _apConsole = null;
 
 function defaultScriptPanelHeight() {
   return Math.round(window.innerHeight * 0.5);
@@ -243,6 +250,8 @@ function init() {
   wireRail();
   wireSideRail();
   wirePanelCollapse();
+  // Platform console は使い捨て add-on。失敗してもコア atelier を巻き込まないよう隔離する。
+  try { wireAnypointConsole(); } catch (e) { console.error("[anypoint] console wiring failed:", e); }
   wireTools();
   wireIdentityDialog();
   wireDialog();
@@ -410,6 +419,7 @@ function selectSideCat(cat) {
   $$(".side-panel .side-cat").forEach(p => {
     p.hidden = p.dataset.cat !== cat;
   });
+  if (cat === "platform" && _apConsole) _apConsole.onShow();
   dirty();
 }
 function isPanelCollapsed() { return document.body.classList.contains("is-panel-collapsed"); }
@@ -441,6 +451,26 @@ function wirePanelCollapse() {
   try { if (localStorage.getItem("atelier:panelCollapsed") === "1") document.body.classList.add("is-panel-collapsed"); } catch {}
   const btn = $("#panelCollapseBtn");
   if (btn) btn.addEventListener("click", () => setPanelCollapsed(!isPanelCollapsed()));
+}
+
+// ─── Anypoint console (Platform mode) の配線 ──────────────
+// 自己完結モジュールに DOM コンテナを渡してマウントするだけ。token 取得と control-plane
+// base は identity からここで注入する (console モジュールは app の state を知らない)。
+// 注: _apConsole の宣言は init() より前 (state 直後) に置く。init() は module 評価の
+//     早い段階で呼ばれるので、ここで let 宣言すると TDZ で "before initialization" になる。
+function wireAnypointConsole() {
+  const railPanel = $('.side-cat[data-cat="platform"]');
+  const stage     = $("#anypointConsole");
+  if (!railPanel || !stage) return;
+  _apConsole = mountAnypointConsole({
+    railPanel, stage,
+    bgTabsHost: $("#bgTabsScroll"),   // Platform 時の上部タブ = BG (CSS で表示切替)
+    identities: () => state.identities || [],
+    makeClient: (idn) => new AnypointClient({
+      getToken: () => ensureIdentityToken(idn, { rethrow: true }),
+      base:     controlPlaneBase(idn),
+    }),
+  });
 }
 
 // base64url ヘルパ

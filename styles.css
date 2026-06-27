@@ -425,6 +425,28 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
 .ws-tab.is-active .ws-tab-dot { background: var(--accent); }
 .ws-tab.has-windows .ws-tab-dot { background: var(--ok); }
 
+/* ── Platform モード: 上部タブを「窓ワークスペース」→「ビジネスグループ」に差し替え ──
+   非 Platform 時は #bgTabsScroll を隠し、窓ワークスペースタブを表示 (純 CSS で切替・JS 復元不要)。 */
+#bgTabsScroll { display: none; }
+body[data-side-cat="platform"] #wsTabsScroll,
+body[data-side-cat="platform"] #wsAdd,
+body[data-side-cat="platform"] .ws-tabs-hint { display: none; }
+body[data-side-cat="platform"] #bgTabsScroll { display: flex; }
+.bg-tab {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 11px;
+  font-family: var(--f-ui);
+  font-size: calc(12px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink-3); background: transparent;
+  border: 1px solid transparent; border-radius: 6px;
+  cursor: pointer; white-space: nowrap; max-width: 240px; min-width: 0;
+}
+.bg-tab:hover { background: var(--panel-soft); color: var(--ink-2); }
+.bg-tab.is-active { background: var(--panel); border-color: var(--line); color: var(--ink); box-shadow: var(--shadow-sm); }
+.bg-tab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-4); flex-shrink: 0; }
+.bg-tab.is-active .bg-tab-dot { background: var(--accent); }
+.bg-tab-name { overflow: hidden; text-overflow: ellipsis; }
+
 .ws-tab-name {
   overflow: hidden;
   text-overflow: ellipsis;
