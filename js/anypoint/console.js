@@ -16,6 +16,7 @@
 // (公式 UI に無い差別化)。書き込みは Restart のみ (confirm + prod ガード)。
 
 import { modalConfirm } from "../modal.js";
+import { createExplorer } from "./explorer.js";
 
 const $  = (s, p = document) => p.querySelector(s);
 const $$ = (s, p = document) => Array.from(p.querySelectorAll(s));
@@ -82,13 +83,6 @@ function fmtTime(ts) {
   const d = new Date(Number(ts)); const p = n => String(n).padStart(2, "0");
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
-// upstream/backend URL → backend app 名 (host 先頭ラベルから末尾の -shard を剥がす)。
-// 例: https://theorems-relay-23fgzd.pnwfdv.jpn-e1.cloudhub.io/snowapp/ → "theorems-relay"
-function hostApp(url) {
-  try { return new URL(url).host.split(".")[0].replace(/-[a-z0-9]+$/i, ""); }
-  catch { return ""; }
-}
-
 // ─── スタイル (1 回だけ注入・app のテーマ変数を流用 = dark 自動追従) ──
 let _styled = false;
 function injectStyles() {
@@ -124,6 +118,9 @@ body[data-side-cat="platform"] #emptyState { display:none; }
 .ap-btn.is-danger { color:var(--warn); }
 .ap-btn.is-danger:hover { background:var(--warn-soft); border-color:var(--warn); color:var(--warn); }
 .ap-btn[disabled] { opacity:.45; cursor:default; }
+.ap-lin-act { margin-top:8px; }
+.ap-btn.is-explore { width:100%; justify-content:center; color:var(--accent-ink); border-color:var(--accent); background:var(--accent-soft); }
+.ap-btn.is-explore:hover { background:var(--accent); color:var(--you-ink); }
 .ap-count { font:600 calc(11px*var(--fs,1)) var(--f-mono); color:var(--ink-3); }
 
 .ap-body { flex:1; display:flex; min-height:0; }
@@ -166,10 +163,6 @@ table.ap-table { width:100%; border-collapse:collapse; font:500 calc(12px*var(--
 .ap-lin-v.dim { color:var(--ink-3); }
 .ap-ex { color:var(--accent-ink); text-decoration:none; font-weight:700; }
 .ap-ex:hover { color:var(--accent); }
-.ap-api { display:flex; align-items:center; gap:7px; padding:3px 0 3px 56px; font:500 calc(11px*var(--fs,1)) var(--f-ui); color:var(--ink-2); }
-.ap-api.is-match { background:var(--accent-soft); border-radius:var(--radius); padding:3px 8px; margin:1px 0 1px 48px; }
-.ap-api-name { font-family:var(--f-mono); font-size:calc(11px*var(--fs,1)); color:var(--ink); }
-.ap-api-meta { color:var(--ink-3); font-size:calc(10px*var(--fs,1)); margin-left:auto; white-space:nowrap; }
 
 .ap-logs { position:absolute; inset:0; z-index:3; display:none; flex-direction:column; background:var(--panel); }
 .ap-logs.is-open { display:flex; }
@@ -211,7 +204,20 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
     logRow: null, logLines: [], logSeen: new Set(), logFilter: "ALL", logSearch: "", logPaused: false, logPoll: null,
     apiCache: new Map(), assetCache: new Map(),   // lineage: env→API instances / asset→info
     poll: null, autoRefresh: false, loaded: false,
+    _exploreEnv: null,   // Explorer が辿る env (drawer の row から設定)
   };
+
+  // ─── Lineage Explorer (横フィルムストリップのグラフナビゲータ) ───
+  const explorer = createExplorer({
+    stage,
+    getContext: () => ({
+      orgId: ctx.bgId,
+      envId: ctx._exploreEnv,
+      targetName: (id) => ctx.targets.get(id)?.name || id,
+      client: ctx.client,
+    }),
+    getDeployments: () => ctx.rows,
+  });
 
   // ─── rail (サイドバー: identity → BG → env 多選択) ──────────
   const selIdn = el("select", { on: { change: e => setIdentity(e.target.value) } });
@@ -524,37 +530,15 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
       specRow.append(el("span.ap-lin-v.dim", { text: "— pom 依存に API spec なし" }));
     }
     box.append(specRow);
-    // 3) API Manager (env の API instance) + upstream(backend) 解決で proxy↔deploy を実突合
-    try {
-      let apis = ctx.apiCache.get(row.envId);
-      if (!apis) { apis = await ctx.client.apiInstances(ctx.bgId, row.envId); ctx.apiCache.set(row.envId, apis); }
-      // 各 instance の backend URL を解決 (endpointUri 優先・無ければ upstreams)。結果は cache。
-      await Promise.all(apis.map(async (a) => {
-        if (a._backends) return;
-        if (a.endpointUri) { a._backends = [a.endpointUri]; return; }
-        try { a._backends = await ctx.client.apiUpstreams(ctx.bgId, row.envId, a.id); }
-        catch { a._backends = []; }
-      }));
-      if (ctx.selId !== row.id) return;
-      const backendApp = (a) => { for (const u of (a._backends || [])) { const n = hostApp(u); if (n) return n; } return ""; };
-      const isMatch = (a) => backendApp(a) === row.name
-        || a.applicationId === row.id
-        || (a.autodiscoveryName && a.autodiscoveryName === row.name);
-      const matched = apis.filter(isMatch).length;
-      box.append(el("div.ap-lin", {}, el("span.ap-lin-k", { text: "API Mgr" }),
-        el("span.ap-lin-v.dim", { text: `${apis.length} API${apis.length === 1 ? "" : "s"} in ${row.envName}${matched ? ` · ${matched} → here` : ""}` })));
-      // このデプロイに向く instance を先頭に
-      for (const a of [...apis.filter(isMatch), ...apis.filter(a => !isMatch(a))]) {
-        const ba = backendApp(a);
-        box.append(el("div", { class: "ap-api" + (isMatch(a) ? " is-match" : "") },
-          el("span", { class: `ap-dot ${/deployed|active/i.test(a.status) ? "ok" : "idle"}` }),
-          el("span.ap-api-name", { text: `${a.specName}:${a.specVersion}` }),
-          exLink(ctx.client.exchangeUrl(a.specGroupId, a.specAssetId, a.specVersion)),
-          el("span.ap-api-meta", { text: `${a.technology}${ba ? " · → " + ba : ""}${a.contracts != null ? " · " + a.contracts + "c" : ""}` })));
-      }
-    } catch (e) {
-      box.append(el("div.ap-note.is-err", { text: "API Manager: " + errMsg(e) }));
-    }
+    // 3) ここから先 (API instance → FGW → consumer URL) は再描画なしで辿りたいので
+    //    Explorer (横フィルムストリップ) に渡す。drawer には入口ボタンだけ置く。
+    box.append(el("div.ap-lin-act", {},
+      el("button.ap-btn.is-explore", { text: "⬡ Explore lineage →",
+        on: { click: () => openExplorer(row) } })));
+  }
+  function openExplorer(row) {
+    ctx._exploreEnv = row.envId;
+    explorer.open({ type: "deployment", id: row.id, title: row.name || row.id, sub: "deploy", data: row });
   }
   function kv(k, v) {
     // dl.ap-kv の grid (auto 1fr) を保つため、dt/dd を直接子にする fragment を返す。
