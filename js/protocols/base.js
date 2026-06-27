@@ -143,14 +143,14 @@ export class ProtocolAdapter extends EventTarget {
       this._mockSeq = (this._mockSeq || 0);
       const r = entries[this._mockSeq];
       this._mockSeq += 1;
-      return r != null ? String(r) : `⚠️ (mock) 応答が尽きました: ${String(text||"").slice(0,40)}`;
+      return r != null ? String(r) : `⚠️ (mock) ran out of replies: ${String(text||"").slice(0,40)}`;
     }
     const t = String(text || "");
     for (const e of entries) {
       const m = e && e.match;
       if (m === "*" || (m && t.indexOf(m) >= 0)) return String(e.reply ?? "");
     }
-    return `⚠️ (mock) 応答が定義されていません: ${t.slice(0, 40)}`;
+    return `⚠️ (mock) no reply defined: ${t.slice(0, 40)}`;
   }
 
   mockRestore() {

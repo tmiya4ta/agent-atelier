@@ -284,16 +284,16 @@ function inspectImport(state) {
       } catch { return false; }
     };
     if (c.authUrl && probe(c.authUrl))
-      warnings.push(`catalog "${c.name || c.id}" の authUrl が Anypoint 以外: ${c.authUrl}`);
+      warnings.push(`catalog "${c.name || c.id}" authUrl is not an Anypoint host: ${c.authUrl}`);
     if (c.tokenUrl && probe(c.tokenUrl))
-      warnings.push(`catalog "${c.name || c.id}" の tokenUrl が Anypoint 以外: ${c.tokenUrl}`);
+      warnings.push(`catalog "${c.name || c.id}" tokenUrl is not an Anypoint host: ${c.tokenUrl}`);
   }
   // snapshot に secret が含まれている (export 元が strip し忘れ or 外部由来)
   const hasSecret = (o) => o && SENSITIVE_FIELDS.some(k => o[k]);
   if ((state.catalogs || []).some(hasSecret))
-    warnings.push("snapshot に catalog の secret (clientSecret / accessToken 等) が含まれています");
+    warnings.push("snapshot contains catalog secrets (clientSecret / accessToken, etc.)");
   if ((state.bookmarks || []).some(hasSecret))
-    warnings.push("snapshot に bookmark の auth token が含まれています");
+    warnings.push("snapshot contains bookmark auth tokens");
   // prototype pollution 経由
   const dangerKeys = (o) => o && Object.keys(o).some(k => k === "__proto__" || k === "constructor" || k === "prototype");
   const scan = (obj, depth = 0) => {
@@ -302,7 +302,7 @@ function inspectImport(state) {
     for (const v of Object.values(obj)) if (scan(v, depth + 1)) return true;
     return false;
   };
-  if (scan(state)) warnings.push("snapshot に __proto__ / constructor / prototype キーが含まれています");
+  if (scan(state)) warnings.push("snapshot contains __proto__ / constructor / prototype keys");
   return { warnings };
 }
 
