@@ -464,6 +464,7 @@ function wireAnypointConsole() {
   if (!railPanel || !stage) return;
   _apConsole = mountAnypointConsole({
     railPanel, stage,
+    bgTabsHost: $("#bgTabsScroll"),   // Platform 時の上部タブ = BG (CSS で表示切替)
     identities: () => state.identities || [],
     makeClient: (idn) => new AnypointClient({
       getToken: () => ensureIdentityToken(idn, { rethrow: true }),

@@ -93,6 +93,10 @@ function injectStyles() {
 .ap-field { display:flex; flex-direction:column; gap:5px; }
 .ap-field > label { font:600 calc(10px*var(--fs,1))/1 var(--f-ui); letter-spacing:.06em; color:var(--ink-3); text-transform:uppercase; }
 .ap-field select { width:100%; padding:6px 8px; font:500 calc(12px*var(--fs,1)) var(--f-ui); color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); }
+.ap-persp { display:flex; gap:3px; padding:3px; background:var(--panel-soft); border:1px solid var(--line); border-radius:var(--radius); }
+.ap-persp-btn { flex:1; padding:6px 8px; font:600 calc(11px*var(--fs,1)) var(--f-ui); color:var(--ink-3); background:transparent; border:none; border-radius:calc(var(--radius) - 2px); cursor:pointer; white-space:nowrap; }
+.ap-persp-btn:hover { color:var(--ink); }
+.ap-persp-btn.is-on { background:var(--ink-navy); color:var(--you-ink); }
 .ap-envs { display:flex; flex-direction:column; gap:3px; max-height:42vh; overflow:auto; }
 .ap-env { display:flex; align-items:center; gap:7px; padding:5px 7px; border-radius:var(--radius); cursor:pointer; font:500 calc(12px*var(--fs,1)) var(--f-ui); color:var(--ink-2); }
 .ap-env:hover { background:var(--panel-soft); }
@@ -185,7 +189,7 @@ table.ap-table { width:100%; border-collapse:collapse; font:500 calc(12px*var(--
 }
 
 // ════════════════════════════════════════════════════════════
-export function mountAnypointConsole({ railPanel, stage, identities, makeClient }) {
+export function mountAnypointConsole({ railPanel, stage, identities, makeClient, bgTabsHost }) {
   injectStyles();
   // styles.css に [hidden]{display:none !important} があり、CSS の display:flex では
   // 上書きできない。hidden 属性自体を外し、表示は .ap-console の display ルール
@@ -196,7 +200,7 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
 
   const ctx = {
     idnId: null, client: null,
-    bgId: null, bgName: "", envs: [], selEnv: new Set(),
+    bgId: null, bgName: "", bgs: [], persp: "runtime", envs: [], selEnv: new Set(),
     targets: new Map(),   // targetId → { id, name, type } (CH2/RTF 判別 + 名前解決)
     rows: [], prevStatus: new Map(),
     filter: "", sort: { key: "name", dir: 1 },
@@ -219,16 +223,22 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
     getDeployments: () => ctx.rows,
   });
 
-  // ─── rail (サイドバー: identity → BG → env 多選択) ──────────
+  // ─── rail (サイドバー: identity → perspective → env 多選択) ──────────
+  // BG (business group) は上部タブへ移したので rail からは外す。
   const selIdn = el("select", { on: { change: e => setIdentity(e.target.value) } });
-  const selBg  = el("select", { on: { change: e => setBusinessGroup(e.target.value) } });
   const envBox = el("div.ap-envs");
   const railNote = el("div.ap-note");
+  // perspective 切替: Runtime (Fleet) ↔ Lineage (Explorer)。
+  const PERSPS = [["runtime", "⊞ Runtime"], ["lineage", "⬡ Lineage"]];
+  const perspBtns = PERSPS.map(([k, label]) =>
+    el("button.ap-persp-btn", { dataset: { persp: k }, text: label, on: { click: () => setPersp(k) } }));
+  const perspSeg = el("div.ap-persp", {}, ...perspBtns);
+  const envField = el("div.ap-field", {}, el("label", { text: "Environments" }), envBox);
   railPanel.append(el("div.ap-rail", {},
     el("h4", { text: "PLATFORM" }),
     el("div.ap-field", {}, el("label", { text: "Identity" }), selIdn),
-    el("div.ap-field", {}, el("label", { text: "Business group" }), selBg),
-    el("div.ap-field", {}, el("label", { text: "Environments" }), envBox),
+    el("div.ap-field", {}, el("label", { text: "Perspective" }), perspSeg),
+    envField,
     railNote,
   ));
 
@@ -272,6 +282,7 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
     logBody);
 
   stage.append(toolbar, el("div.ap-body", {}, tablewrap, drawer), logsOverlay);
+  syncPerspUI();   // 既定 perspective (Runtime) を mount 時点で反映 (onShow 前でも active 表示)
 
   // ─── identity → BG → env の連鎖ロード ─────────────────────
   function fillIdentities() {
@@ -284,7 +295,8 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
 
   async function setIdentity(idnId) {
     ctx.idnId = idnId || null; ctx.client = null;
-    selBg.innerHTML = ""; envBox.innerHTML = ""; ctx.envs = []; ctx.selEnv.clear();
+    ctx.bgs = []; ctx.bgId = null; renderBgTabs();
+    envBox.innerHTML = ""; ctx.envs = []; ctx.selEnv.clear();
     ctx.rows = []; renderTable(); closeDrawer();
     if (!idnId) { note(""); return; }
     const idn = (identities() || []).find(i => i.id === idnId);
@@ -292,16 +304,30 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
     note("connecting…");
     try {
       ctx.client = makeClient(idn);
-      const bgs = await ctx.client.businessGroups();
-      selBg.append(el("option", { value: "", text: "— select business group —" }));
-      for (const b of bgs) selBg.append(el("option", { value: b.id, text: b.name || b.id }));
-      note(bgs.length ? "select a business group" : "no business groups");
-      if (bgs.length === 1) { selBg.value = bgs[0].id; setBusinessGroup(bgs[0].id); }
+      ctx.bgs = await ctx.client.businessGroups();
+      renderBgTabs();
+      note(ctx.bgs.length ? "pick a business group (top tabs ↑)" : "no business groups");
+      if (ctx.bgs.length === 1) setBusinessGroup(ctx.bgs[0].id);
     } catch (e) { note(errMsg(e), true); }
   }
 
+  // ─── 上部タブ = ビジネスグループ (Platform モード時のみ表示・CSS で切替) ──
+  function renderBgTabs() {
+    if (!bgTabsHost) return;
+    bgTabsHost.innerHTML = "";
+    for (const b of ctx.bgs) {
+      const tab = el("button.bg-tab", { dataset: { bgId: b.id },
+        on: { click: () => { if (b.id !== ctx.bgId) setBusinessGroup(b.id); } } },
+        el("span.bg-tab-dot"), el("span.bg-tab-name", { text: b.name || b.id }));
+      if (b.id === ctx.bgId) tab.classList.add("is-active");
+      bgTabsHost.append(tab);
+    }
+  }
+
   async function setBusinessGroup(bgId) {
-    ctx.bgId = bgId || null; ctx.bgName = selBg.selectedOptions[0]?.textContent || "";
+    ctx.bgId = bgId || null; ctx.bgName = ctx.bgs.find(b => b.id === bgId)?.name || bgId || "";
+    renderBgTabs();
+    explorer.clearCache();   // env/BG が変わると lineage の cache は無効
     envBox.innerHTML = ""; ctx.envs = []; ctx.selEnv.clear(); ctx.rows = []; renderTable(); closeDrawer();
     if (!bgId || !ctx.client) { note(""); return; }
     note("loading environments…");
@@ -319,7 +345,9 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
       initial.forEach(e => ctx.selEnv.add(e.id));
       renderEnvs();
       note(`${envs.length} environments`);
-      loadDeployments();
+      await loadDeployments();
+      // Lineage 表示中に BG を切替えたら explore env を追従させ、入口を開き直す。
+      if (ctx.persp === "lineage") { ctx._exploreEnv = [...ctx.selEnv][0] || null; explorer.open(null); }
     } catch (e) { note(errMsg(e), true); }
   }
 
@@ -331,6 +359,11 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
       cb.addEventListener("change", () => {
         if (cb.checked) ctx.selEnv.add(e.id); else ctx.selEnv.delete(e.id);
         loadDeployments();
+        // Lineage は単一 env を辿るので、選択先頭に追従して開き直す (cache は env 跨ぎで無効)。
+        if (ctx.persp === "lineage") {
+          const first = [...ctx.selEnv][0] || null;
+          if (first !== ctx._exploreEnv) { ctx._exploreEnv = first; explorer.clearCache(); explorer.open(null); }
+        }
       });
       envBox.append(el("label.ap-env", {}, cb, e.name || e.id,
         e.isProduction ? el("span.ap-prod", { text: "PROD" }) : null));
@@ -536,9 +569,27 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
       el("button.ap-btn.is-explore", { text: "⬡ Explore lineage →",
         on: { click: () => openExplorer(row) } })));
   }
+  // drawer の「Explore →」: Lineage perspective へ切替え、この row を起点に開く。
   function openExplorer(row) {
     ctx._exploreEnv = row.envId;
-    explorer.open({ type: "deployment", id: row.id, title: row.name || row.id, sub: "deploy", data: row });
+    setPersp("lineage", { seed: { type: "deployment", id: row.id, title: row.name || row.id, sub: "deploy", data: row } });
+  }
+
+  // ─── perspective 切替: Runtime (Fleet) ↔ Lineage (Explorer) ──
+  function syncPerspUI() {
+    perspBtns.forEach(b => b.classList.toggle("is-on", b.dataset.persp === ctx.persp));
+    // Runtime は env 複数選択、Lineage は単一 explore env。env field は両方で意味があるので出す。
+    stage.dataset.persp = ctx.persp;
+  }
+  async function setPersp(p, opts = {}) {
+    ctx.persp = p; syncPerspUI();
+    if (p !== "lineage") { explorer.close(); return; }
+    // Lineage は単一 env を辿る。明示 seed が無ければ選択 env の先頭 (無ければ env 先頭)。
+    if (opts.seed) ctx._exploreEnv = opts.seed.data?.envId || ctx._exploreEnv;
+    else ctx._exploreEnv = ctx._exploreEnv || [...ctx.selEnv][0] || ctx.envs[0]?.id || null;
+    explorer.open(opts.seed || null);
+    // Deployments 入口を埋めるため rows が空なら一度ロードして開き直す (Specs/Gateways は env/org 直引きで先に使える)。
+    if (!opts.seed && !ctx.rows.length && ctx.selEnv.size) { await loadDeployments(); explorer.open(null); }
   }
   function kv(k, v) {
     // dl.ap-kv の grid (auto 1fr) を保つため、dt/dd を直接子にする fragment を返す。
@@ -654,8 +705,10 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient 
   return {
     onShow() {
       fillIdentities();
+      syncPerspUI();      // perspective seg の active 反映
+      renderBgTabs();     // 上部タブ = BG (Platform 表示時に CSS で出る)
       if (!ctx.loaded) { ctx.loaded = true; }
-      else if (ctx.client && ctx.bgId) loadDeployments();
+      else if (ctx.client && ctx.bgId && ctx.persp === "runtime") loadDeployments();
     },
   };
 }
