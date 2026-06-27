@@ -269,7 +269,15 @@ export class AnypointClient {
       res  = await fetch(`/proxy?url=${encodeURIComponent(safe)}`, token ? { headers: { Authorization: `Bearer ${token}` } } : {});
       text = await res.text();
     } catch (e) { return { endpoints: [], note: `spec fetch failed @${host}: ${e?.message || e}` }; }
-    if (!res.ok) return { endpoints: [], note: `[${pick.classifier}] ${host} HTTP ${res.status}: ${String(text).replace(/<[^>]+>/g, " ").trim().slice(0, 90)}` };
+    if (!res.ok) {
+      const b = String(text).replace(/<[^>]+>/g, " ").trim();
+      // proxy の "Illegal character in query at index N: <url>" から該当文字を抽出して見せる
+      // (どの文字が引っかかってるか確定させ、proxy 側の encode 対象に足すため)。
+      let extra = "";
+      const m = b.match(/index (\d+):\s*(\S+)/);
+      if (m) { const ch = (m[2] || "")[Number(m[1])]; if (ch) extra = `  ◆char@${m[1]}="${ch}" U+${ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0")}`; }
+      return { endpoints: [], note: `[${pick.classifier}] ${host} HTTP ${res.status}: ${b.slice(0, 110)}${extra}` };
+    }
     let doc; try { doc = JSON.parse(text); }
     catch { return { endpoints: [], note: `non-JSON spec @${host} (${pick.classifier}/${pick.packaging}) — JSON OAS のみ対応` }; }
     return { endpoints: extractOasEndpoints(doc), title: doc?.info?.title || assetId };

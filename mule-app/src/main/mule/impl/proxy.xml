@@ -172,7 +172,7 @@ output application/java
 var loc = (attributes.headers['location'] default "") as String
 fun enc(s, ch, rep) = (s splitBy ch) joinBy rep
 ---
-enc(enc(enc(enc(enc(enc(enc(loc, " ", "%20"), "{", "%7B"), "}", "%7D"), "|", "%7C"), "^", "%5E"), "<", "%3C"), ">", "%3E")]]></ee:set-variable>
+enc(enc(enc(enc(enc(enc(enc(enc(enc(enc(enc(enc(loc, " ", "%20"), "{", "%7B"), "}", "%7D"), "|", "%7C"), "^", "%5E"), "<", "%3C"), ">", "%3E"), "[", "%5B"), "]", "%5D"), "`", "%60"), "\"", "%22"), "\\", "%5C")]]></ee:set-variable>
                                 </ee:variables>
                             </ee:transform>
                             <!-- redirect 先にも SSRF ガード (allowlisted host が内部へ飛ばす経路を遮断) -->
