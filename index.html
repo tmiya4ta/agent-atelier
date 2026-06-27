@@ -142,6 +142,9 @@
       <button class="rail-ico" data-cat="tools" role="tab" aria-selected="false" title="Tools" aria-label="Tools">
         <svg viewBox="0 0 18 18" width="18" height="18"><path d="M11.5 2.5 a3.2 3.2 0 0 0 -3.9 4.2 L2.6 11.7 a1.4 1.4 0 0 0 2 2 l5 -5 a3.2 3.2 0 0 0 4.2 -3.9 l-2.1 2.1 -1.9 -0.5 -0.5 -1.9 Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
       </button>
+      <button class="rail-ico" data-cat="platform" role="tab" aria-selected="false" title="Platform · Anypoint (Runtime Manager)" aria-label="Platform">
+        <svg viewBox="0 0 18 18" width="18" height="18"><rect x="3" y="3.5" width="12" height="4.6" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="3" y="9.9" width="12" height="4.6" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="5.7" cy="5.8" r="1" fill="currentColor"/><circle cx="5.7" cy="12.2" r="1" fill="currentColor"/></svg>
+      </button>
       <div class="rail-spacer"></div>
       <button class="rail-collapse" id="panelCollapseBtn" title="Collapse / expand panel" aria-label="collapse panel">
         <svg viewBox="0 0 16 16" width="14" height="14"><polyline points="9.5,3.5 5,8 9.5,12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -275,6 +278,9 @@
           </div>
         </section>
       </div>
+
+      <!-- ─── PLATFORM (Anypoint console — org/env context rail; filled by js/anypoint/console.js) ─── -->
+      <div class="side-cat" data-cat="platform" hidden></div>
      </div>
     </div>
    </div>
@@ -308,6 +314,10 @@
     <span class="ws-tabs-hint">
       double-click to rename
     </span>
+    <!-- Platform モード時のみ表示 (CSS で切替): 上部タブ = ビジネスグループ -->
+    <div class="ws-tabs-scroll bg-tabs" id="bgTabsScroll" aria-label="business groups">
+      <!-- dynamic BG tabs (console.js が描画) -->
+    </div>
   </nav>
 
   <!-- ───────────────  ASSET DRAWER  ─────────────── -->
@@ -456,6 +466,9 @@
 
     <!-- windows are injected here -->
     <div class="windows-layer" id="windowsLayer"></div>
+
+    <!-- Anypoint console (Platform mode) — DOM/styles は js/anypoint/console.js が注入 -->
+    <section id="anypointConsole" hidden aria-label="Anypoint console"></section>
   </main>
 
   <!-- ───────────────  CONNECT DIALOG  ─────────────── -->
