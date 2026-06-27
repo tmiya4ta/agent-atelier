@@ -173,6 +173,40 @@ table.ap-table { width:100%; border-collapse:collapse; font:500 calc(12px*var(--
 .ap-tree-v { color:var(--ink); }
 .ap-tree-v.dim { color:var(--ink-4); }
 
+/* ─── control deck (start/stop · replicas · vCores · restart · delete) ─── */
+.ap-deck { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; margin-top:9px; padding-top:10px; border-top:1px dashed var(--line); }
+.ap-deck-load { font:500 calc(11px*var(--fs,1)) var(--f-ui); color:var(--ink-4); }
+.ap-deck-cell { display:inline-flex; align-items:center; gap:7px; }
+.ap-deck-k { font:700 calc(9px*var(--fs,1)) var(--f-ui); letter-spacing:.07em; text-transform:uppercase; color:var(--ink-3); }
+.ap-deck-ro { font:500 calc(11px*var(--fs,1)) var(--f-mono); color:var(--ink-2); }
+/* ⏻ power button: on=緑グロー / off=灰 */
+.ap-pwr { width:30px; height:30px; border-radius:50%; border:1.5px solid var(--line); background:var(--panel-soft); color:var(--ink-4); font-size:calc(15px*var(--fs,1)); line-height:1; cursor:pointer; transition:all .18s ease; flex:0 0 auto; }
+.ap-pwr:hover:not([disabled]) { transform:scale(1.08); }
+.ap-pwr.on { color:var(--you-ink); background:var(--ok); border-color:var(--ok); box-shadow:0 0 0 3px color-mix(in srgb, var(--ok) 28%, transparent), 0 0 12px color-mix(in srgb, var(--ok) 55%, transparent); }
+.ap-pwr.off { color:var(--ink-3); }
+.ap-pwr[disabled] { opacity:.5; cursor:default; }
+.ap-deck-state { font:700 calc(10px*var(--fs,1)) var(--f-ui); letter-spacing:.06em; }
+.ap-deck-state.on { color:var(--ok); } .ap-deck-state.off { color:var(--ink-4); }
+/* ⟐ replicas stepper (pill) */
+.ap-step { display:inline-flex; align-items:center; border:1px solid var(--line); border-radius:99px; background:var(--paper); overflow:hidden; }
+.ap-step-b { width:24px; height:24px; border:none; background:transparent; color:var(--ink-2); font-size:calc(15px*var(--fs,1)); line-height:1; cursor:pointer; }
+.ap-step-b:hover:not([disabled]) { background:var(--accent-soft); color:var(--accent-ink); }
+.ap-step-b[disabled] { opacity:.35; cursor:default; }
+.ap-step-v { min-width:22px; text-align:center; font:700 calc(12px*var(--fs,1)) var(--f-mono); color:var(--ink); }
+.ap-step-v.chg { color:var(--accent-ink); }
+/* ⚡ vCores segmented */
+.ap-seg { display:inline-flex; border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; background:var(--paper); }
+.ap-seg-b { padding:4px 9px; border:none; border-right:1px solid var(--line); background:transparent; color:var(--ink-3); font:600 calc(11px*var(--fs,1)) var(--f-mono); cursor:pointer; }
+.ap-seg-b:last-child { border-right:none; }
+.ap-seg-b:hover:not([disabled]):not(.is-on) { background:var(--panel-soft); color:var(--ink); }
+.ap-seg-b.is-on { background:var(--ink-navy); color:var(--you-ink); }
+.ap-seg-b[disabled] { opacity:.5; cursor:default; }
+/* ✓ Apply (staged) — パルスして注意を引く */
+@keyframes apApplyPulse { 0%,100% { box-shadow:0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); } 50% { box-shadow:0 0 0 5px color-mix(in srgb, var(--accent) 0%, transparent); } }
+.ap-apply { padding:5px 14px; border:1px solid var(--accent); border-radius:var(--radius); background:var(--accent); color:var(--you-ink); font:700 calc(11px*var(--fs,1)) var(--f-ui); cursor:pointer; animation:apApplyPulse 1.6s ease-out infinite; }
+.ap-apply:hover { filter:brightness(1.06); }
+.ap-apply[disabled] { opacity:.6; cursor:default; animation:none; }
+
 .ap-drawer { width:0; flex:0 0 auto; overflow:hidden; border-left:1px solid var(--line); background:var(--panel); transition:width .14s ease; }
 .ap-drawer.is-open { width:380px; }
 .ap-dr-inner { width:380px; height:100%; overflow:auto; display:flex; flex-direction:column; }
@@ -234,6 +268,7 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
     logRow: null, logLines: [], logSeen: new Set(), logFilter: "ALL", logSearch: "", logPaused: false, logPoll: null,
     apiCache: new Map(), assetCache: new Map(),   // lineage: env→API instances / asset→info
     typeCache: new Map(),   // tester: deploymentId → { type, baseUrl, oas }
+    deck: null,             // control deck の staged 状態 (展開中の row)
     poll: null, autoRefresh: false, loaded: false,
     _exploreEnv: null,   // Explorer が辿る env (drawer の row から設定)
   };
@@ -536,6 +571,7 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
       row._raw = det._raw || row._raw;   // restart の PATCH body + publicUrl 解決に最新 raw
       if (ctx.selId !== row.id) return;  // 切替後の遅延を無視
       buildAccDetail(det);               // version/replicas/resources を det で埋め直し
+      initDeck(det); renderDeck();       // control deck を det の実値で初期化
       loadLineageStrip(row);             // asset/spec を strip に 1 行で
       const t = await resolveTest(row);  // 型 + base URL
       if (ctx.selId !== row.id) return;
@@ -574,10 +610,10 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
         el("span.ap-spacer", { style: { flex: "1" } }),
         el("button.ap-btn", { text: "⬡ Lineage", title: "Explore lineage (switch perspective)", on: { click: () => openExplorer(r) } }),
         el("button.ap-btn", { text: "≡ Logs", on: { click: () => openLogs(r) } }),
-        el("button.ap-btn.is-danger", { text: "↻ Restart", on: { click: () => doRestart(r) } }),
         el("button.ap-btn", { text: "×", title: "collapse", on: { click: () => collapseRow() } })),
       factRow,
       el("div.ap-acc-tree"),                                   // lineage tree を後で埋める
+      el("div.ap-deck", {}, el("span.ap-deck-load", { text: "controls…" })),  // control deck (det 取得後に埋める)
     );
   }
   function setTypeBadge(t) {
@@ -612,6 +648,108 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
     specRow.replaceWith(s
       ? treeRow("└─", "spec", "◇", "spec", `${s.assetId}:${s.version}`, ctx.client.exchangeUrl(s.groupId, s.assetId, s.version))
       : treeRow("└─", "spec", "◇", "spec", "no API spec", null, true));
+  }
+
+  // ─── control deck (start/stop · replicas · vCores · restart · delete) ───
+  // det の実値で staged 状態を初期化。以後 deck 操作は ctx.deck を更新して renderDeck で再描画。
+  function initDeck(r) {
+    ctx.deck = {
+      id: r.id, name: r.name || r.id, envId: r.envId, envName: r.envName, isProd: !!r.isProd, raw: r._raw,
+      status: r.appStatus || r.deployStatus || "", desired: r.desired || "",
+      curReplicas: r.replicas == null ? 1 : r.replicas, replicas: r.replicas == null ? 1 : r.replicas,
+      curVCores: r.vCores ?? null, vCores: r.vCores ?? null, cpu: r.cpu, mem: r.mem,
+      busy: false,
+    };
+  }
+  function deckRunning() { const d = ctx.deck; return /RUN|START/i.test(d.desired || d.status || ""); }
+  function deckDirty() { const d = ctx.deck; return d.replicas !== d.curReplicas || d.vCores !== d.curVCores; }
+  function renderDeck() {
+    const box = $(".ap-deck", accDetail); const d = ctx.deck; if (!box || !d) return;
+    box.innerHTML = "";
+    const running = deckRunning();
+    // ⏻ power
+    const power = el("button", { class: `ap-pwr ${running ? "on" : "off"}`, text: "⏻",
+      title: running ? "Stop app" : "Start app", disabled: d.busy, on: { click: () => running ? doStop() : doStart() } });
+    box.append(el("span.ap-deck-cell", {}, power,
+      el("span", { class: `ap-deck-state ${running ? "on" : "off"}`, text: running ? "RUNNING" : "STOPPED" })));
+    // ⟐ replicas stepper
+    const step = (delta) => { ctx.deck.replicas = Math.min(8, Math.max(1, d.replicas + delta)); renderDeck(); };
+    const stepV = el("span.ap-step-v", { text: String(d.replicas) });
+    if (d.replicas !== d.curReplicas) stepV.classList.add("chg");
+    box.append(el("span.ap-deck-cell", {}, el("span.ap-deck-k", { text: "⟐ replicas" }),
+      el("div.ap-step", {},
+        el("button.ap-step-b", { text: "−", disabled: d.busy || d.replicas <= 1, on: { click: () => step(-1) } }),
+        stepV,
+        el("button.ap-step-b", { text: "+", disabled: d.busy || d.replicas >= 8, on: { click: () => step(1) } }))));
+    // ⚡ size: vCores (CH2) or cpu/mem (RTF)
+    if (d.curVCores != null) {
+      const VC = [0.1, 0.2, 0.5, 1, 2, 4];
+      box.append(el("span.ap-deck-cell", {}, el("span.ap-deck-k", { text: "⚡ vCores" }),
+        el("div.ap-seg", {}, ...VC.map(v => el("button", {
+          class: `ap-seg-b ${d.vCores === v ? "is-on" : ""}`, text: fmtVCores(v), disabled: d.busy,
+          on: { click: () => { ctx.deck.vCores = v; renderDeck(); } } })))));
+    } else if (d.cpu || d.mem) {
+      box.append(el("span.ap-deck-cell", {}, el("span.ap-deck-k", { text: "⚡ size" }),
+        el("span.ap-deck-ro", { text: `${d.cpu || "—"} cpu / ${d.mem || "—"} mem` })));
+    }
+    // ✓ Apply (staged changes)
+    if (deckDirty()) box.append(el("button.ap-apply", { text: "✓ Apply", disabled: d.busy, on: { click: () => doApply() } }));
+    box.append(el("span.ap-spacer", { style: { flex: "1" } }));
+    box.append(el("button.ap-btn", { text: "↻ Restart", disabled: d.busy, on: { click: () => doRestartDeck() } }));
+    box.append(el("button.ap-btn.is-danger", { text: "🗑 Delete", disabled: d.busy, on: { click: () => doDelete() } }));
+  }
+  function setDeckBusy(b) { if (ctx.deck) ctx.deck.busy = b; renderDeck(); }
+  // 共通: confirm (prod ガード) → busy → fn → 再ロード。
+  async function deckAct(label, verb, fn, { danger } = {}) {
+    const d = ctx.deck; if (!d) return;
+    const ok = await modalConfirm({
+      title: d.isProd ? `⚠ PRODUCTION — ${label}` : label,
+      message: `${verb} ${d.name} in “${d.envName}”.` + (d.isProd ? `\n\n⚠ This is a production environment.` : ""),
+      danger: !!danger || d.isProd, confirmLabel: label, cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+    ctx.busy.add(d.id); renderTable(); setDeckBusy(true);
+    try { await fn(); note(`${d.name}: ${label} requested`); setTimeout(() => loadDeployments(), 1500); }
+    catch (e) { note(`${label} failed: ${errMsg(e)}`, true); }
+    finally { ctx.busy.delete(d.id); renderTable(); if (ctx.deck === d) setDeckBusy(false); }
+  }
+  function doStart() { const d = ctx.deck; deckAct("Start", "Start", () => ctx.client.start(ctx.bgId, d.envId, d.id, d.raw)); }
+  function doStop()  { const d = ctx.deck; deckAct("Stop",  "Stop",  () => ctx.client.stop(ctx.bgId, d.envId, d.id, d.raw)); }
+  function doRestartDeck() { const d = ctx.deck; deckAct("Restart", "Restart (rolling)", () => ctx.client.restart(ctx.bgId, d.envId, d.id, d.raw)); }
+  async function doApply() {
+    const d = ctx.deck; if (!d || !deckDirty()) return;
+    const ch = [];
+    if (d.replicas !== d.curReplicas) ch.push(`replicas ${d.curReplicas} → ${d.replicas}`);
+    if (d.vCores !== d.curVCores) ch.push(`vCores ${fmtVCores(d.curVCores)} → ${fmtVCores(d.vCores)}`);
+    const ok = await modalConfirm({
+      title: d.isProd ? "⚠ PRODUCTION — Apply changes" : "Apply changes",
+      message: `${d.name}:\n  ${ch.join("\n  ")}\n\nRedeployed with rolling update.` + (d.isProd ? `\n\n⚠ Production environment.` : ""),
+      danger: d.isProd, confirmLabel: "Apply", cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+    ctx.busy.add(d.id); renderTable(); setDeckBusy(true);
+    try {
+      await ctx.client.applyChanges(ctx.bgId, d.envId, d.id, {
+        replicas: d.replicas !== d.curReplicas ? d.replicas : undefined,
+        vCores:   d.vCores   !== d.curVCores   ? d.vCores   : undefined,
+      }, d.raw);
+      note(`${d.name}: applied (${ch.join(", ")})`);
+      setTimeout(() => loadDeployments(), 1500);
+    } catch (e) { note(`apply failed: ${errMsg(e)}`, true); }
+    finally { ctx.busy.delete(d.id); renderTable(); if (ctx.deck === d) setDeckBusy(false); }
+  }
+  async function doDelete() {
+    const d = ctx.deck; if (!d) return;
+    const ok = await modalConfirm({
+      title: `🗑 Delete ${d.name}`,
+      message: `Permanently delete ${d.name} from “${d.envName}”. This cannot be undone.` + (d.isProd ? `\n\n⚠ This is a PRODUCTION environment.` : ""),
+      danger: true, confirmLabel: "Delete", cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+    ctx.busy.add(d.id); renderTable();
+    try { await ctx.client.remove(ctx.bgId, d.envId, d.id); note(`${d.name}: deleted`); collapseRow(); setTimeout(() => loadDeployments(), 1500); }
+    catch (e) { note(`delete failed: ${errMsg(e)}`, true); }
+    finally { ctx.busy.delete(d.id); }
   }
 
   // Exchange asset へのリンク (lineage strip の ↗)。
@@ -733,28 +871,6 @@ export function mountAnypointConsole({ railPanel, stage, identities, makeClient,
     };
     ctx.typeCache.set(row.id, out);
     return out;
-  }
-  // ─── Restart (confirm + prod ガード) ──────────────────────
-  async function doRestart(row) {
-    const isProd = !!row.isProd;
-    const ok = await modalConfirm({
-      title: isProd ? "⚠ PRODUCTION — Restart" : "Restart deployment",
-      message: `Restart ${row.name} in “${row.envName}”.`
-        + `\nIt will be redeployed with updateStrategy=rolling (minimal downtime).`
-        + (isProd ? `\n\n⚠ This is a production environment. Please confirm before proceeding.` : ""),
-      danger: isProd, confirmLabel: "Restart", cancelLabel: "Cancel",
-    });
-    if (!ok) return;
-    ctx.busy.add(row.id); renderTable();
-    try {
-      await ctx.client.restart(ctx.bgId, row.envId, row.id, row._raw);
-      note(`${row.name}: restart requested`);
-      setTimeout(() => loadDeployments(), 1500);
-    } catch (e) {
-      note(`restart failed: ${errMsg(e)}`, true);
-    } finally {
-      ctx.busy.delete(row.id); renderTable();
-    }
   }
 
   // ─── logs tail (read-only: poll → docId dedup → 追記) ─────
