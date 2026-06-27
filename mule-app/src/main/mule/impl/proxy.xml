@@ -202,16 +202,70 @@ output application/json
                                     </ee:transform>
                                 </when>
                                 <otherwise>
+                                    <!-- L1: 自動追従しない (多段の途中 Location にも生の不正文字が入りうるため、
+                                         各ホップを enc して手動で追う)。L1 が content ならここで終わり。 -->
                                     <http:request method="GET"
                                                   url="#[vars.redirectUrl]"
                                                   config-ref="proxy-request-config"
-                                                  followRedirects="true"
+                                                  followRedirects="false"
                                                   responseTimeout="120000">
                                         <http:headers>#[{ 'Accept': '*/*' }]</http:headers>
                                         <http:response-validator>
                                             <http:success-status-code-validator values="0..599"/>
                                         </http:response-validator>
                                     </http:request>
+                                    <!-- L2: L1 がさらに 3xx を返したら、その Location も enc してもう 1 段追従。
+                                         L2 の先 (最終 S3 presigned 等) は clean なので followRedirects=true で追う。 -->
+                                    <choice>
+                                        <when expression="#[(attributes.statusCode >= 300) and (attributes.statusCode &lt; 400) and (attributes.headers['location'] != null)]">
+                                            <ee:transform>
+                                                <ee:variables>
+                                                    <ee:set-variable variableName="redirectUrl2"><![CDATA[%dw 2.0
+output application/java
+var loc = (attributes.headers['location'] default "") as String
+fun enc(s, ch, rep) = (s splitBy ch) joinBy rep
+---
+enc(enc(enc(enc(enc(enc(enc(enc(enc(enc(enc(enc(loc, " ", "%20"), "{", "%7B"), "}", "%7D"), "|", "%7C"), "^", "%5E"), "<", "%3C"), ">", "%3E"), "[", "%5B"), "]", "%5D"), "`", "%60"), "\"", "%22"), "\\", "%5C")]]></ee:set-variable>
+                                                </ee:variables>
+                                            </ee:transform>
+                                            <ee:transform>
+                                                <ee:variables>
+                                                    <ee:set-variable variableName="redirectGuard2"><![CDATA[%dw 2.0
+import dw::SsrfGuard
+output application/java
+---
+SsrfGuard::check(vars.redirectUrl2 default "", (p('proxy.allowHosts') default "") splitBy ",")]]></ee:set-variable>
+                                                </ee:variables>
+                                            </ee:transform>
+                                            <choice>
+                                                <when expression="#[vars.redirectGuard2.deny default true]">
+                                                    <set-variable variableName="redirectBlocked" value="#[true]"/>
+                                                    <ee:transform>
+                                                        <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ error: "proxy redirect denied (hop2)", reason: (vars.redirectGuard2.reason default "blocked"), host: (vars.redirectGuard2.host default "") }]]></ee:set-payload></ee:message>
+                                                        <ee:variables>
+                                                            <ee:set-variable variableName="proxyStatus"><![CDATA[%dw 2.0 output application/java --- 403]]></ee:set-variable>
+                                                            <ee:set-variable variableName="proxyHeaders"><![CDATA[%dw 2.0 output application/java --- { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" }]]></ee:set-variable>
+                                                        </ee:variables>
+                                                    </ee:transform>
+                                                </when>
+                                                <otherwise>
+                                                    <http:request method="GET"
+                                                                  url="#[vars.redirectUrl2]"
+                                                                  config-ref="proxy-request-config"
+                                                                  followRedirects="true"
+                                                                  responseTimeout="120000">
+                                                        <http:headers>#[{ 'Accept': '*/*' }]</http:headers>
+                                                        <http:response-validator>
+                                                            <http:success-status-code-validator values="0..599"/>
+                                                        </http:response-validator>
+                                                    </http:request>
+                                                </otherwise>
+                                            </choice>
+                                        </when>
+                                    </choice>
                                 </otherwise>
                             </choice>
                         </when>
