@@ -249,13 +249,17 @@ export class AnypointClient {
     const pick = files.find(f => /oas/i.test(f.classifier || "") && /json/i.test(f.packaging || ""))
               || files.find(f => /oas/i.test(f.classifier || ""))
               || files.find(f => /(raml|rest-api)/i.test(f.classifier || ""));
-    const link = pick && (pick.externalLink || pick.downloadURL || pick.url);
+    // downloadURL = ファイル本体の取得 endpoint (要 Bearer)。externalLink は portal の閲覧 URL
+    // (ファイル本体でない) なので使わない。app.js の a2a-card 取得と同じ経路。
+    const link = pick && (pick.downloadURL || pick.externalLink || pick.url);
     if (!link) return { endpoints: [], note: "no downloadable spec file" };
-    const res  = await fetch(`/proxy?url=${encodeURIComponent(link)}`);
-    const text = await res.text();
-    if (!res.ok) return { endpoints: [], note: `spec download HTTP ${res.status}` };
+    const token = await this._getToken().catch(() => null);
+    const res   = await fetch(`/proxy?url=${encodeURIComponent(link)}`,
+      token ? { headers: { Authorization: `Bearer ${token}` } } : {});
+    const text  = await res.text();
+    if (!res.ok) return { endpoints: [], note: `spec download HTTP ${res.status}: ${String(text).replace(/<[^>]+>/g, "").trim().slice(0, 90)}` };
     let doc; try { doc = JSON.parse(text); }
-    catch { return { endpoints: [], note: "spec が YAML/RAML (endpoint 抽出は JSON OAS のみ対応)" }; }
+    catch { return { endpoints: [], note: "spec が YAML/RAML/非JSON (endpoint 抽出は JSON OAS のみ対応)" }; }
     return { endpoints: extractOasEndpoints(doc), title: doc?.info?.title || assetId };
   }
 
