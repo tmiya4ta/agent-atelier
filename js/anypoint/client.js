@@ -253,13 +253,18 @@ export class AnypointClient {
     const link = pick && (pick.downloadURL || pick.externalLink || pick.url);
     if (!link) return { endpoints: [], note: `no spec file (classifiers: ${files.map(f => f.classifier).join(",") || "none"})` };
     let host = ""; try { host = new URL(link).host; } catch {}
+    // Exchange の downloadURL は query に Java URI が弾く文字 ([ ] { } | space 等) を
+    // 生で含むことがあり、Mule の http:request が "Illegal character in query" で 502 になる。
+    // proxy は queryParams.url を 1 回 decode するので、ここで該当文字を %-encode しておけば
+    // decode 後も %xx で残り Java URI が通る (既存の %xx は触らない)。
+    const safe = String(link).replace(/[ "<>{}|\\^`\[\]]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
     // presigned S3 (X-Amz-*/Signature 付き) に Authorization を足すと S3 が
     // "Only one auth mechanism allowed" で弾く。presigned なら Bearer を付けない。
     const presigned = /[?&](x-amz-|signature=|awsaccesskeyid=)/i.test(link);
     const token = presigned ? null : await this._getToken().catch(() => null);
     let res, text;
     try {
-      res  = await fetch(`/proxy?url=${encodeURIComponent(link)}`, token ? { headers: { Authorization: `Bearer ${token}` } } : {});
+      res  = await fetch(`/proxy?url=${encodeURIComponent(safe)}`, token ? { headers: { Authorization: `Bearer ${token}` } } : {});
       text = await res.text();
     } catch (e) { return { endpoints: [], note: `spec fetch failed @${host}: ${e?.message || e}` }; }
     if (!res.ok) return { endpoints: [], note: `[${pick.classifier}] ${host} HTTP ${res.status}: ${String(text).replace(/<[^>]+>/g, " ").trim().slice(0, 90)}` };
