@@ -214,56 +214,14 @@ output application/json
                                             <http:success-status-code-validator values="0..599"/>
                                         </http:response-validator>
                                     </http:request>
-                                    <!-- L2: L1 がさらに 3xx を返したら、その Location も enc してもう 1 段追従。
-                                         L2 の先 (最終 S3 presigned 等) は clean なので followRedirects=true で追う。 -->
+                                    <!-- L1 がさらに 3xx なら、残りのホップを再帰 sub-flow で深さ非依存に手動追従。
+                                         各ホップを enc + SSRF して followRedirects=false で進むので、途中 Location に
+                                         生スペース等があっても 502 にならない (最大 8 ホップ)。 -->
                                     <choice>
                                         <when expression="#[(attributes.statusCode >= 300) and (attributes.statusCode &lt; 400) and (attributes.headers['location'] != null)]">
-                                            <ee:transform>
-                                                <ee:variables>
-                                                    <ee:set-variable variableName="redirectUrl2"><![CDATA[%dw 2.0
-output application/java
-var loc = (attributes.headers['location'] default "") as String
-fun enc(s, ch, rep) = (s splitBy ch) joinBy rep
----
-enc(enc(enc(enc(enc(enc(enc(enc(enc(enc(enc(enc(loc, " ", "%20"), "{", "%7B"), "}", "%7D"), "|", "%7C"), "^", "%5E"), "<", "%3C"), ">", "%3E"), "[", "%5B"), "]", "%5D"), "`", "%60"), "\"", "%22"), "\\", "%5C")]]></ee:set-variable>
-                                                </ee:variables>
-                                            </ee:transform>
-                                            <ee:transform>
-                                                <ee:variables>
-                                                    <ee:set-variable variableName="redirectGuard2"><![CDATA[%dw 2.0
-import dw::SsrfGuard
-output application/java
----
-SsrfGuard::check(vars.redirectUrl2 default "", (p('proxy.allowHosts') default "") splitBy ",")]]></ee:set-variable>
-                                                </ee:variables>
-                                            </ee:transform>
-                                            <choice>
-                                                <when expression="#[vars.redirectGuard2.deny default true]">
-                                                    <set-variable variableName="redirectBlocked" value="#[true]"/>
-                                                    <ee:transform>
-                                                        <ee:message><ee:set-payload><![CDATA[%dw 2.0
-output application/json
----
-{ error: "proxy redirect denied (hop2)", reason: (vars.redirectGuard2.reason default "blocked"), host: (vars.redirectGuard2.host default "") }]]></ee:set-payload></ee:message>
-                                                        <ee:variables>
-                                                            <ee:set-variable variableName="proxyStatus"><![CDATA[%dw 2.0 output application/java --- 403]]></ee:set-variable>
-                                                            <ee:set-variable variableName="proxyHeaders"><![CDATA[%dw 2.0 output application/java --- { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" }]]></ee:set-variable>
-                                                        </ee:variables>
-                                                    </ee:transform>
-                                                </when>
-                                                <otherwise>
-                                                    <http:request method="GET"
-                                                                  url="#[vars.redirectUrl2]"
-                                                                  config-ref="proxy-request-config"
-                                                                  followRedirects="true"
-                                                                  responseTimeout="120000">
-                                                        <http:headers>#[{ 'Accept': '*/*' }]</http:headers>
-                                                        <http:response-validator>
-                                                            <http:success-status-code-validator values="0..599"/>
-                                                        </http:response-validator>
-                                                    </http:request>
-                                                </otherwise>
-                                            </choice>
+                                            <set-variable variableName="hopUrl" value="#[attributes.headers['location']]"/>
+                                            <set-variable variableName="hopN" value="#[2]"/>
+                                            <flow-ref name="proxy-follow-hop"/>
                                         </when>
                                     </choice>
                                 </otherwise>
@@ -321,5 +279,66 @@ output text/plain
             </otherwise>
         </choice>
     </flow>
+
+    <!-- 多段リダイレクトを深さ非依存に手動追従する再帰 sub-flow。
+         vars.hopUrl = 次の追従先 (raw Location)、vars.hopN = 現在の深さ。
+         enc → SSRF → request(followRedirects=false) → まだ 3xx かつ深さ<8 なら自分を再帰呼出し。
+         非 3xx (= content) で停止し、その response が呼び元へ伝播する。
+         Authorization は付けない (S3 presigned 等に余計な認証を渡さない)。 -->
+    <sub-flow name="proxy-follow-hop">
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="hopUrl"><![CDATA[%dw 2.0
+output application/java
+var loc = (vars.hopUrl default "") as String
+fun enc(s, ch, rep) = (s splitBy ch) joinBy rep
+---
+enc(enc(enc(enc(enc(enc(enc(enc(enc(enc(enc(enc(loc, " ", "%20"), "{", "%7B"), "}", "%7D"), "|", "%7C"), "^", "%5E"), "<", "%3C"), ">", "%3E"), "[", "%5B"), "]", "%5D"), "`", "%60"), "\"", "%22"), "\\", "%5C")]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="hopGuard"><![CDATA[%dw 2.0
+import dw::SsrfGuard
+output application/java
+---
+SsrfGuard::check(vars.hopUrl default "", (p('proxy.allowHosts') default "") splitBy ",")]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <choice>
+            <when expression="#[vars.hopGuard.deny default true]">
+                <set-variable variableName="redirectBlocked" value="#[true]"/>
+                <ee:transform>
+                    <ee:message><ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ error: "proxy redirect denied", reason: (vars.hopGuard.reason default "blocked"), host: (vars.hopGuard.host default "") }]]></ee:set-payload></ee:message>
+                    <ee:variables>
+                        <ee:set-variable variableName="proxyStatus"><![CDATA[%dw 2.0 output application/java --- 403]]></ee:set-variable>
+                        <ee:set-variable variableName="proxyHeaders"><![CDATA[%dw 2.0 output application/java --- { "Content-Type": "application/json; charset=utf-8", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" }]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+            </when>
+            <otherwise>
+                <http:request method="GET"
+                              url="#[vars.hopUrl]"
+                              config-ref="proxy-request-config"
+                              followRedirects="false"
+                              responseTimeout="120000">
+                    <http:headers>#[{ 'Accept': '*/*' }]</http:headers>
+                    <http:response-validator>
+                        <http:success-status-code-validator values="0..599"/>
+                    </http:response-validator>
+                </http:request>
+                <choice>
+                    <when expression="#[(attributes.statusCode >= 300) and (attributes.statusCode &lt; 400) and (attributes.headers['location'] != null) and ((vars.hopN default 1) &lt; 8)]">
+                        <set-variable variableName="hopUrl" value="#[attributes.headers['location']]"/>
+                        <set-variable variableName="hopN" value="#[(vars.hopN default 1) + 1]"/>
+                        <flow-ref name="proxy-follow-hop"/>
+                    </when>
+                </choice>
+            </otherwise>
+        </choice>
+    </sub-flow>
 
 </mule>
