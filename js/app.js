@@ -488,7 +488,7 @@ async function encodeJwt(headerObj, payloadObj, secret) {
   if (alg === "NONE") return signingInput + ".";
   const hashMap = { HS256: "SHA-256", HS384: "SHA-384", HS512: "SHA-512" };
   const hash = hashMap[alg];
-  if (!hash) throw new Error(`alg ${alg} は未対応 (HS256/384/512 / none のみ)`);
+  if (!hash) throw new Error(`alg ${alg} not supported (HS256/384/512 / none only)`);
   const key = await crypto.subtle.importKey(
     "raw", new TextEncoder().encode(secret || ""), { name: "HMAC", hash }, false, ["sign"]
   );
@@ -539,7 +539,7 @@ function wireTools() {
       if (!tok) { wrap.hidden = true; status.textContent = ""; return; }
       const dec = decodeJwt(tok);
       if (dec) { out.innerHTML = formatJwt(dec); wrap.hidden = false; status.textContent = ""; }
-      else     { wrap.hidden = true; status.textContent = "JWT としてデコードできません"; }
+      else     { wrap.hidden = true; status.textContent = "Cannot decode as JWT"; }
     };
     input.addEventListener("input", render);
     _wireCopyBtn($("#toolJwtCopy"), () => out.textContent);
@@ -555,9 +555,9 @@ function wireTools() {
       encStat.textContent = ""; encStat.classList.remove("is-error");
       let header, payload;
       try { header = JSON.parse($("#toolEncHeader").value); }
-      catch { encStat.textContent = "header が JSON ではありません"; encStat.classList.add("is-error"); return; }
+      catch { encStat.textContent = "header is not valid JSON"; encStat.classList.add("is-error"); return; }
       try { payload = JSON.parse($("#toolEncPayload").value); }
-      catch { encStat.textContent = "payload が JSON ではありません"; encStat.classList.add("is-error"); return; }
+      catch { encStat.textContent = "payload is not valid JSON"; encStat.classList.add("is-error"); return; }
       try {
         const tok = await encodeJwt(header, payload, $("#toolEncSecret").value);
         encOut.textContent = tok;
@@ -912,7 +912,7 @@ function renderBookmarks() {
       + (wins.length > 0 ? " is-open" : " is-disconnected");
     li.title = wins.length
       ? `${host}  ·  ${wins.length} open${closed.length ? ` / ${closed.length} closed` : ""}`
-      : (closed.length ? `${host}  ·  ${closed.length} closed window(s) — クリックで再オープン` : `${host}  ·  no open window — click + to open`);
+      : (closed.length ? `${host}  ·  ${closed.length} closed window(s) — click to reopen` : `${host}  ·  no open window — click + to open`);
     li.draggable = true;
     li.dataset.bookmarkKey = b.key;
 
@@ -1033,7 +1033,7 @@ function renderBookmarks() {
           <span class="bc-branch">${isLast ? "└─" : "├─"}</span>
           <span class="bc-id">${win.id}</span>
           <span class="bc-name">${escapeHtml(windowDisplayName(win))}</span>
-          <button class="bc-remove" title="閉じる (設定はリストに残す)" aria-label="close">
+          <button class="bc-remove" title="Close (keep config in list)" aria-label="close">
             <svg viewBox="0 0 12 12" width="8" height="8"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/><line x1="9.5" y1="2.5" x2="2.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/></svg>
           </button>
         `;
@@ -1062,12 +1062,12 @@ function renderBookmarks() {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "bookmark-child is-closed";
-        btn.title = `閉じた窓 — クリックで再オープン (${entry.name || entry.url || ""})`;
+        btn.title = `Closed window — click to reopen (${entry.name || entry.url || ""})`;
         btn.innerHTML = `
           <span class="bc-branch">${isLast ? "└─" : "├─"}</span>
           <span class="bc-id">—</span>
           <span class="bc-name">${escapeHtml(entry.name || hostFromUrl(entry.url) || "window")}<span class="bc-closed-tag">closed${authLbl}</span></span>
-          <button class="bc-remove bc-delete" title="リストから削除" aria-label="remove">
+          <button class="bc-remove bc-delete" title="Remove from list" aria-label="remove">
             <svg viewBox="0 0 12 12" width="8" height="8"><line x1="2.5" y1="2.5" x2="9.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/><line x1="9.5" y1="2.5" x2="2.5" y2="9.5" stroke="currentColor" stroke-width="1.4"/></svg>
           </button>
         `;
@@ -1413,7 +1413,7 @@ async function ensureFreshAuth(authRef) {
       catch (e) { console.warn("[auth] refresh_token failed:", e?.message || e); }
     }
     // 黙って更新できない → 対話的再認証が必要
-    const err = new Error(`"${idn.name}" のセッションが切れました。 再認証が必要です。`);
+    const err = new Error(`"${idn.name}" session expired. Re-authentication required.`);
     err.code = "REAUTH_REQUIRED"; err.idnName = idn.name; err.kind = idn.kind;
     throw err;
   }
@@ -1669,7 +1669,7 @@ async function resolveBusinessGroupId(cat, bg) {
     || me.organization?.id
     || me.user?.organizationId
     || me.client?.org_id;
-  if (!rootOrgId) throw new Error("no organization id in /me (password / client_credentials のいずれも未検出)");
+  if (!rootOrgId) throw new Error("no organization id in /me (neither password nor client_credentials found)");
 
   const hUrl = `https://anypoint.mulesoft.com/accounts/api/organizations/${rootOrgId}/hierarchy`;
   const hRes = await fetch(`/proxy?url=${encodeURIComponent(hUrl)}`, {
@@ -1883,7 +1883,7 @@ async function refreshCatEnvField() {
     if (!auth) throw new Error("not authenticated");
     const envs = await fetchEnvironmentsForOrg(auth.token, auth.base, orgId);
     if (!envs.length) { if (status) status.textContent = "no environments found"; return; }
-    if (status) status.textContent = "scan する環境を選択";
+    if (status) status.textContent = "Select environments to scan";
     list.innerHTML = "";
     envs.forEach(e => {
       const row = document.createElement("label");
@@ -2242,8 +2242,8 @@ function renderAssetList(assets) {
         ${a.version ? `<span class="asset-tag">v${escapeHtml(a.version)}</span>` : ""}
         ${a.assetId ? `<span class="asset-tag">${escapeHtml(a.assetId)}</span>` : ""}
         ${hasInstance ? `<span class="asset-tag is-accent">instance</span>` : ""}
-        ${(!hasInstance && hasManagedInstance) ? `<span class="asset-tag is-accent" title="Managed instance が割り当て済み — 開いてエンドポイントを解決/入力">instance · ${a._instances.length}</span>` : ""}
-        ${isInternal  ? `<span class="asset-tag is-muted" title="VPC-internal endpoint — Atelier からは接続できません">internal</span>` : ""}
+        ${(!hasInstance && hasManagedInstance) ? `<span class="asset-tag is-accent" title="Managed instance assigned — open to resolve/enter endpoint">instance · ${a._instances.length}</span>` : ""}
+        ${isInternal  ? `<span class="asset-tag is-muted" title="VPC-internal endpoint — not reachable from Atelier">internal</span>` : ""}
         ${hasCard     ? `<span class="asset-tag">card only</span>`         : ""}
       </span>
       ${selectable ? `<span class="asset-go" aria-hidden="true">→</span>` : ""}
@@ -2259,9 +2259,9 @@ function renderAssetList(assets) {
         connectAsset(a, cat);
       });
     } else if (hasManagedInstance) {
-      item.title = `Managed instance 割り当て済 (${a._instances.length}) — 開いてエンドポイントを選択/入力`;
+      item.title = `Managed instance assigned (${a._instances.length}) — open to select/enter endpoint`;
     } else if (isInternal) {
-      item.title = `Internal CH2 endpoint (${a._a2aUrl}) — 公開URLを detail で入力してください`;
+      item.title = `Internal CH2 endpoint (${a._a2aUrl}) — enter a public URL in detail`;
     } else if (hasCard) {
       item.title = "Agent card available — open to set instance URL";
     } else {
@@ -2975,8 +2975,8 @@ function refreshIdentityDialog() {
     const doesAuth = (kind !== "bearer");
     testBtn.textContent = doesAuth ? "authenticate" : "test";
     testBtn.title = doesAuth
-      ? "入力値で実際に認証/トークン取得を試す (保存せず)"
-      : "入力値を検証 (保存せず)";
+      ? "Actually attempt auth / token retrieval with the entered values (without saving)"
+      : "Validate the entered values (without saving)";
   }
 }
 
@@ -3099,17 +3099,17 @@ function buildTempIdentityFromForm() {
 async function testIdentityDialog() {
   const kind = state.selectedIdentityKind;
   if (kind === "bearer") {
-    setIdentityTest("info", "Bearer / API Key は静的トークンのため取得テストは不要です。");
+    setIdentityTest("info", "Bearer / API Key are static tokens, so no retrieval test is needed.");
     return;
   }
   const idn = buildTempIdentityFromForm();
   // 必須チェック
-  if (!idn.tokenUrl) { setIdentityTest("err", "token url を入力してください。"); return; }
-  if (kind === "oauth2_cc" && !idn.clientId) { setIdentityTest("err", "client id を入力してください。"); return; }
-  if (kind === "oauth2_authcode" && (!idn.clientId || !idn.authUrl)) { setIdentityTest("err", "client id と auth url を入力してください。"); return; }
-  if (kind === "jwt_bearer" && !idn.assertion) { setIdentityTest("err", "assertion (署名済み JWT) を入力してください。"); return; }
-  if (kind === "oauth2_password" && !idn.username) { setIdentityTest("err", "username を入力してください。"); return; }
-  if (kind === "oauth2_password" && !idn.password) { setIdentityTest("err", "password を入力してください。"); return; }
+  if (!idn.tokenUrl) { setIdentityTest("err", "Enter a token url."); return; }
+  if (kind === "oauth2_cc" && !idn.clientId) { setIdentityTest("err", "Enter a client id."); return; }
+  if (kind === "oauth2_authcode" && (!idn.clientId || !idn.authUrl)) { setIdentityTest("err", "Enter a client id and auth url."); return; }
+  if (kind === "jwt_bearer" && !idn.assertion) { setIdentityTest("err", "Enter an assertion (signed JWT)."); return; }
+  if (kind === "oauth2_password" && !idn.username) { setIdentityTest("err", "Enter a username."); return; }
+  if (kind === "oauth2_password" && !idn.password) { setIdentityTest("err", "Enter a password."); return; }
 
   const btn = $("#idnTest");
   btn.disabled = true;
@@ -3140,11 +3140,11 @@ async function testIdentityDialog() {
     // 既に認証済み (state._authTestResult あり) なら そのトークンは保持される旨を添える。
     if (/cancel/i.test(msg)) {
       const kept = state._authTestResult?.accessToken
-        ? " · 既存のトークンは保持されています"
+        ? " · existing token is retained"
         : "";
-      setIdentityTest("warn", `<span class='dts-dot'></span> 認証をキャンセルしました${kept}`);
+      setIdentityTest("warn", `<span class='dts-dot'></span> Authentication cancelled${kept}`);
     } else if (/popup blocked/i.test(msg)) {
-      setIdentityTest("warn", `<span class='dts-dot'></span> ポップアップがブロックされました — このサイトのポップアップを許可してください`);
+      setIdentityTest("warn", `<span class='dts-dot'></span> Popup was blocked — please allow popups for this site`);
     } else {
       setIdentityTest("err", `<span class='dts-dot'></span> ${escapeHtml(msg)}`);
     }
@@ -3582,7 +3582,7 @@ async function refreshBgEnvField() {
     const token = await acquireCatalogToken(cat);
     const envs  = await fetchEnvironmentsForOrg(token, controlPlaneBase(idn), bg.bgId);
     if (!envs.length) { if (status) status.textContent = "no environments found"; return; }
-    if (status) status.textContent = "scan する環境を選択";
+    if (status) status.textContent = "Select environments to scan";
     const sel = new Set((bg.envs || []).map(e => e.id));
     list.innerHTML = "";
     envs.forEach(e => {
@@ -3684,7 +3684,7 @@ async function submitCatalogDialog() {
 
   if (!name)    { $("#catName").focus(); return; }
   if (!authRef || authRef === "__new__") {
-    await modalAlert({ title: "Identity required", message: "AUTHENTICATION の identity を選択してください (OAuth2 CC か Authorization Code)。" });
+    await modalAlert({ title: "Identity required", message: "Select an identity under AUTHENTICATION (OAuth2 CC or Authorization Code)." });
     return;
   }
 
@@ -3800,23 +3800,23 @@ function wireCatalogDialog() {
 // 新規スクリプトの初期 body。 DSL 構文の早見表をコメントで上部に置く
 // (Script Editor を初めて開く人がそのまま編集できるよう、 末尾に動くサンプルも添える)。
 const SCRIPT_TEMPLATE = [
-  "# ── Script DSL 早見表 ─────────────────────────────",
-  "#   < <window>: <message>     window へ送信 (${var} 展開可)",
-  "#   > <window> [30s] [as v]   返信を待つ (任意で timeout / 変数に保存)",
-  "#   ^ <operator>: <hint> -> v  operator-agent に投げ、 返信を v に保存",
-  "#   sleep 2s                  一時停止",
-  "#   clear [<window>]          チャットをクリア (省略で全 window)",
-  "#   $> <window>: <応答>        mock 応答 (Mock モード ON 時のみ・ 改行は \\n)",
-  "#   # ...                     コメント (無視)",
-  "# <window> は window 名 (部分一致可) か ID (例 aw-1)。",
+  "# ── Script DSL cheat sheet ─────────────────────────",
+  "#   < <window>: <message>     send to a window (${var} expansion)",
+  "#   > <window> [30s] [as v]   wait for a reply (optional timeout / save to var)",
+  "#   ^ <operator>: <hint> -> v  send to operator-agent, save reply to v",
+  "#   sleep 2s                  pause",
+  "#   clear [<window>]          clear chat (all windows if omitted)",
+  "#   $> <window>: <reply>       mock reply (Mock mode ON only · newline = \\n)",
+  "#   # ...                     comment (ignored)",
+  "# <window> is a window name (partial match OK) or ID (e.g. aw-1).",
   "# ──────────────────────────────────────────────",
   "",
-  "# サンプル: window に送って返信を待つ",
-  "< Atelier Bistro: こんにちは。 おすすめを教えて。",
+  "# Example: send to a window and wait for the reply",
+  "< Atelier Bistro: Hello. What do you recommend?",
   "> Atelier Bistro 60s",
   "",
-  "# Mock モード ON で動かすサンプル (上の送信に対する擬似応答):",
-  "# $> Atelier Bistro: いらっしゃいませ。 本日のおすすめは…",
+  "# Example to run with Mock mode ON (a pseudo reply to the send above):",
+  "# $> Atelier Bistro: Welcome. Today's recommendation is…",
   ""
 ].join("\n");
 
@@ -3963,7 +3963,7 @@ function renderScripts() {
       <span class="script-name">${escapeHtml(s.name)}</span>
       <button class="script-run ${isRunningThis ? "is-stop" : ""}"
               ${isBusyOther ? "disabled" : ""}
-              title="${isRunningThis ? "Stop this script" : isBusyOther ? "別のシナリオを実行中です" : "Run this script (no panel open)"}"
+              title="${isRunningThis ? "Stop this script" : isBusyOther ? "Another scenario is running" : "Run this script (no panel open)"}"
               aria-label="${isRunningThis ? "stop script" : "run script"}">
         ${isRunningThis
           ? `<svg viewBox="0 0 12 12" width="8" height="8"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg>`
@@ -4154,8 +4154,8 @@ function applyProtoSpecificFields() {
   const testBtn    = $("#dlgTest");
   const advanced   = document.querySelector("#connectDialog .advanced");
   if (urlLabel)  urlLabel.textContent  = isMock ? "agent name" : "discovery url";
-  if (urlHint)   urlHint.textContent   = isMock ? "この名前だけが役割を表します (例: 与信審査 / 不正検知 / インシデント)"
-                                                : "A2A: base URL → AgentCard 解釈 / MCP: /mcp endpoint";
+  if (urlHint)   urlHint.textContent   = isMock ? "The name alone conveys the role (e.g. Credit Review / Fraud Detection / Incident)"
+                                                : "A2A: base URL → AgentCard resolution / MCP: /mcp endpoint";
   if (urlPrefix) urlPrefix.textContent = isMock ? "name" : "url";
   // mock では display name 行・auth 行・test ボタン・advanced を畳む。
   // ただし編集モードでは url(=mock:// key) が readonly なので、rename 用に name 行は残す。
@@ -4173,7 +4173,7 @@ function applyProtoSpecificFields() {
   // Mock は不要、DB は inline user/password。
   if (authField) authField.hidden = isMock || isDb;
   const authHint = authField?.querySelector(".field-hint");
-  if (authHint) authHint.textContent = isSlack ? "identity (bot token)" : "test / 最初の window で使う identity";
+  if (authHint) authHint.textContent = isSlack ? "identity (bot token)" : "identity used for test / the first window";
   // auth を隠したら display name を全幅に (field-row を 1 カラムへ)
   const nameRowEl = $("#dlgName")?.closest(".field-row");
   if (nameRowEl) nameRowEl.classList.toggle("is-single", isMock || isDb);
@@ -4186,9 +4186,9 @@ function applyProtoSpecificFields() {
     if (isMock) {
       const mcpKind = (state.mockEmulate || "a2a") === "mcp";
       urlInput.placeholder = mcpKind
-        ? "e.g. 契約データストア"
-        : "e.g. 査定エージェント";
-      urlInput.title = "この名前がその役割を表します。実通信はせず、Script Editor の台本 / tools 呼び出しを再生します。";
+        ? "e.g. Contract Data Store"
+        : "e.g. Assessment Agent";
+      urlInput.title = "This name conveys its role. No real communication — it replays the Script Editor script / tool calls.";
     } else if (isSlack) {
       urlInput.placeholder = "https://slack.com";
       urlInput.title = "";
@@ -4197,7 +4197,7 @@ function applyProtoSpecificFields() {
       urlInput.title = "Point at the MCP server's JSON-RPC endpoint (e.g., https://atelier-mcp-mdm-znutqp.pnwfdv.jpn-e1.cloudhub.io/mcp).";
     } else if (isDb) {
       urlInput.placeholder = "https://mule-clouderby-xxxx.cloudhub.io   (clouderby base URL)";
-      urlInput.title = "clouderby (JDBC over HTTP) サーバの base URL。/sessions /queries /metadata を提供するエンドポイント。";
+      urlInput.title = "Base URL of the clouderby (JDBC over HTTP) server. The endpoint that provides /sessions /queries /metadata.";
     } else {
       urlInput.placeholder = "https://api.example.com";
       urlInput.title = "Base URL is fine — Atelier appends /.well-known/agent-card.json automatically (falls back to /.well-known/agent.json for the legacy spec).";
@@ -4882,7 +4882,7 @@ const DSL_COMMANDS = [
   { glyph: ">",     label: "wait",     insert: "> ",        cursor: "end",  title: "Wait for reply — > name [30s] [as var]" },
   { glyph: "^",     label: "operator", insert: "^ operator: ", cursor: "end", title: "Operator-agent directive — ^ name: hint -> var" },
   { glyph: "sleep", label: "pause",    insert: "sleep 1s",  cursor: "end",  title: "Pause — sleep Ns" },
-  { glyph: "delay", label: "think",    insert: "delay 2s",  cursor: "end",  title: "Mock 応答の考える時間 — delay Ns (mock モード時・以降の send に適用・0s で即答)" },
+  { glyph: "delay", label: "think",    insert: "delay 2s",  cursor: "end",  title: "Mock reply think time — delay Ns (in mock mode · applies to later sends · 0s = instant reply)" },
   { glyph: "clear", label: "reset",    insert: "clear",     cursor: "end",  title: "Clear chat — clear [name]" },
   { glyph: "#",     label: "comment",  insert: "# ",        cursor: "end",  title: "Comment line — # ..." }
 ];
@@ -4890,7 +4890,7 @@ const DSL_COMMANDS = [
 // mock モード時の chip 差し替え: `>` (wait) を `$>` (mock 応答) にする。
 // mock 中は応答源が `$>` なので、 wait を入れる代わりに mock 応答を入れやすくする。
 const MOCK_REPLY_CMD = { glyph: "$>", label: "mock", insert: "$> ", cursor: "end",
-  title: "Mock reply — $> name: text  (mock モード時の擬似応答。 改行は \\n)" };
+  title: "Mock reply — $> name: text  (pseudo reply in mock mode. newline = \\n)" };
 
 function renderCommandChips() {
   const root = $("#scriptCommandChips");
@@ -5108,11 +5108,11 @@ async function ensureScriptWindowsOpen(ops) {
   }
 
   if (missing.length) {
-    appendScriptLog({ level: "dim", text: `· "${missing.join('", "')}" は未オープンで登録 connection も無し — 該当 op はスキップされます` });
+    appendScriptLog({ level: "dim", text: `· "${missing.join('", "')}" not open and no registered connection — those ops will be skipped` });
   }
   if (!toOpen.length) return;
 
-  appendScriptLog({ level: "info", text: `· ${toOpen.length} window を自動オープン: ${toOpen.map(t => t.bm.name || t.name).join(", ")}` });
+  appendScriptLog({ level: "info", text: `· auto-opening ${toOpen.length} window(s): ${toOpen.map(t => t.bm.name || t.name).join(", ")}` });
   for (const { bm } of toOpen) {
     try {
       // lockName: bookmark の display name を維持 (AgentCard.name で上書きしない)
@@ -5142,14 +5142,14 @@ function setScriptPinState(on) {
   if (!btn) return;
   btn.classList.toggle("is-on", !!on);
   btn.setAttribute("aria-pressed", on ? "true" : "false");
-  btn.title = on ? "Unpin panel: run で閉じる" : "Pin panel: run しても閉じない";
+  btn.title = on ? "Unpin panel: close on run" : "Pin panel: keep open on run";
 }
 
 async function runScript(opts = {}) {
   // 既に別の script が実行中なら多重実行しない (サイドバー run / Ctrl+Enter / line 実行
   // など複数の入口があるため、 ここで一括ガード)。 停止は stop ボタン経由で。
   if (state._script) {
-    appendScriptLog({ level: "err", text: "別のシナリオを実行中です。停止してから実行してください。" });
+    appendScriptLog({ level: "err", text: "Another scenario is running. Stop it before running." });
     return;
   }
   // opts.text + opts.scriptId でサイドバーから呼べる。引数なしならエディタの内容を使う。
@@ -5183,10 +5183,10 @@ async function runScript(opts = {}) {
   // auto-mock 時は state は変えず、ボタンの見た目だけ ON にして「MOCK で動いている」と分かるように
   if (autoMock) setMockButtonState(true);
   if (effMock) {
-    if (autoMock) appendScriptLog({ level: "dim", text: `· 全 window が mock 接続 → MOCK モードを自動 ON` });
+    if (autoMock) appendScriptLog({ level: "dim", text: `· all windows are mock connections → MOCK mode auto-ON` });
     const mocks = parseMocks(text);
     if (!Object.keys(mocks).length) {
-      appendScriptLog({ level: "err", text: `mock mode だが "${script?.name || '?'}" に mock 応答 ($> 行) がありません — 通常実行します` });
+      appendScriptLog({ level: "err", text: `mock mode but "${script?.name || '?'}" has no mock replies ($> lines) — running normally` });
     } else {
       for (const winName of Object.keys(mocks)) {
         const w = findWindowByQuery(winName);
@@ -5194,10 +5194,10 @@ async function runScript(opts = {}) {
           w.adapter.mockInstall(mocks[winName]);
           mockWins.push(w);
         } else {
-          appendScriptLog({ level: "err", text: `mock: window "${winName}" が見つかりません (接続して名前を一致させてください)` });
+          appendScriptLog({ level: "err", text: `mock: window "${winName}" not found (connect and match the name)` });
         }
       }
-      if (mockWins.length) appendScriptLog({ level: "dim", text: `· MOCK モード: ${mockWins.length} window をローカル応答に切替` });
+      if (mockWins.length) appendScriptLog({ level: "dim", text: `· MOCK mode: switched ${mockWins.length} window(s) to local replies` });
     }
   }
 
@@ -5378,9 +5378,9 @@ function wireScriptPanel() {
     setMockButtonState(state.scriptMock || state._editorAllMock);
     const auto = !state.scriptMock && state._editorAllMock;
     setScriptStatus(
-      state.scriptMock ? "MOCK モード ON (ローカル応答・実通信なし)"
-      : auto           ? "MOCK モード ON (全 window が mock 接続のため自動)"
-      :                  "MOCK モード OFF",
+      state.scriptMock ? "MOCK mode ON (local replies · no real traffic)"
+      : auto           ? "MOCK mode ON (auto — all windows are mock connections)"
+      :                  "MOCK mode OFF",
       (state.scriptMock || auto) ? "running" : "");
     // ハイライトを mock ON/OFF で切替: $> は ON=mock 色 / OFF=dim、 > は ON=dim / OFF=通常
     updateScriptHighlight();
@@ -5548,13 +5548,13 @@ function wireBackup() {
         if (missing.length) {
           const lines = missing.map(m => `  • ${m.label} (${m.fields.join(", ")})`).join("\n");
           const proceed = await modalConfirm({
-            title:   "一部の secret が失われています",
-            message: `次の項目の secret はタブ/ブラウザを閉じた際に揮発しており、export には含まれません`
-                   + ` (secret はセキュリティ上ディスクに保存されず、 セッション内のみ保持されます):\n\n${lines}\n\n`
-                   + `各項目を開いて secret を再入力してから export すると、 secret 込みで保存できます。\n`
-                   + `このまま該当 secret 抜きで export を続けますか？`,
-            confirmLabel: "このまま続ける",
-            cancelLabel:  "やめて再入力する",
+            title:   "Some secrets are missing",
+            message: `The secrets for the following items were lost when the tab/browser was closed and are not included in the export`
+                   + ` (for security, secrets are never saved to disk and are kept only within the session):\n\n${lines}\n\n`
+                   + `Open each item and re-enter its secret before exporting to save it with secrets included.\n`
+                   + `Continue the export without those secrets?`,
+            confirmLabel: "Continue anyway",
+            cancelLabel:  "Cancel and re-enter",
             danger: true
           });
           if (!proceed) return;
@@ -5586,7 +5586,7 @@ function wireBackup() {
   $("#btnReset").addEventListener("click", async () => {
     const ok = await modalConfirm({
       title:        "Reset all settings?",
-      message:      "Connections, catalogs, scripts, workspaces をすべて消去し、ページを再読み込みします。Undo できません。",
+      message:      "This erases all connections, catalogs, scripts, and workspaces and reloads the page. This cannot be undone.",
       confirmLabel: "Reset",
       danger:       true
     });
@@ -5748,7 +5748,7 @@ async function importFromUrlFlow() {
   });
   if (!url) return;
   if (!/^https?:\/\//i.test(url)) {
-    await modalAlert({ title: "Invalid URL", message: "URL は http:// または https:// で始めてください。" });
+    await modalAlert({ title: "Invalid URL", message: "URL must start with http:// or https://." });
     return;
   }
   try {
@@ -5806,13 +5806,13 @@ async function importFromRepositoryFlow() {
     } catch (errLocal) {
       await modalAlert({
         title:   "Repository not available",
-        message: `scenarios/index.json を取得できませんでした。\n- GitHub raw: ${errRaw?.message || errRaw}\n- 同一オリジン: ${errLocal?.message || errLocal}`
+        message: `Could not fetch scenarios/index.json.\n- GitHub raw: ${errRaw?.message || errRaw}\n- same-origin: ${errLocal?.message || errLocal}`
       });
       return;
     }
   }
   if (!items.length) {
-    await modalAlert({ title: "Repository is empty", message: "Bundled snapshot がありません。" });
+    await modalAlert({ title: "Repository is empty", message: "No bundled snapshot is available." });
     return;
   }
   // snapshot 選択 + "Scenarios only" チェックボックスを 1 ダイアログにまとめる。
