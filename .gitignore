@@ -28,3 +28,6 @@ credentials.env.txt
 
 # yaac CLI local cache
 .yaac/
+
+# Anypoint Studio per-machine analytics id (machine-specific, never commit)
+.studio_analytics_id.txt
