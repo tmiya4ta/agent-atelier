@@ -244,6 +244,33 @@ table.ap-table { width:100%; border-collapse:collapse; font:500 calc(12px*var(--
 .ap-logs-empty { padding:40px; text-align:center; color:var(--ink-3); font-family:var(--f-ui); }
 .ap-logs-empty.is-err { color:var(--warn); }
 .ap-sel { padding:4px 7px; font:500 calc(11px*var(--fs,1)) var(--f-ui); color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); }
+
+/* ═══ V2 polish: 奥行き階層 + 計器盤 deck (灰色かぶり解消・クール化) ═══ */
+/* 凹んだ canvas に白いカードが浮く (従来は card<container の逆転で mud に) */
+.ap-acc-tr > td { background:var(--paper-2); }
+.ap-acc {
+  background:var(--panel);
+  border:1px solid var(--line-2);
+  border-left:2px solid var(--accent);
+  border-radius:0 var(--radius-lg) var(--radius-lg) var(--radius-lg);
+  box-shadow:0 1px 2px rgba(2,12,40,.05), 0 16px 34px -14px rgba(2,12,40,.18);
+}
+.ap-acc-detail { background:transparent; gap:9px; padding:14px 16px 13px; }
+.ap-acc-name { font-size:calc(15px*var(--fs,1)); letter-spacing:-.01em; }
+.ap-acc-facts .k { color:var(--ink-4); }
+/* control deck = ひとつの計器盤レール (signature): 微 accent ティント + run-state の後に区切り線 */
+.ap-deck {
+  margin-top:11px; padding:9px 14px; border-top:none;
+  background:color-mix(in srgb, var(--accent) 5%, var(--panel-soft));
+  border:1px solid color-mix(in srgb, var(--accent) 16%, var(--line-2));
+  border-radius:var(--radius); gap:9px 16px;
+}
+.ap-deck-state.on, .ap-deck-state.off { padding-right:15px; margin-right:1px; border-right:1px solid color-mix(in srgb, var(--accent) 20%, var(--line)); }
+.ap-deck-k { color:var(--ink-3); }
+.ap-pwr.on { box-shadow:0 0 0 3px color-mix(in srgb, var(--ok) 24%, transparent), 0 0 14px color-mix(in srgb, var(--ok) 50%, transparent); }
+.ap-btn { background:var(--panel-soft); border-color:var(--line-2); }
+.ap-btn:hover { background:var(--panel); border-color:var(--accent); }
+.ap-filter:focus, .ap-sel:focus, .ap-field select:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
 `;
   document.head.appendChild(el("style#anypoint-console-styles", { html: css }));
 }

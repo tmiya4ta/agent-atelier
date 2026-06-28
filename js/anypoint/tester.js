@@ -146,6 +146,29 @@ function injectStyles() {
 .ap-mcp-call { margin:10px 14px; padding:7px; font:700 calc(12px*var(--fs,1)) var(--f-ui); color:var(--you-ink); background:var(--accent); border:none; border-radius:var(--radius); cursor:pointer; }
 .ap-mcp-call[disabled] { opacity:.5; cursor:default; }
 .ap-mcp-out { margin:0 14px 14px; padding:10px; background:var(--paper); border:1px solid var(--line-3); border-radius:var(--radius); font:500 calc(12px*var(--fs,1))/1.55 var(--f-mono); color:var(--ink-2); white-space:pre-wrap; word-break:break-word; overflow:auto; }
+
+/* ═══ V2 polish: test bench を白カードに統合 + 欄らしいフィールド + 色付きステータス ═══ */
+.ap-test { background:transparent; }
+.ap-test-head { background:transparent; border-top:1px solid var(--line); padding:11px 16px; }
+.ap-test-lead { letter-spacing:.1em; }
+.ap-test-title { letter-spacing:-.01em; }
+/* 白カード上で「欄」に見えるよう soft inset 塗り + crisp な accent フォーカスリング */
+.ap-test-url,.ap-test-auth,.ap-test-akv,.ap-rq-m,.ap-rq-p,.ap-ta,.ap-ep-filter,
+.ap-mcp-arg input,.ap-mcp-arg textarea,.ap-send input {
+  background:var(--panel-soft); border-color:var(--line-2);
+}
+.ap-test-url:focus,.ap-test-auth:focus,.ap-test-akv:focus,.ap-rq-p:focus,.ap-ta:focus,
+.ap-ep-filter:focus,.ap-mcp-arg input:focus,.ap-mcp-arg textarea:focus,.ap-send input:focus {
+  outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);
+}
+.ap-rq { padding:11px 16px; }
+.ap-ep-pane { background:var(--panel-soft); border-right:1px solid var(--line); }
+.ap-rest-req { border-right:1px solid var(--line); }
+.ap-res-status { background:var(--panel-soft); border-bottom:1px solid var(--line); }
+.ap-res-code { font-size:calc(13px*var(--fs,1)); font-weight:800; padding:3px 10px; }
+.ap-res-code.ok { color:var(--ok); background:var(--ok-soft); }
+.ap-res-code.bad { color:var(--warn); background:var(--warn-soft); }
+.ap-rq-send { box-shadow:0 1px 2px color-mix(in srgb, var(--accent) 30%, transparent); }
 `;
   document.head.appendChild(el("style#anypoint-tester-styles", { html: css }));
 }
