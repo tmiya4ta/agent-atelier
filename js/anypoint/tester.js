@@ -162,6 +162,7 @@ function injectStyles() {
   outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);
 }
 .ap-rq { padding:11px 16px; }
+.ap-ta { min-height:74px; }
 .ap-ep-pane { background:var(--panel-soft); border-right:1px solid var(--line); }
 .ap-rest-req { border-right:1px solid var(--line); }
 .ap-res-status { background:var(--panel-soft); border-bottom:1px solid var(--line); }

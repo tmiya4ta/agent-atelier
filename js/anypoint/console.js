@@ -246,15 +246,18 @@ table.ap-table { width:100%; border-collapse:collapse; font:500 calc(12px*var(--
 .ap-sel { padding:4px 7px; font:500 calc(11px*var(--fs,1)) var(--f-ui); color:var(--ink); background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); }
 
 /* ═══ V2 polish: 奥行き階層 + 計器盤 deck (灰色かぶり解消・クール化) ═══ */
-/* 凹んだ canvas に白いカードが浮く (従来は card<container の逆転で mud に) */
-.ap-acc-tr > td { background:var(--paper-2); }
+/* 凹んだ canvas に白カードが「全周」浮く (上も下も余白+影で一貫させる) */
+.ap-acc-tr > td { background:var(--paper-2); padding:13px 18px 18px 34px !important; border-bottom:none !important; }
 .ap-acc {
   background:var(--panel);
   border:1px solid var(--line-2);
   border-left:2px solid var(--accent);
-  border-radius:0 var(--radius-lg) var(--radius-lg) var(--radius-lg);
-  box-shadow:0 1px 2px rgba(2,12,40,.05), 0 16px 34px -14px rgba(2,12,40,.18);
+  border-radius:var(--radius-lg);
+  box-shadow:0 1px 2px rgba(2,12,40,.05), 0 6px 16px -6px rgba(2,12,40,.13), 0 22px 44px -18px rgba(2,12,40,.18);
+  height:min(720px,85vh);
 }
+/* connector: 親行から gap を跨いでカードの左肩へ繋ぐ (浮いていても親子関係を示す) */
+.ap-acc-tr > td::before { left:18px; top:0; width:13px; height:30px; border-radius:0 0 0 7px; }
 .ap-acc-detail { background:transparent; gap:9px; padding:14px 16px 13px; }
 .ap-acc-name { font-size:calc(15px*var(--fs,1)); letter-spacing:-.01em; }
 .ap-acc-facts .k { color:var(--ink-4); }
