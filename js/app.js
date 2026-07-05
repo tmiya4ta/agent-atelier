@@ -2979,6 +2979,11 @@ function refreshIdentityDialog() {
       ? "Actually attempt auth / token retrieval with the entered values (without saving)"
       : "Validate the entered values (without saving)";
   }
+
+  // kind 切替でフィールド数(高さ)が変わる。 スクロールが中途半端な位置で
+  // clamp されると上端が動いて見える (ガタつき) ので、 切替のたびに先頭へ戻す。
+  const backdrop = $("#identityDialog");
+  if (backdrop) backdrop.scrollTop = 0;
 }
 
 function detectProvider(editing) {
