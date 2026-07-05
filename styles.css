@@ -2368,6 +2368,14 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
 }
 .jwt-pop-err { color: var(--warn); font-size: calc(12px * var(--fs-mul, 1.1) * var(--fs, 1)); }
 
+/* JWT Decode の対象箇所を右クリック直後から明示する highlight (Debug タブの .dbg-body 内) */
+.jwt-hl {
+  background: color-mix(in srgb, var(--accent, #00A0DF) 26%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #00A0DF) 45%, transparent);
+  border-radius: 2px;
+  color: inherit;
+}
+
 /* ─── Proto list ─── */
 .proto-list { display: flex; flex-direction: column; gap: 3px; }
 .proto-pill {
@@ -5153,6 +5161,11 @@ body.is-dark .tk-mock-text { color: #C8A85A; }
 .dts-copy:focus-visible { opacity: 1; }
 .dts-copy:hover { color: var(--accent-ink); border-color: var(--accent); background: var(--paper); }
 .dts-copy.is-copied { opacity: 1; color: #14834A; border-color: #14834A; background: #E8F6EE; }
+/* 右クリックで JWT Decode メニュー/popover を開いている間、対象を明示 (.jwt-hl と同系色) */
+.dts-token.is-decoding {
+  background: color-mix(in srgb, var(--accent, #00A0DF) 12%, var(--panel));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #00A0DF) 45%, transparent);
+}
 
 /* Scrollbars */
 *::-webkit-scrollbar { width: 8px; height: 8px; }

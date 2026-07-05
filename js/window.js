@@ -1303,25 +1303,32 @@ export class AgentWindow {
 
   // ── Debug の右クリック「JWT Decode」 ───────────────────
   // クリック位置 (選択があれば選択範囲) の文字列から JWT を取り出してメニューを出す。
+  // 対象箇所が caret (text node + offset) 由来で判明した場合は、 どの部分文字列を
+  // decode するのか一目でわかるよう <mark> で highlight する (選択範囲由来のときは
+  // 選択自体が既に見えているので highlight しない)。
   _onDebugContextMenu(e) {
     const pre = e.target.closest(".dbg-body");
     if (!pre) return;   // JSON/テキスト本文の上でのみ反応 (それ以外は通常メニュー)
     e.preventDefault();
-    const token = this._jwtTokenAtPoint(e, pre);
-    this._openJwtMenu(e.clientX, e.clientY, token);
+    const loc = this._jwtTokenAtPoint(e, pre);
+    if (loc && loc.node) this._highlightJwtRange(loc.node, loc.start, loc.end);
+    else this._clearJwtHighlight();
+    this._openJwtMenu(e.clientX, e.clientY, loc?.token || "");
   }
 
-  // base64url + ドットだけを JWT 文字とみなす
+  // base64url + ドットだけを JWT 文字とみなす。 マッチ開始位置も返す (highlight 用)。
   _extractJwt(str) {
     const m = String(str || "").match(/[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]*/);
-    return m ? m[0] : "";
+    return m ? { value: m[0], index: m.index } : null;
   }
 
-  // クリック位置 (なければ選択範囲) の token を返す。
+  // クリック位置 (なければ選択範囲) の token を返す。 caret 由来なら { token, node, start, end }
+  // (node 内の絶対 offset) を返し、 呼び出し側が該当箇所を highlight できるようにする。
+  // 選択範囲由来なら { token } のみ (node は返さない)。
   _jwtTokenAtPoint(e, pre) {
     // 1) 選択範囲があれば最優先
     const sel = (typeof window.getSelection === "function") ? String(window.getSelection() || "").trim() : "";
-    if (sel) { const t = this._extractJwt(sel); if (t) return t; }
+    if (sel) { const m = this._extractJwt(sel); if (m) return { token: m.value }; }
     // 2) クリック位置の caret から text node + offset を得る
     let node = null, offset = 0;
     if (document.caretRangeFromPoint) {
@@ -1332,13 +1339,45 @@ export class AgentWindow {
       if (p) { node = p.offsetNode; offset = p.offset; }
     }
     const text = (node && node.nodeType === 3) ? (node.textContent || "") : (pre.textContent || "");
-    if (!text) return "";
+    if (!text) return null;
     // 3) offset 周辺を JWT 文字 ([A-Za-z0-9._-]) で左右に広げて候補を切り出す
     const isTok = (c) => /[A-Za-z0-9._-]/.test(c);
     let s = Math.min(Math.max(offset, 0), text.length), ei = s;
     while (s > 0 && isTok(text[s - 1])) s--;
     while (ei < text.length && isTok(text[ei])) ei++;
-    return this._extractJwt(text.slice(s, ei)) || this._extractJwt(text);
+    let m = this._extractJwt(text.slice(s, ei));
+    let base = s;
+    if (!m) { m = this._extractJwt(text); base = 0; }   // 境界検出に失敗したら node 全体から再探索
+    if (!m) return null;
+    const isCaretNode = node && node.nodeType === 3;
+    return {
+      token: m.value,
+      node:  isCaretNode ? node : null,
+      start: isCaretNode ? base + m.index : -1,
+      end:   isCaretNode ? base + m.index + m.value.length : -1,
+    };
+  }
+
+  // 該当箇所を <mark class="jwt-hl"> で包んで highlight する。 既存の highlight は解除してから張る。
+  _highlightJwtRange(node, start, end) {
+    this._clearJwtHighlight();
+    try {
+      const range = document.createRange();
+      range.setStart(node, start);
+      range.setEnd(node, end);
+      const mark = document.createElement("mark");
+      mark.className = "jwt-hl";
+      range.surroundContents(mark);
+      this._jwtHlEl = mark;
+    } catch { /* text node の境界を跨ぐ等、想定外の range は highlight せずに諦める */ }
+  }
+  _clearJwtHighlight() {
+    if (this._jwtHlEl && this._jwtHlEl.parentNode) {
+      const parent = this._jwtHlEl.parentNode;
+      parent.replaceChild(document.createTextNode(this._jwtHlEl.textContent), this._jwtHlEl);
+      parent.normalize();
+    }
+    this._jwtHlEl = null;
   }
 
   _closeJwtMenu() {
@@ -1369,15 +1408,28 @@ export class AgentWindow {
     menu.style.left = `${Math.max(6, Math.round(left))}px`;
     menu.style.top  = `${Math.max(6, Math.round(top))}px`;
     this._jwtMenuEl = menu;
-    // 外側クリックで閉じる (次フレームで登録)
-    this._jwtMenuOff = () => this._closeJwtMenu();
+    // 外側クリックで閉じる (capture 段階なので menu 上のクリックも先に届く — item.click の
+    // stopPropagation では防げない。 menu.contains で判定して item クリックは無視する)。
+    // decode せずに閉じる (真の外側クリック) のときだけ highlight も解除する。
+    this._jwtMenuOff = (ev) => {
+      if (menu.contains(ev.target)) return;
+      this._closeJwtMenu();
+      this._clearJwtHighlight();
+    };
     setTimeout(() => document.addEventListener("click", this._jwtMenuOff, true), 0);
   }
 
+  // DOM の除去のみ (highlight はそのまま)。 _showJwtPopover 冒頭の「既存 popover を
+  // 一旦畳む」防御的呼び出しでも使うため、 ここでは highlight を消さない。
   _closeJwtPopover() {
     if (this._jwtPopEl) { this._jwtPopEl.remove(); this._jwtPopEl = null; }
     if (this._jwtPopOff) { document.removeEventListener("mousedown", this._jwtPopOff, true); this._jwtPopOff = null; }
     if (this._jwtPopEsc) { document.removeEventListener("keydown", this._jwtPopEsc, true); this._jwtPopEsc = null; }
+  }
+  // ユーザーが実際に popover を閉じた (close ボタン/外側クリック/Esc) ときに highlight も解除する。
+  _dismissJwtPopover() {
+    this._closeJwtPopover();
+    this._clearJwtHighlight();
   }
 
   _showJwtPopover(token, x, y) {
@@ -1404,7 +1456,7 @@ export class AgentWindow {
     pop.style.top  = `${Math.round(top)}px`;
     this._jwtPopEl = pop;
     // copy / close
-    pop.querySelector(".jwt-pop-close").addEventListener("click", () => this._closeJwtPopover());
+    pop.querySelector(".jwt-pop-close").addEventListener("click", () => this._dismissJwtPopover());
     const copyBtn = pop.querySelector(".jwt-pop-copy");
     copyBtn.addEventListener("click", () => {
       if (!token) return;
@@ -1415,8 +1467,8 @@ export class AgentWindow {
     });
     if (!token) copyBtn.style.display = "none";
     // 外側クリック / Esc で閉じる (popover 内は除外)
-    this._jwtPopOff = (ev) => { if (!pop.contains(ev.target)) this._closeJwtPopover(); };
-    this._jwtPopEsc = (ev) => { if (ev.key === "Escape") this._closeJwtPopover(); };
+    this._jwtPopOff = (ev) => { if (!pop.contains(ev.target)) this._dismissJwtPopover(); };
+    this._jwtPopEsc = (ev) => { if (ev.key === "Escape") this._dismissJwtPopover(); };
     setTimeout(() => {
       document.addEventListener("mousedown", this._jwtPopOff, true);
       document.addEventListener("keydown", this._jwtPopEsc, true);

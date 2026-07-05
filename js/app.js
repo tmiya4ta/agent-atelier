@@ -499,15 +499,26 @@ async function encodeJwt(headerObj, payloadObj, secret) {
 // identity dialog: token 結果を右クリックで JWT Decode (Debug タブの JWT Decode と同じ UX・CSS を再利用)
 let _idnJwtMenuEl = null, _idnJwtMenuOff = null;
 let _idnJwtPopEl = null, _idnJwtPopOff = null, _idnJwtPopEsc = null;
+let _idnJwtActiveEl = null;   // decode 対象として highlight 中の .dts-token (menu/popover が閉じたら解除)
 
+function _clearIdnJwtHighlight() {
+  if (_idnJwtActiveEl) { _idnJwtActiveEl.classList.remove("is-decoding"); _idnJwtActiveEl = null; }
+}
 function _closeIdnJwtMenu() {
   if (_idnJwtMenuEl) { _idnJwtMenuEl.remove(); _idnJwtMenuEl = null; }
   if (_idnJwtMenuOff) { document.removeEventListener("click", _idnJwtMenuOff, true); _idnJwtMenuOff = null; }
 }
+// DOM の除去のみ (highlight はそのまま)。 _showIdnJwtPopover 冒頭の「既存 popover を
+// 一旦畳む」防御的呼び出しでも使うため、 ここでは highlight を消さない。
 function _closeIdnJwtPopover() {
   if (_idnJwtPopEl) { _idnJwtPopEl.remove(); _idnJwtPopEl = null; }
   if (_idnJwtPopOff) { document.removeEventListener("mousedown", _idnJwtPopOff, true); _idnJwtPopOff = null; }
   if (_idnJwtPopEsc) { document.removeEventListener("keydown", _idnJwtPopEsc, true); _idnJwtPopEsc = null; }
+}
+// ユーザーが実際に popover を閉じた (close ボタン/外側クリック/Esc) ときに highlight も解除する。
+function _dismissIdnJwtPopover() {
+  _closeIdnJwtPopover();
+  _clearIdnJwtHighlight();
 }
 function _showIdnJwtPopover(token, x, y) {
   _closeIdnJwtPopover();
@@ -530,19 +541,21 @@ function _showIdnJwtPopover(token, x, y) {
   pop.style.left = `${Math.max(8, Math.round(left))}px`;
   pop.style.top  = `${Math.round(top)}px`;
   _idnJwtPopEl = pop;
-  pop.querySelector(".jwt-pop-close").addEventListener("click", () => _closeIdnJwtPopover());
+  pop.querySelector(".jwt-pop-close").addEventListener("click", () => _dismissIdnJwtPopover());
   const copyBtn = pop.querySelector(".jwt-pop-copy");
   if (token) _wireCopyBtn(copyBtn, () => token);
   else copyBtn.style.display = "none";
-  _idnJwtPopOff = (ev) => { if (!pop.contains(ev.target)) _closeIdnJwtPopover(); };
-  _idnJwtPopEsc = (ev) => { if (ev.key === "Escape") _closeIdnJwtPopover(); };
+  _idnJwtPopOff = (ev) => { if (!pop.contains(ev.target)) _dismissIdnJwtPopover(); };
+  _idnJwtPopEsc = (ev) => { if (ev.key === "Escape") _dismissIdnJwtPopover(); };
   setTimeout(() => {
     document.addEventListener("mousedown", _idnJwtPopOff, true);
     document.addEventListener("keydown", _idnJwtPopEsc, true);
   }, 0);
 }
-function _openIdnJwtMenu(x, y, token) {
+function _openIdnJwtMenu(x, y, token, tokenEl) {
   _closeIdnJwtMenu();
+  _clearIdnJwtHighlight();
+  if (tokenEl) { tokenEl.classList.add("is-decoding"); _idnJwtActiveEl = tokenEl; }
   const menu = document.createElement("div");
   menu.className = "row-menu jwt-ctx-menu";
   const item = document.createElement("button");
@@ -563,7 +576,14 @@ function _openIdnJwtMenu(x, y, token) {
   menu.style.left = `${Math.max(6, Math.round(left))}px`;
   menu.style.top  = `${Math.max(6, Math.round(top))}px`;
   _idnJwtMenuEl = menu;
-  _idnJwtMenuOff = () => _closeIdnJwtMenu();
+  // 外側クリックで閉じる (capture 段階なので menu 上のクリックも先に届く — item.click の
+  // stopPropagation では防げない。 menu.contains で判定して item クリックは無視する)。
+  // decode せずに閉じる (真の外側クリック) のときだけ highlight も解除する。
+  _idnJwtMenuOff = (ev) => {
+    if (menu.contains(ev.target)) return;
+    _closeIdnJwtMenu();
+    _clearIdnJwtHighlight();
+  };
   setTimeout(() => document.addEventListener("click", _idnJwtMenuOff, true), 0);
 }
 
@@ -3399,7 +3419,7 @@ function wireIdentityDialog() {
       if (!box) return;
       e.preventDefault();
       _closeIdnJwtPopover();
-      _openIdnJwtMenu(e.clientX, e.clientY, box.textContent.trim());
+      _openIdnJwtMenu(e.clientX, e.clientY, box.textContent.trim(), box);
     });
   }
 }
