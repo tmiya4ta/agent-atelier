@@ -496,6 +496,77 @@ async function encodeJwt(headerObj, payloadObj, secret) {
   const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(signingInput));
   return signingInput + "." + _b64urlBytes(new Uint8Array(sig));
 }
+// identity dialog: token 結果を右クリックで JWT Decode (Debug タブの JWT Decode と同じ UX・CSS を再利用)
+let _idnJwtMenuEl = null, _idnJwtMenuOff = null;
+let _idnJwtPopEl = null, _idnJwtPopOff = null, _idnJwtPopEsc = null;
+
+function _closeIdnJwtMenu() {
+  if (_idnJwtMenuEl) { _idnJwtMenuEl.remove(); _idnJwtMenuEl = null; }
+  if (_idnJwtMenuOff) { document.removeEventListener("click", _idnJwtMenuOff, true); _idnJwtMenuOff = null; }
+}
+function _closeIdnJwtPopover() {
+  if (_idnJwtPopEl) { _idnJwtPopEl.remove(); _idnJwtPopEl = null; }
+  if (_idnJwtPopOff) { document.removeEventListener("mousedown", _idnJwtPopOff, true); _idnJwtPopOff = null; }
+  if (_idnJwtPopEsc) { document.removeEventListener("keydown", _idnJwtPopEsc, true); _idnJwtPopEsc = null; }
+}
+function _showIdnJwtPopover(token, x, y) {
+  _closeIdnJwtPopover();
+  const dec = token ? decodeJwt(token) : null;
+  const pop = document.createElement("div");
+  pop.className = "jwt-popover";
+  pop.innerHTML = `
+    <div class="jwt-pop-head">
+      <span class="jwt-pop-title">JWT Decode</span>
+      <button type="button" class="jwt-pop-copy" title="Copy token">copy</button>
+      <button type="button" class="jwt-pop-close" aria-label="close">×</button>
+    </div>
+    <div class="jwt-pop-body">${dec ? `<pre class="jwt-pop-pre">${formatJwt(dec)}</pre>` : `<span class="jwt-pop-err">Cannot decode as JWT</span>`}</div>
+  `;
+  document.body.appendChild(pop);
+  const pw = pop.offsetWidth, ph = pop.offsetHeight;
+  let left = Math.min(x, window.innerWidth  - pw - 8);
+  let top  = y - Math.round(ph * 0.55);   // クリックより上に持ち上げる
+  top = Math.max(8, Math.min(top, window.innerHeight - ph - 8));
+  pop.style.left = `${Math.max(8, Math.round(left))}px`;
+  pop.style.top  = `${Math.round(top)}px`;
+  _idnJwtPopEl = pop;
+  pop.querySelector(".jwt-pop-close").addEventListener("click", () => _closeIdnJwtPopover());
+  const copyBtn = pop.querySelector(".jwt-pop-copy");
+  if (token) _wireCopyBtn(copyBtn, () => token);
+  else copyBtn.style.display = "none";
+  _idnJwtPopOff = (ev) => { if (!pop.contains(ev.target)) _closeIdnJwtPopover(); };
+  _idnJwtPopEsc = (ev) => { if (ev.key === "Escape") _closeIdnJwtPopover(); };
+  setTimeout(() => {
+    document.addEventListener("mousedown", _idnJwtPopOff, true);
+    document.addEventListener("keydown", _idnJwtPopEsc, true);
+  }, 0);
+}
+function _openIdnJwtMenu(x, y, token) {
+  _closeIdnJwtMenu();
+  const menu = document.createElement("div");
+  menu.className = "row-menu jwt-ctx-menu";
+  const item = document.createElement("button");
+  item.type = "button";
+  item.className = "row-menu-item";
+  item.textContent = token ? "JWT Decode" : "JWT Decode (no token here)";
+  if (!token) item.disabled = true;
+  item.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    _closeIdnJwtMenu();
+    _showIdnJwtPopover(token, x, y);
+  });
+  menu.appendChild(item);
+  document.body.appendChild(menu);
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  let left = Math.min(x, window.innerWidth  - mw - 6);
+  let top  = Math.min(y, window.innerHeight - mh - 6);
+  menu.style.left = `${Math.max(6, Math.round(left))}px`;
+  menu.style.top  = `${Math.max(6, Math.round(top))}px`;
+  _idnJwtMenuEl = menu;
+  _idnJwtMenuOff = () => _closeIdnJwtMenu();
+  setTimeout(() => document.addEventListener("click", _idnJwtMenuOff, true), 0);
+}
+
 // copy ボタン共通配線
 function _wireCopyBtn(btn, getSrc) {
   if (!btn) return;
@@ -3319,6 +3390,18 @@ function wireIdentityDialog() {
       });
     }
   });
+
+  // authenticate 結果のトークンを右クリックで JWT Decode (Debug タブと同じ操作感)
+  const testRow = $("#idnTestRow");
+  if (testRow) {
+    testRow.addEventListener("contextmenu", (e) => {
+      const box = e.target.closest(".dts-token");
+      if (!box) return;
+      e.preventDefault();
+      _closeIdnJwtPopover();
+      _openIdnJwtMenu(e.clientX, e.clientY, box.textContent.trim());
+    });
+  }
 }
 
 // ─── Sidebar: catalogs ─────────────────────────────────
