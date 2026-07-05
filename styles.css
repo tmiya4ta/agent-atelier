@@ -4804,7 +4804,7 @@ body.is-dark .tk-mock-text { color: #C8A85A; }
   justify-content: flex-start;/* 縦は上寄せ → 下方向に伸びる */
   overflow-y: auto;
 }
-#identityDialog .dialog { margin-top: 14vh; flex: 0 0 auto; }
+#identityDialog .dialog { margin-top: 14vh; flex: 0 0 auto; width: min(720px, 94vw); }
 
 /* connect ダイアログの縦位置は JS (centerConnectDialog) が marginTop で決める。
    「畳んだ状態がちょうど縦中央」になる位置に上端を固定し、 ADVANCED 展開や
@@ -5120,6 +5120,39 @@ body.is-dark .tk-mock-text { color: #C8A85A; }
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.35; }
 }
+
+/* token OK 結果: 全文表示 + copy (identity dialog の authenticate 結果) */
+.dts-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.dts-meta { color: var(--ink-3); font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1)); white-space: nowrap; }
+.dts-token-wrap { position: relative; margin-top: 8px; }
+.dts-token {
+  display: block;
+  margin: 0; padding: 8px 40px 8px 10px;
+  max-height: 86px; overflow-y: auto;
+  white-space: normal; word-break: break-all;
+  font-family: var(--f-mono);
+  font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  line-height: 1.5;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 4%, var(--panel));
+  border: 1px solid var(--line); border-radius: 4px;
+}
+.dts-copy {
+  position: absolute; top: 6px; right: 6px;
+  padding: 1px 7px;
+  font-family: var(--f-mono);
+  font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--ink-3);
+  background: color-mix(in srgb, var(--panel) 85%, transparent);
+  border: 1px solid var(--line); border-radius: 4px; cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.dts-token-wrap:hover .dts-copy,
+.dts-copy:focus-visible { opacity: 1; }
+.dts-copy:hover { color: var(--accent-ink); border-color: var(--accent); background: var(--paper); }
+.dts-copy.is-copied { opacity: 1; color: #14834A; border-color: #14834A; background: #E8F6EE; }
 
 /* Scrollbars */
 *::-webkit-scrollbar { width: 8px; height: 8px; }

@@ -3129,7 +3129,6 @@ async function testIdentityDialog() {
     const ms = Math.round(performance.now() - t0);
     if (!tok) throw new Error("no access_token returned");
     const exp = idn.tokenExpiresAt ? Math.max(0, Math.round((idn.tokenExpiresAt - Date.now()) / 1000)) : null;
-    const preview = `${String(tok).slice(0, 6)}…${String(tok).slice(-4)}`;
     // authenticate(test) で取得したトークンを Save 時に本物の identity へ引き継ぐ
     // (引き継がないと保存直後の接続で即「再認証」になる)。
     state._authTestResult = {
@@ -3137,9 +3136,12 @@ async function testIdentityDialog() {
       tokenExpiresAt: idn.tokenExpiresAt,
       refreshToken:   idn.refreshToken,
     };
+    const meta = (exp != null ? `expires in ~${exp}s · ` : "") + `${ms}ms`;
     setIdentityTest("ok",
-      `<span class='dts-dot'></span> token OK · <code>${escapeHtml(preview)}</code>` +
-      (exp != null ? ` · expires in ~${exp}s` : "") + ` · ${ms}ms`);
+      `<div class="dts-row"><span class="dts-dot"></span> token OK <span class="dts-meta">${escapeHtml(meta)}</span></div>` +
+      `<div class="dts-token-wrap"><code class="dts-token">${escapeHtml(tok)}</code>` +
+      `<button type="button" class="dts-copy" id="idnTestTokenCopy" title="Copy full token">copy</button></div>`);
+    _wireCopyBtn($("#idnTestTokenCopy"), () => state._authTestResult?.accessToken || "");
   } catch (e) {
     const msg = e?.message || String(e);
     // ユーザがポップアップを閉じた / キャンセルした場合は「失敗」ではないので赤エラーにしない。
