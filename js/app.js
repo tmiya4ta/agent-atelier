@@ -250,8 +250,9 @@ function init() {
   wireRail();
   wireSideRail();
   wirePanelCollapse();
-  // Platform console は使い捨て add-on。失敗してもコア atelier を巻き込まないよう隔離する。
-  try { wireAnypointConsole(); } catch (e) { console.error("[anypoint] console wiring failed:", e); }
+  // Platform console: いったん Client 側に注力するため無効化 (rail アイコンも index.html でコメントアウト済)。
+  // 復活させる場合は index.html の platform rail-ico を戻し、下記行を有効化する。
+  // try { wireAnypointConsole(); } catch (e) { console.error("[anypoint] console wiring failed:", e); }
   wireTools();
   wireIdentityDialog();
   wireDialog();
