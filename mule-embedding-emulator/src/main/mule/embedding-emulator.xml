@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+
+    <http:listener-config name="http-listener-config">
+        <http:listener-connection host="0.0.0.0" port="8081"/>
+    </http:listener-config>
+
+    <!--
+      Hugging Face Inference API互換: POST /models/{modelPath}  body: {"inputs": "..." | ["...", ...]}
+      Muleのhttp:listenerパスは正規表現不可、末尾ワイルドカード "/*" のみサポートするため /models/* とする。
+      embeddingはmodules::Embedder(DataWeaveのみ、signed feature hashing)で生成。Java Moduleは使用しない
+      （java:invoke-staticの引数バインディングでpayloadストリームが誤って渡る問題を回避）。
+    -->
+    <flow name="hf-embed-flow">
+        <http:listener config-ref="http-listener-config" path="/models/*">
+            <http:response statusCode="#[vars.httpStatus default 200]"/>
+            <http:error-response statusCode="#[vars.httpStatus default 500]"/>
+        </http:listener>
+
+        <!-- HFの/modelsエンドポイントは常に [[...], [...]] 形式（入力が1件でも二重配列）を返す -->
+        <set-payload value='#[%dw 2.0
+            import * from modules::Embedder
+            output application/json
+            var texts = (if (payload.inputs is Array) payload.inputs else [payload.inputs]) map (t) -> t as String
+            ---
+            embedBatch(texts, 384)
+        ]'/>
+
+        <error-handler ref="embed-error-handler"/>
+    </flow>
+
+    <!--
+      OpenAI Embeddings API互換: POST /v1/embeddings  body: {"input": "..." | ["...", ...], "model": "..."}
+    -->
+    <flow name="openai-embed-flow">
+        <http:listener config-ref="http-listener-config" path="/v1/embeddings">
+            <http:response statusCode="#[vars.httpStatus default 200]"/>
+            <http:error-response statusCode="#[vars.httpStatus default 500]"/>
+        </http:listener>
+
+        <set-payload value='#[%dw 2.0
+            import * from modules::Embedder
+            output application/json
+            var texts = (if (payload."input" is Array) payload."input" else [payload."input"]) map (t) -> t as String
+            var vectors = embedBatch(texts, 384)
+            ---
+            {
+                object: "list",
+                data: vectors map ((vec, idx) -> {
+                    object: "embedding",
+                    index: idx,
+                    embedding: vec
+                }),
+                model: payload.model default "text-embedding-3-small-emulated",
+                usage: {
+                    prompt_tokens: 0,
+                    total_tokens: 0
+                }
+            }
+        ]'/>
+
+        <error-handler ref="embed-error-handler"/>
+    </flow>
+
+    <error-handler name="embed-error-handler">
+        <on-error-propagate type="ANY">
+            <set-variable variableName="httpStatus" value="#[500]"/>
+            <set-payload value="#[output application/json --- { error: error.description }]"/>
+        </on-error-propagate>
+    </error-handler>
+
+</mule>
