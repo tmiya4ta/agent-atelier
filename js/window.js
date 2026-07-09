@@ -51,6 +51,10 @@ export class AgentWindow {
     this.startedAt = Date.now();
     this.lastLatency = null;
     this.lastSendAt = null;
+    // 一度でも接続が open したか。 初回接続失敗 (未 open) のエラーは静かに扱い、
+    // 接続中/失敗のシステムメッセージを出さず status ドットだけで示す
+    // (接続不可の window を MOCK シナリオ用に静かに開けるようにするため)。
+    this._everOpened = false;
     // ピン留め: true の間は drag / resize を無効化し位置・サイズを固定する。
     this.pinned = !!(this.restore && this.restore.pinned);
 
@@ -242,6 +246,7 @@ export class AgentWindow {
 
     // 既に open 済み adapter を渡された場合は、 open event 相当の初期描画を即時実行
     if (this.adapter.state === "open" && this.adapter.agentCard) {
+      this._everOpened = true;
       this._setStatus("live");
       this._renderCard(this.adapter.agentCard);
       this._renderSettings();
@@ -259,13 +264,14 @@ export class AgentWindow {
         this.switchTab(this.restore.activeTab);
         this.restore = null;
       }
-    } else {
-      this._addSystemMessage(`Connecting to ${this.name}…`);
     }
+    // 接続前の "Connecting to …" メッセージは出さない。 接続中/失敗の状態は
+    // status ドットで示し、 成功時のみ open リスナが "Connected …" を出す。
   }
 
   _wireAdapter() {
     this.adapter.addEventListener("open", (e) => {
+      this._everOpened = true;
       this._setStatus("live");
       this._addSystemMessage(`Connected · agent card loaded`);
       this._renderCard(e.detail.card);
@@ -319,7 +325,10 @@ export class AgentWindow {
 
     this.adapter.addEventListener("error", (e) => {
       this._setStatus("error");
-      this._addSystemMessage(`Error: ${e.detail?.message || e.detail}`);
+      // 初回接続の失敗 (まだ一度も open していない) はメッセージを出さず status ドットのみ赤に。
+      // 接続不可の window を MOCK シナリオ用に静かに開けるようにするため。
+      // 一度でも接続できた後のセッション中エラーは従来どおり表示する。
+      if (this._everOpened) this._addSystemMessage(`Error: ${e.detail?.message || e.detail}`);
     });
 
     this.adapter.addEventListener("close", () => {
