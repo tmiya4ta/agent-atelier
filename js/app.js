@@ -6739,19 +6739,12 @@ async function connect({ protoId, url, name, auth, authRef, persona, channel, em
     reauth:      (ref) => reauthIdentity(ref || authRef)
   });
 
-  // ── 接続を先に試す: 失敗時はウインドウを作らず modal で通知 ──
-  // (復元時は元々開いてた接続なので、 失敗しても ウインドウだけは作って後で再接続できるようにする)
-  if (!opts.restore) {
-    try {
-      await adapter.connect();
-    } catch (e) {
-      await modalAlert({
-        title:   "Connection failed",
-        message: `${name || url}\n\n${e?.message || String(e)}`
-      });
-      return false;
-    }
-  }
+  // ── ウインドウは接続の成否に関わらず先に作る ──
+  // 以前は非復元時に connect を先に試し、 失敗すると window を作らず modal で
+  // return していた。 だが接続不可でも MOCK シナリオ等のため window は開きたい。
+  // 復元パスと同じく「先に window を作って adapter イベントを配線 → 後で接続」に
+  // 統一する。 接続は下の共通ブロックで試み、 失敗しても window は残す
+  // (window の "error" リスナが status=error とエラー行を表示する)。
 
   let win;
   if (protoId === "db") {
@@ -6803,15 +6796,16 @@ async function connect({ protoId, url, name, auth, authRef, persona, channel, em
 
   if (!opts.skipDirty) dirty();
 
-  if (!opts.restore) {
-    tileWindows();
-  } else {
-    // 復元時のみここで接続 (失敗してもウインドウは残す)
-    try {
-      await adapter.connect();
-    } catch (e) {
-      console.warn("restore reconnect failed:", e);
-    }
+  if (!opts.restore) tileWindows();
+
+  // ── 接続を試す (window 作成後・非ブロッキング) ──
+  // 失敗しても window は残す。 接続不可でも MOCK シナリオに使えるようにするため
+  // block する modal は出さない。 window の "error" リスナが status=error と
+  // エラー行を既に表示している。 復元時も同じ経路 (元々ここで接続していた)。
+  try {
+    await adapter.connect();
+  } catch (e) {
+    console.warn(`connect failed (window kept open): ${name || url}`, e);
   }
   return true;
 }
