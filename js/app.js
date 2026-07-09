@@ -1101,8 +1101,14 @@ function renderBookmarks() {
         ]);
         return;
       }
-      // それ以外 (proto バッジ / 名前 / count / 余白 = 文字のあるところ以降) = EDIT ダイアログ
+      // それ以外 (proto バッジ / 名前 / count / 余白 = 文字のあるところ以降) = EDIT ダイアログ。
+      // このとき > を押したのと同じく、 ぶらさがる window 階層も開く (展開のみ・
+      // 閉じるのは > で行う)。 window 自体は開かない。
       e.stopPropagation();
+      if (canExpand && childCount > 0) {
+        state._connExpanded[b.key] = true;
+        animateConnExpand(b.key, true);
+      }
       openDialog({ editBookmark: b });
     });
     root.appendChild(li);
