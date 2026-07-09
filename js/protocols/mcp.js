@@ -193,6 +193,12 @@ function parseSseJsonRpc(text) {
       else if (Object.keys(last).length === 0) last = obj;
     } catch { /* skip non-JSON data lines */ }
   }
+  // 防御: content-type が text/event-stream でも、 中身が SSE フレーム化されていない
+  // 素の JSON のことがある (proxy が application/json 応答を誤ラベルするケース)。
+  // data: 行が 1 つも無く last が空なら、 body 全体を JSON-RPC として解釈する。
+  if (Object.keys(last).length === 0) {
+    try { return JSON.parse(String(text || "").trim()); } catch { /* fall through */ }
+  }
   return last;
 }
 

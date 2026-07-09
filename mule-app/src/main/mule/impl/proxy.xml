@@ -129,7 +129,11 @@ output application/json
                                 </http:response-validator>
                             </http:request>
                             <set-variable variableName="proxyStatus" value="#[attributes.statusCode default 200]"/>
-                            <set-variable variableName="proxyHeaders" value="#[{ 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'Mcp-Session-Id', 'X-Accel-Buffering': 'no' } ++ (if ((attributes.headers default {}).'mcp-session-id'?) { 'Mcp-Session-Id': (attributes.headers default {}).'mcp-session-id' } else {})]"/>
+                            <!-- Content-Type は upstream の応答値を透過する。 stateless な MCP server は
+                                 単一 JSON (application/json) を返すことがあり、 それを text/event-stream と
+                                 誤ラベルすると client の SSE parser が空になる (tools 0 の原因)。 本物の
+                                 SSE upstream は自分で text/event-stream を返すので透過後も不変。 -->
+                            <set-variable variableName="proxyHeaders" value="#[{ 'Content-Type': ((attributes.headers default {}).'content-type' default 'text/event-stream; charset=utf-8'), 'Cache-Control': 'no-cache', 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'Mcp-Session-Id', 'X-Accel-Buffering': 'no' } ++ (if ((attributes.headers default {}).'mcp-session-id'?) { 'Mcp-Session-Id': (attributes.headers default {}).'mcp-session-id' } else {})]"/>
                             <error-handler>
                                 <on-error-continue type="ANY">
                                     <ee:transform>
