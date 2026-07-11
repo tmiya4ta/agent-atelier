@@ -1730,6 +1730,20 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
   background: var(--accent-soft);
   border-color: color-mix(in srgb, var(--accent) 50%, transparent);
 }
+/* SCENARIOS ヘッダの MOCK トグル: テキスト pill。 ON で amber 点灯し
+   「全シナリオがローカル応答 (実通信なし)」を明示 (エディタの mock ボタンと同配色)。 */
+.side-mock {
+  width: auto; padding: 0 6px;
+  font-family: var(--f-mono);
+  font-size: calc(8px * var(--fs-mul, 1.1) * var(--fs, 1));
+  font-weight: 700; letter-spacing: 0.1em;
+}
+.side-mock.is-on {
+  color: #fff; background: #b8860b; border-color: #b8860b;
+}
+.side-mock.is-on:hover, .side-mock.is-on:focus-visible {
+  color: #fff; background: #a07408; border-color: #a07408;
+}
 #connToggleAll .ico-expand-all { display: block; }
 #connToggleAll .ico-collapse-all { display: none; }
 #connToggleAll.is-all-expanded .ico-expand-all { display: none; }

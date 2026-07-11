@@ -5247,10 +5247,33 @@ async function ensureScriptWindowsOpen(ops) {
 // MOCK ボタンの見た目を on/off に同期する (state.scriptMock とは独立に呼べる)。
 // auto-mock 実行中は state を変えずに見た目だけ ON にするのに使う。
 function setMockButtonState(on) {
-  const btn = $("#scriptMock");
-  if (!btn) return;
-  btn.classList.toggle("is-on", !!on);
-  btn.setAttribute("aria-pressed", on ? "true" : "false");
+  // エディタ (#scriptMock) と SCENARIOS ヘッダ (#scriptMockPanel) の両方を同期。
+  ["#scriptMock", "#scriptMockPanel"].forEach(sel => {
+    const btn = $(sel);
+    if (!btn) return;
+    btn.classList.toggle("is-on", !!on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+}
+
+// MOCK トグルの共通処理 (エディタ #scriptMock / SCENARIOS ヘッダ #scriptMockPanel 共用)。
+// state.scriptMock を反転し、両ボタンの見た目・状態表示・ハイライトを同期する。
+// ON の間は runScript の effMock=true 判定により、 全シナリオの実行 (▶ / Ctrl+Enter)
+// がローカル応答 (実通信なし) で走る。 セッション内のみ (persist しない)。
+function toggleScriptMock() {
+  state.scriptMock = !state.scriptMock;
+  // 手動 OFF でも台本が all-mock なら見た目は ON のまま (auto 判定に戻す)
+  setMockButtonState(state.scriptMock || state._editorAllMock);
+  const auto = !state.scriptMock && state._editorAllMock;
+  setScriptStatus(
+    state.scriptMock ? "MOCK mode ON (local replies · no real traffic)"
+    : auto           ? "MOCK mode ON (auto — all windows are mock connections)"
+    :                  "MOCK mode OFF",
+    (state.scriptMock || auto) ? "running" : "");
+  // ハイライト ($> ⇔ >) と commands chip を mock ON/OFF で切替 (エディタ表示中のみ効果)
+  updateScriptHighlight();
+  renderCommandChips();
+  setTimeout(() => { if (!state._script) setScriptStatus("", ""); }, 2500);
 }
 
 // PIN ボタンの見た目を on/off に同期 (ON の間は run でパネルを閉じない)。
@@ -5489,22 +5512,9 @@ function wireScriptPanel() {
   });
   setScriptPinState(state.scriptPinned);
   // mock トグル: セッション内のみ (persist しない)。 ON で実通信せずローカル応答。
-  $("#scriptMock").addEventListener("click", (e) => {
-    state.scriptMock = !state.scriptMock;
-    // 手動 OFF でも台本が all-mock なら見た目は ON のまま (auto 判定に戻す)
-    setMockButtonState(state.scriptMock || state._editorAllMock);
-    const auto = !state.scriptMock && state._editorAllMock;
-    setScriptStatus(
-      state.scriptMock ? "MOCK mode ON (local replies · no real traffic)"
-      : auto           ? "MOCK mode ON (auto — all windows are mock connections)"
-      :                  "MOCK mode OFF",
-      (state.scriptMock || auto) ? "running" : "");
-    // ハイライトを mock ON/OFF で切替: $> は ON=mock 色 / OFF=dim、 > は ON=dim / OFF=通常
-    updateScriptHighlight();
-    // commands chip も mock ON/OFF で `>` ⇔ `$>` を切替
-    renderCommandChips();
-    setTimeout(() => { if (!state._script) setScriptStatus("", ""); }, 2500);
-  });
+  // エディタ (#scriptMock) と SCENARIOS ヘッダ (#scriptMockPanel) から同じ処理を呼ぶ。
+  $("#scriptMock").addEventListener("click", () => toggleScriptMock());
+  $("#scriptMockPanel")?.addEventListener("click", () => toggleScriptMock());
   $("#scriptClear").addEventListener("click", () => {
     const ed = $("#scriptEditor");
     if (!ed.value) return;
