@@ -6,7 +6,7 @@
 
     <groupId>fe1db8fb-8261-4b5c-a591-06fea582f980</groupId>
     <artifactId>mule-embedding-emulator</artifactId>
-    <version>2026.7.78</version>
+    <version>2026.7.80</version>
     <packaging>mule-application</packaging>
 
     <name>mule-embedding-emulator</name>

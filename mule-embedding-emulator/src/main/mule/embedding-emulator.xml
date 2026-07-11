@@ -18,9 +18,19 @@
     -->
     <flow name="hf-embed-flow">
         <http:listener config-ref="http-listener-config" path="/models/*">
-            <http:response statusCode="#[vars.httpStatus default 200]"/>
-            <http:error-response statusCode="#[vars.httpStatus default 500]"/>
+            <!-- charset 付き ("application/json; charset=UTF-8") だと厳密一致で見ている
+                 呼び出し側 (MuleSoft semantic-routing-policy 等) に弾かれる恐れがあるため、
+                 実 HF Inference API に合わせ charset 無しの Content-Type を明示する。 -->
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers>#[{'Content-Type': 'application/json'}]</http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:headers>#[{'Content-Type': 'application/json'}]</http:headers>
+            </http:error-response>
         </http:listener>
+
+        <!-- 一時デバッグ: 実際に送られてくる生 body のキー形式 (inputs か input か等) を確認する。 用済みなら削除する。 -->
+        <logger level="INFO" message='#["DEBUG hf-embed-flow raw payload: " ++ write(payload, "application/json")]'/>
 
         <!-- HFの/modelsエンドポイントは常に [[...], [...]] 形式（入力が1件でも二重配列）を返す -->
         <set-payload value='#[%dw 2.0
@@ -39,8 +49,12 @@
     -->
     <flow name="openai-embed-flow">
         <http:listener config-ref="http-listener-config" path="/v1/embeddings">
-            <http:response statusCode="#[vars.httpStatus default 200]"/>
-            <http:error-response statusCode="#[vars.httpStatus default 500]"/>
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers>#[{'Content-Type': 'application/json'}]</http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:headers>#[{'Content-Type': 'application/json'}]</http:headers>
+            </http:error-response>
         </http:listener>
 
         <set-payload value='#[%dw 2.0
