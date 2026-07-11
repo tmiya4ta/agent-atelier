@@ -429,6 +429,7 @@ function setPanelCollapsed(collapsed) {
   try { localStorage.setItem("atelier:panelCollapsed", collapsed ? "1" : ""); } catch {}
 }
 function wireSideRail() {
+  const rail = $("#sideRail");
   $$("#sideRail .rail-ico").forEach(b => {
     b.addEventListener("click", () => {
       if (isPanelCollapsed()) {
@@ -441,8 +442,13 @@ function wireSideRail() {
       } else {
         selectSideCat(b.dataset.cat);
       }
+      // 選択したら hover 中でも rail を畳んだサイズに戻す。 rail から離れると解除。
+      rail?.classList.add("is-just-selected");
+      b.blur();
     });
   });
+  // rail から離れたら「選択直後の畳み」を解除 → 次の hover でまた展開する
+  rail?.addEventListener("mouseleave", () => rail.classList.remove("is-just-selected"));
   const start = state.activeSideCat || "connections";
   selectSideCat(start);
 }
