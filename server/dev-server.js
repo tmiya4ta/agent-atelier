@@ -45,7 +45,8 @@ for (let i = 0; i < args.length; i++) {
   else if (args[i] === "--proxy-allow") extraAllow = String(args[++i] || "").split(",").map(s => s.trim()).filter(Boolean);
 }
 
-const ROOT = path.resolve(__dirname, "..");
+// 静的配信ルート = ../ui (UI アセット一式: index.html / styles.css / js / oauth / scenarios)
+const ROOT = path.resolve(__dirname, "../ui");
 
 // /proxy 経由で許可するホスト suffix。 子ドメイン (.cloudhub.io 等) も含む。
 const PROXY_ALLOW_SUFFIX = [

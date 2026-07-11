@@ -13,7 +13,8 @@ from datetime import datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+# 静的配信ルート = ../ui (UI アセット一式: index.html / styles.css / js / oauth / scenarios)
+ROOT = Path(__file__).resolve().parent.parent / "ui"
 
 
 class StripAuthOnRedirectHandler(urllib.request.HTTPRedirectHandler):

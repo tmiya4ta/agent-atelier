@@ -18,30 +18,32 @@ A2A 中核のマルチプロトコルエージェントクライアント。 ブ
 ## アーキテクチャ
 
 ```
-agent-center/
-├── index.html              ← Atelier UI shell
-├── styles.css              ← Editorial minimal · Source Serif 4 + Geist + JetBrains Mono
-├── js/
-│   ├── app.js              ← state / workspace / sidebar / dialog / script panel / connect 全部
-│   ├── window.js           ← AgentWindow (drag, tabs, chat/debug/card/settings)
-│   ├── i18n.js             ← STRINGS = { en, ja }, t(key), setLang
-│   ├── modal.js            ← modalConfirm / modalAlert / modalPrompt
-│   ├── persist.js          ← localStorage save/load
-│   ├── oauth.js            ← PKCE Authorization Code flow (Anypoint)
-│   ├── script.js           ← DSL runner (> send / < wait / sleep / clear)
-│   └── protocols/
-│       ├── base.js         ← ProtocolAdapter interface
-│       ├── a2a.js          ← Google Agent2Agent (JSON-RPC / agent-card.json)
-│       ├── slack.js        ← Slack-compat (chat.postMessage / auth.test, mrkdwn)
-│       ├── mock.js         ← (unused now, but kept for reference)
-│       └── index.js        ← PROTOCOLS registry
-├── oauth/callback.html     ← PKCE redirect target (postMessage to opener)
+agent-atelier/
+├── ui/                     ← ブラウザアプリ一式 (dev-server / mule-app が web ルートとして配信)
+│   ├── index.html          ← Atelier UI shell
+│   ├── styles.css          ← Editorial minimal · Source Serif 4 + Geist + JetBrains Mono
+│   ├── js/
+│   │   ├── app.js          ← state / workspace / sidebar / dialog / script panel / connect 全部
+│   │   ├── window.js       ← AgentWindow (drag, tabs, chat/debug/card/settings)
+│   │   ├── i18n.js         ← STRINGS = { en, ja }, t(key), setLang
+│   │   ├── modal.js        ← modalConfirm / modalAlert / modalPrompt
+│   │   ├── persist.js      ← localStorage save/load
+│   │   ├── oauth.js        ← PKCE Authorization Code flow (Anypoint)
+│   │   ├── script.js       ← DSL runner (> send / < wait / sleep / clear)
+│   │   └── protocols/
+│   │       ├── base.js     ← ProtocolAdapter interface
+│   │       ├── a2a.js      ← Google Agent2Agent (JSON-RPC / agent-card.json)
+│   │       ├── mcp.js      ← Model Context Protocol (JSON-RPC / streamable HTTP)
+│   │       ├── slack.js    ← Slack-compat (chat.postMessage / auth.test, mrkdwn)
+│   │       └── index.js    ← PROTOCOLS registry
+│   ├── oauth/callback.html ← PKCE redirect target (postMessage to opener)
+│   └── scenarios/          ← デモシナリオ (JSON) — /scenarios/ で同一オリジン配信
 ├── server/                 ← dev-server (Node/Python) + mock A2A + CDP test helpers
 │   ├── dev-server.js       ← HTTP static + /proxy (CORS bypass), no-store, SSRF guard ★推奨
 │   ├── dev-server.py       ← 同等の Python 版 (Python3 環境向け)
 │   └── mock-agent.py       ← Mock A2A server (port 5180)
 └── mule-app/               ← CH2 hosting for the same frontend
-    ├── pom.xml             ← maven copies ../{index.html,styles.css,js,oauth,assets} into static/
+    ├── pom.xml             ← maven copies ../ui/{index.html,styles.css,js,oauth,scenarios} into static/
     ├── src/main/mule/
     │   ├── global-config.xml
     │   └── impl/
