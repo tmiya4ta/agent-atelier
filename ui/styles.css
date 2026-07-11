@@ -581,37 +581,71 @@ body.is-resizing-side .sidebar { transition: none !important; }
 
 /* ─── 左端アイコンレール (Activity Bar) ─── */
 .side-rail {
-  flex: 0 0 var(--side-rail-w);
+  /* hover で右に展開してラベルを出すため fixed に。 .sidebar の overflow:hidden を
+     脱出でき、 panel-collapsed (48px 幅) でも flyout が切れない。 グリッド列幅は不変
+     なので本文 (浮遊ウィンドウ含む) は reflow しない。 collapsed は祖先 .sidebar の
+     transform+opacity で自然に隠れる。 */
+  position: fixed;
+  top: var(--rail-h); bottom: 0; left: 0;
+  z-index: 30;
   width: var(--side-rail-w);
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   gap: 4px;
-  padding: 12px 0;
+  padding: 12px 6px;
   border-right: 1px solid var(--line);
   background: var(--panel);
+  overflow: hidden;
+  transition: width 0.18s cubic-bezier(.2,.8,.2,1), box-shadow 0.2s ease;
+}
+.side-rail:hover {
+  width: 226px;
+  z-index: 90;
+  box-shadow: 6px 0 24px -8px rgba(20,30,55,.28);
 }
 .rail-ico {
   position: relative;
-  display: grid; place-items: center;
-  width: 34px; height: 34px;
+  display: flex; align-items: center; gap: 11px;
+  width: 100%; height: 34px;
+  padding-left: 9px;   /* icon 左 = 6(rail pad)+9 = 15px → 18px アイコン中心が 24 = 48px 幅の中央 */
   color: var(--ink-3);
   border-radius: 7px;
+  white-space: nowrap; overflow: hidden;
   transition: color 0.15s ease, background 0.15s ease;
 }
+.rail-ico > svg { flex: 0 0 auto; }
 .rail-ico:hover { color: var(--ink); background: var(--panel-soft); }
 .rail-ico.is-active {
   color: var(--accent-ink);
   background: var(--accent-soft);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
 }
-/* アクティブ時の左端アクセントバー */
+/* アクティブ時の左端アクセントバー (row の左端に沿わせる) */
 .rail-ico.is-active::before {
   content: "";
-  position: absolute; left: -7px; top: 6px; bottom: 6px;
+  position: absolute; left: 0; top: 7px; bottom: 7px;
   width: 3px; border-radius: 2px;
   background: var(--accent);
 }
+/* hover で展開する rail ラベル (名前 + 短い説明)。 collapsed 時は rail overflow で隠れる。 */
+.rail-label {
+  display: flex; flex-direction: column; gap: 1px;
+  min-width: 0;
+  opacity: 0;
+  transition: opacity 0.13s ease;
+}
+.side-rail:hover .rail-label { opacity: 1; }
+.rail-label-name {
+  font-family: var(--f-mono);
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.05em;
+  color: var(--ink-2); line-height: 1.15;
+}
+.rail-label-desc {
+  font-size: 10px; color: var(--ink-4); line-height: 1.2;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.rail-ico.is-active .rail-label-name { color: var(--accent-ink); }
 
 /* ─── 右パネル ─── */
 .side-panel {
@@ -619,6 +653,8 @@ body.is-resizing-side .sidebar { transition: none !important; }
   flex: 0 0 var(--side-panel-w);
   width: var(--side-panel-w);
   min-width: 0;
+  /* rail を position:fixed にしたぶんの 48px を確保 (rail は flex flow から外れている) */
+  margin-left: var(--side-rail-w);
   display: flex;
   flex-direction: column;
   padding-top: 18px;
