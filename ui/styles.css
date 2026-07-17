@@ -586,7 +586,9 @@ body.is-resizing-side .sidebar { transition: none !important; }
      なので本文 (浮遊ウィンドウ含む) は reflow しない。 collapsed は祖先 .sidebar の
      transform+opacity で自然に隠れる。 */
   position: fixed;
-  top: var(--rail-h); bottom: 0; left: 0;
+  /* bottom は下部フッター (EXPORT/IMPORT/RESET・local time) の高さぶん上げて、
+     collapsed でも hover 展開でもフッターに被らないようにする (JS が実測して設定)。 */
+  top: var(--rail-h); bottom: var(--side-footer-h, 60px); left: 0;
   z-index: 30;
   width: var(--side-rail-w);
   display: flex;
