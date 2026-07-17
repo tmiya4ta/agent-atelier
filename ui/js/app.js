@@ -250,7 +250,6 @@ function init() {
   wireRail();
   wireSideRail();
   wirePanelCollapse();
-  syncRailBottomToFooter();
   // Platform console: いったん Client 側に注力するため無効化 (rail アイコンも index.html でコメントアウト済)。
   // 復活させる場合は index.html の platform rail-ico を戻し、下記行を有効化する。
   // try { wireAnypointConsole(); } catch (e) { console.error("[anypoint] console wiring failed:", e); }
@@ -452,23 +451,6 @@ function wireSideRail() {
   rail?.addEventListener("mouseleave", () => rail.classList.remove("is-just-selected"));
   const start = state.activeSideCat || "connections";
   selectSideCat(start);
-}
-
-// fixed の side-rail が下部フッター (.side-footer: EXPORT/IMPORT/RESET・local time) に
-// 被らないよう、 footer の実測高さを CSS 変数 --side-footer-h に反映して rail の bottom を上げる。
-// zoom/フォント変更で footer 高さが変わっても ResizeObserver で追従する。
-function syncRailBottomToFooter() {
-  const footer = document.querySelector(".side-footer");
-  if (!footer) return;
-  const set = () => {
-    const h = Math.ceil(footer.getBoundingClientRect().height);
-    if (h > 0) document.documentElement.style.setProperty("--side-footer-h", h + "px");
-  };
-  set();
-  if (window.ResizeObserver && !footer._railObs) {
-    footer._railObs = new ResizeObserver(set);
-    footer._railObs.observe(footer);
-  }
 }
 
 // 2番目のサイドパネルの折り畳み (rail は残す)
@@ -1134,10 +1116,14 @@ function renderBookmarks() {
         ]);
         return;
       }
-      // それ以外 (proto バッジ / 名前 / count / 余白) = ぶらさがる window を開く。
-      // 開いている window があればフォーカス、 閉じた window があれば再オープン、
-      // どちらも無ければ新規 window ダイアログ。 編集は鉛筆アイコンで行う。
+      // それ以外 (proto バッジ / 名前 / count / 余白) = アコーディオンを開いて
+      // ぶらさがる window を開く。 開いている window があればフォーカス、 閉じた
+      // window があれば再オープン、 どちらも無ければ新規 window ダイアログ。 編集は鉛筆で。
       e.stopPropagation();
+      if (canExpand && childCount > 0) {
+        state._connExpanded[b.key] = true;
+        animateConnExpand(b.key, true);
+      }
       if (wins.length > 0) {
         const { win, ws } = wins[0];
         if (ws.id !== state.activeWs) {

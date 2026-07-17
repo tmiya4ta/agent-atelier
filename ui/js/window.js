@@ -381,6 +381,9 @@ export class AgentWindow {
   focus() {
     this.el.style.zIndex = ++zCounter;
     document.querySelectorAll(".agent-window.is-focused").forEach(n => n.classList.remove("is-focused"));
+    // 既にフォーカス済みでも focus-ring-pulse (グロー) を再生させる。 remove→add が
+    // 同フレームだとアニメが再生されないので、 間に reflow を挟んで確実に replay させる。
+    void this.el.offsetWidth;
     this.el.classList.add("is-focused");
     this.onFocus?.(this);
   }
