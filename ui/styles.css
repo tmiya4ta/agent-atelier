@@ -3008,6 +3008,11 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 窓を小さくして白いチャットエリアに透かしが収まらないサイズになったら透かしを隠す。
+   (.pane の container-type: size を参照。 下部の compose 分だけ会話エリアは狭いので、
+    pane 高さでやや広めに切って早めに消す。) */
+@container (max-height: 250px) { .aw-watermark { display: none; } }
+@container (max-width: 300px)  { .aw-watermark { display: none; } }
 .chat-scroll {
   position: relative;
   z-index: 1;
