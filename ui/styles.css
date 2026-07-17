@@ -692,11 +692,16 @@ body.is-panel-collapsed .side-rail:hover .rail-label { opacity: 0; }
 /* rail 下部の折り畳みボタン */
 .rail-spacer { flex: 1 1 auto; }
 .rail-collapse {
+  /* footer の右端に絶対配置 (縦中央)。 */
+  position: absolute;
+  top: 50%; right: 7px;
+  transform: translateY(-50%);
   display: grid; place-items: center;
-  width: 30px; height: 30px;
+  width: 26px; height: 26px;
   color: var(--ink-3);
-  border-radius: 7px;
-  transition: color 0.15s ease, background 0.15s ease, transform 0.2s ease;
+  border-radius: 6px;
+  z-index: 2;
+  transition: color 0.15s ease, background 0.15s ease;
 }
 .rail-collapse:hover { color: var(--ink); background: var(--panel-soft); }
 body.is-panel-collapsed .rail-collapse svg { transform: scaleX(-1); }  /* 畳むと » 展開 */
@@ -767,10 +772,11 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
 /* CTA セクションは見出しを持たないので境界線を出さない */
 .side-cta-sec + .side-sec { border-top: 0; padding-top: 4px; }
 .side-footer {
+  position: relative;   /* 右端の折り畳みボタン (.rail-collapse) の絶対配置基準 */
   flex: 0 0 auto;
-  /* 左 padding を rail 幅ぶん確保して、 export/import/reset を fixed rail (左 48px 列)
-     の外に出す。 rail が下端に被っても内容が隠れない (rail は panel と同じ背景で継ぎ目なし)。 */
-  padding: 12px 14px 10px calc(var(--side-rail-w) + 14px);
+  /* 左 padding = rail 幅ぶん (export/import/reset を fixed rail 列の外へ)、
+     右 padding = 折り畳みボタン < のぶん確保。 */
+  padding: 12px 34px 10px calc(var(--side-rail-w) + 14px);
   border-top: 1px solid var(--line);
   background: var(--panel);
 }
@@ -1081,7 +1087,7 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
   padding: 4px 9px;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 100px;
+  border-radius: 5px;
   font-size: calc(11px * var(--fs-mul, 1.1) * var(--fs, 1));
   color: var(--ink-2);
   transition: all 0.15s ease;
@@ -1529,8 +1535,9 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
 }
 .seg-btn {
   display: grid;
-  grid-template-columns: 18px 1fr;
-  gap: 8px;
+  /* 選択時のアイコンは 22px の box になるので列幅を合わせて、 はみ出し/縦ズレを防ぐ。 */
+  grid-template-columns: 22px 1fr;
+  gap: 9px;
   align-items: center;
   padding: 7px 11px;
   background: transparent;
@@ -1548,15 +1555,8 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
   box-shadow: 0 0 0 1px var(--accent), var(--shadow-sm);
   position: relative;
 }
-.seg-btn.is-active::before {
-  content: "";
-  position: absolute;
-  left: 6px; right: 6px;
-  bottom: 3px;
-  height: 2px;
-  background: var(--accent);
-  border-radius: 2px;
-}
+/* 選択カードは枠が光る (box-shadow) ので下線は不要 → 非表示。 */
+.seg-btn.is-active::before { display: none; }
 .seg-icon {
   display: grid; place-items: center;
   font-family: var(--f-mono);
@@ -1807,7 +1807,7 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
 .identity-list { display: flex; flex-direction: column; gap: 3px; }
 .catalog-item {
   display: grid;
-  grid-template-columns: auto 1fr auto auto auto;   /* chevron · name · count · + · kebab */
+  grid-template-columns: auto 1fr auto auto auto auto;   /* chevron · name · count · pencil · + · kebab */
   align-items: center;
   gap: 6px;
   padding: 6px 8px 6px 10px;
@@ -2830,7 +2830,7 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
    背景・枠は持たず、 行頭に小さく色文字を置くだけ。 名前を圧迫しない。 */
 .conn-proto-badge {
   font-family: var(--f-mono);
-  font-size: calc(8.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  font-size: calc(7.5px * var(--fs-mul, 1.1) * var(--fs, 1));
   letter-spacing: 0.08em;
   color: var(--ink-4);
   text-transform: uppercase;
@@ -2848,7 +2848,7 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
 .catalog-item.idn-item { grid-template-columns: auto 1fr auto auto; }
 .idn-kind-badge {
   font-family: var(--f-mono);
-  font-size: calc(8.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  font-size: calc(7.5px * var(--fs-mul, 1.1) * var(--fs, 1));
   letter-spacing: 0.08em;
   text-transform: uppercase;
   font-weight: 500;
@@ -3453,12 +3453,12 @@ body.is-dark .agent-tag { color: #5BB8E8; }
   flex-wrap: wrap; row-gap: 3px;
   margin-top: 8px;
   font-family: var(--f-mono);
-  font-size: calc(8.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  font-size: calc(7.5px * var(--fs-mul, 1.1) * var(--fs, 1));
   color: var(--ink-4);
 }
 /* ヒントバー内の kbd も小さめ・コンパクトに (バー全体を控えめにする)。 */
 .compose-meta kbd {
-  font-size: calc(8.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  font-size: calc(7.5px * var(--fs-mul, 1.1) * var(--fs, 1));
   padding: 0 3px;
   border-bottom-width: 1px;
 }

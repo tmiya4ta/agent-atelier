@@ -2883,7 +2883,7 @@ function wireDrawer() {
 const IDENTITY_KINDS = [
   { id:"bearer",          label:"Bearer / API Key", sub:"static token",       icon:"●" },
   { id:"oauth2_cc",       label:"OAuth2 CC",        sub:"client credentials", icon:"⚙" },
-  { id:"oauth2_authcode", label:"OAuth2 Code",      sub:"browser login",      icon:"↳" },
+  { id:"oauth2_authcode", label:"OAuth2 AC",        sub:"browser login",      icon:"↳" },
   { id:"oauth2_password", label:"OAuth2 Password",  sub:"username/password",  icon:"⊙" },
   { id:"jwt_bearer",      label:"JWT Bearer",       sub:"signed assertion",   icon:"⚷" },
 ];
@@ -3494,10 +3494,13 @@ function renderCatalogs() {
       <button class="conn-toggle" aria-label="${expanded ? 'collapse' : 'expand'} business groups" title="${hasChildren ? (expanded ? 'collapse' : 'expand') : 'no business groups'}" ${hasChildren ? '' : 'disabled'}>
         <svg viewBox="0 0 12 12" width="9" height="9"><polyline points="3,4.5 6,8 9,4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
-      <span class="catalog-name" title="Edit catalog">${escapeHtml(c.name)}</span>
+      <span class="catalog-name" title="Open / expand">${escapeHtml(c.name)}</span>
       <span class="catalog-meta">
         <span class="bm-count" title="${c.businessGroups.length} BG">${c.businessGroups.length}</span>
       </span>
+      <button class="bookmark-edit" title="Edit catalog" aria-label="edit catalog">
+        <svg viewBox="0 0 14 14" width="10" height="10"><path d="M9.4 1.9 L12.1 4.6 L4.8 11.9 L2.1 11.9 L2.1 9.2 Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><line x1="8.2" y1="3.1" x2="10.9" y2="5.8" stroke="currentColor" stroke-width="1.2"/></svg>
+      </button>
       <button class="bookmark-new" title="Add business group" aria-label="add bg">
         <svg viewBox="0 0 14 14" width="10" height="10"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
@@ -3531,6 +3534,12 @@ function renderCatalogs() {
         addBusinessGroupToCatalog(c);
         return;
       }
+      // 鉛筆 = 編集ダイアログ
+      if (e.target.closest(".bookmark-edit")) {
+        e.stopPropagation();
+        openCatalogDialog(c);
+        return;
+      }
       // kebab = メニュー
       if (e.target.closest(".row-kebab")) {
         e.stopPropagation();
@@ -3541,9 +3550,15 @@ function renderCatalogs() {
         ]);
         return;
       }
-      // それ以外 (名前 / count / 余白 = 文字のあるところ以降) = EDIT ダイアログ
+      // それ以外 (名前 / count / 余白) = ぶらさがる business group のアコーディオンを開く。
+      // (編集は鉛筆アイコンで。 connection と同じ挙動)。 子が無ければ編集ダイアログ。
       e.stopPropagation();
-      openCatalogDialog(c);
+      if (hasChildren) {
+        state._catalogExpanded[c.id] = true;
+        renderCatalogs();
+      } else {
+        openCatalogDialog(c);
+      }
     });
     root.appendChild(li);
 
