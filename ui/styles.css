@@ -2979,6 +2979,8 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
   position: absolute; inset: 0;
   display: none;
   flex-direction: column;
+  overflow: hidden;              /* 透かし等ペイン内要素のはみ出しを窓内にクリップ */
+  container-type: size;          /* 透かしを窓 (ペイン) の幅・高さ基準で縮めるため */
 }
 .pane.is-active { display: flex; }
 
@@ -2995,9 +2997,9 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
   font-family: var(--f-display);
   font-style: normal;
   font-weight: 600;
-  font-size: clamp(20px, 5vw, 48px);
+  font-size: clamp(12px, min(15cqi, 24cqb), 44px);   /* vw をやめ窓サイズ基準に。 小窓で縮み縦にはみ出さない */
   letter-spacing: -0.015em;
-  line-height: 1.05;
+  line-height: 1;
   text-align: center;
   color: var(--ink);
   opacity: 0.07;
