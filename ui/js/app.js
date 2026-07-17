@@ -1080,6 +1080,9 @@ function renderBookmarks() {
       <span class="conn-proto-badge${isMock ? ' is-mock' : ''}" data-proto="${escapeHtml(badgeProto)}" title="${escapeHtml(badgeTitle)}">${escapeHtml(protoLabel)}</span>
       <span class="agent-name">${escapeHtml(displayName)}</span>
       <span class="bm-count" title="${wins.length} open${closed.length ? ` / ${closed.length} closed` : ""}">${childCount}</span>
+      <button class="bookmark-edit" title="Edit connection" aria-label="edit connection">
+        <svg viewBox="0 0 14 14" width="10" height="10"><path d="M9.4 1.9 L12.1 4.6 L4.8 11.9 L2.1 11.9 L2.1 9.2 Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><line x1="8.2" y1="3.1" x2="10.9" y2="5.8" stroke="currentColor" stroke-width="1.2"/></svg>
+      </button>
       <button class="bookmark-new" title="${wins.length ? 'Open another window to the same agent' : 'Open a window'}" aria-label="new window">
         <svg viewBox="0 0 14 14" width="10" height="10"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
@@ -1115,6 +1118,12 @@ function renderBookmarks() {
         openNewWindowDialog(b, displayName);
         return;
       }
+      // 鉛筆 = 編集ダイアログ
+      if (e.target.closest(".bookmark-edit")) {
+        e.stopPropagation();
+        openDialog({ editBookmark: b });
+        return;
+      }
       // kebab = メニュー
       if (e.target.closest(".row-kebab")) {
         e.stopPropagation();
@@ -1125,15 +1134,24 @@ function renderBookmarks() {
         ]);
         return;
       }
-      // それ以外 (proto バッジ / 名前 / count / 余白 = 文字のあるところ以降) = EDIT ダイアログ。
-      // このとき > を押したのと同じく、 ぶらさがる window 階層も開く (展開のみ・
-      // 閉じるのは > で行う)。 window 自体は開かない。
+      // それ以外 (proto バッジ / 名前 / count / 余白) = ぶらさがる window を開く。
+      // 開いている window があればフォーカス、 閉じた window があれば再オープン、
+      // どちらも無ければ新規 window ダイアログ。 編集は鉛筆アイコンで行う。
       e.stopPropagation();
-      if (canExpand && childCount > 0) {
-        state._connExpanded[b.key] = true;
-        animateConnExpand(b.key, true);
+      if (wins.length > 0) {
+        const { win, ws } = wins[0];
+        if (ws.id !== state.activeWs) {
+          switchWorkspace(ws.id);
+          setTimeout(() => { win.focus(); win.switchTab("chat"); }, 50);
+        } else {
+          win.focus();
+          win.switchTab("chat");
+        }
+      } else if (closed.length > 0) {
+        reopenClosedWindow(closed[0]);
+      } else {
+        openNewWindowDialog(b, displayName);
       }
-      openDialog({ editBookmark: b });
     });
     root.appendChild(li);
 

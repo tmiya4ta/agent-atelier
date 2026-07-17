@@ -606,6 +606,14 @@ body.is-resizing-side .sidebar { transition: none !important; }
   z-index: 90;
   box-shadow: 6px 0 24px -8px rgba(20,30,55,.28);
 }
+/* パネル折り畳み時 (is-panel-collapsed) は右にパネルが無いので、 hover 展開すると
+   flyout がワークスペース上に白い箱として浮いてバグに見える。 折り畳み中は展開しない。 */
+body.is-panel-collapsed .side-rail:hover {
+  width: var(--side-rail-w);
+  box-shadow: none;
+  z-index: 30;
+}
+body.is-panel-collapsed .side-rail:hover .rail-label { opacity: 0; }
 .rail-ico {
   position: relative;
   display: flex; align-items: center; justify-content: flex-start; gap: 11px;
@@ -617,6 +625,13 @@ body.is-resizing-side .sidebar { transition: none !important; }
   transition: color 0.15s ease, background 0.15s ease;
 }
 .rail-ico > svg { flex: 0 0 auto; }
+/* rail のグループ区切り線 (Connections/Auth/Catalogs | Scenarios/Tools) */
+.rail-divider {
+  flex: 0 0 auto;
+  height: 1px;
+  margin: 5px 5px;
+  background: var(--line);
+}
 .rail-ico:hover { color: var(--ink); background: var(--panel-soft); }
 .rail-ico.is-active {
   color: var(--accent-ink);
@@ -753,7 +768,9 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
 .side-cta-sec + .side-sec { border-top: 0; padding-top: 4px; }
 .side-footer {
   flex: 0 0 auto;
-  padding: 12px 14px 10px;
+  /* 左 padding を rail 幅ぶん確保して、 export/import/reset を fixed rail (左 48px 列)
+     の外に出す。 rail が下端に被っても内容が隠れない (rail は panel と同じ背景で継ぎ目なし)。 */
+  padding: 12px 14px 10px calc(var(--side-rail-w) + 14px);
   border-top: 1px solid var(--line);
   background: var(--panel);
 }
@@ -1984,6 +2001,7 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
 .agent-item .conn-toggle,
 .agent-item .conn-proto-badge,
 .agent-item .bm-count,
+.agent-item .bookmark-edit,
 .agent-item .bookmark-new,
 .agent-item .row-kebab { flex: 0 0 auto; }
 .agent-item:active { cursor: grabbing; }
@@ -2074,6 +2092,22 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
   border-color: color-mix(in srgb, var(--accent) 50%, transparent);
 }
 .bookmark-new svg { display: block; }
+/* 編集 (鉛筆) ボタン: bookmark-new と同じ見た目 */
+.bookmark-edit {
+  display: grid; place-items: center;
+  width: 22px; height: 22px;
+  color: var(--ink-2);
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+.bookmark-edit svg { display: block; }
+.bookmark-edit:hover, .bookmark-edit:focus-visible {
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
 /* expand toggle (子 window がある時のみ表示) */
 .bookmark-toggle {
   display: grid; place-items: center;
@@ -3415,12 +3449,16 @@ body.is-dark .agent-tag { color: #5BB8E8; }
 }
 .compose-meta {
   display: flex; align-items: center; gap: 10px;
+  /* 窓が狭いとキー操作ヒントがはみ出すので折り返す (ズーム/フォント倍率にも自動追従)。 */
+  flex-wrap: wrap; row-gap: 3px;
   margin-top: 8px;
   font-family: var(--f-mono);
   font-size: calc(10px * var(--fs-mul, 1.1) * var(--fs, 1));
   color: var(--ink-4);
 }
 .compose-meta-item { display: inline-flex; align-items: center; gap: 4px; }
+/* キー操作ヒント: 折り返し時も右寄せを維持 (収まらなければ 2 行目へ回る)。 */
+.compose-meta-keys { margin-left: auto; white-space: nowrap; }
 .cm-key { color: var(--ink-4); }
 .cm-val { color: var(--ink-2); }
 .compose-meta-spacer { flex: 1; }
