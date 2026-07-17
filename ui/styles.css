@@ -625,6 +625,21 @@ body.is-panel-collapsed .side-rail:hover .rail-label { opacity: 0; }
   transition: color 0.15s ease, background 0.15s ease;
 }
 .rail-ico > svg { flex: 0 0 auto; }
+
+/* 折り畳み時のみ rail 最下部に出る展開ボタン (畳むと footer の < が隠れるため戻す手段を確保)。 */
+.rail-expand {
+  display: none;
+  margin-top: auto;                 /* rail の最下部へ押し下げ */
+  align-items: center; justify-content: flex-start; gap: 11px;
+  width: 100%; height: 34px;
+  padding-left: 9px;                /* rail-ico と同じ → 48px 幅の中央にアイコン */
+  color: var(--ink-3);
+  border-radius: 7px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.rail-expand > svg { flex: 0 0 auto; }
+.rail-expand:hover { color: var(--ink); background: var(--panel-soft); }
+body.is-panel-collapsed .rail-expand { display: flex; }
 /* rail のグループ区切り線 (Connections/Auth/Catalogs | Scenarios/Tools) */
 .rail-divider {
   flex: 0 0 auto;

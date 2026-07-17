@@ -458,6 +458,9 @@ function wirePanelCollapse() {
   try { if (localStorage.getItem("atelier:panelCollapsed") === "1") document.body.classList.add("is-panel-collapsed"); } catch {}
   const btn = $("#panelCollapseBtn");
   if (btn) btn.addEventListener("click", () => setPanelCollapsed(!isPanelCollapsed()));
+  // 折り畳み時は footer の < が隠れるので、 rail 最下部の展開ボタンで戻す。
+  const exp = $("#railExpandBtn");
+  if (exp) exp.addEventListener("click", () => setPanelCollapsed(false));
 }
 
 // ─── Anypoint console (Platform mode) の配線 ──────────────
