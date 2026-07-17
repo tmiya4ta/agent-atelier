@@ -105,7 +105,7 @@ export class AgentWindow {
     badge.dataset.proto = this.protoMode;
 
     // Close / clear / maximize
-    node.querySelector(".aw-btn-clear")?.addEventListener("click", () => this.clearChat());
+    node.querySelector(".chat-clear")?.addEventListener("click", () => this.clearChat());
     node.querySelector(".aw-btn-close").addEventListener("click", () => this.close());
     node.querySelector('.aw-traffic-dot[data-act="close"]').addEventListener("click", () => this.close());
     node.querySelector(".aw-btn-max")?.addEventListener("click", () => this.toggleMaximize());
@@ -211,6 +211,9 @@ export class AgentWindow {
     pauseBtn.addEventListener("click", () => {
       this.debugPaused = !this.debugPaused;
       pauseBtn.textContent = this.debugPaused ? "resume" : "pause";
+      pauseBtn.title = this.debugPaused
+        ? "取り込みを再開 (一時停止中は新しいフレームが表示されない)"
+        : "新しいフレームの取り込みを一時停止 (中身を見ている間に流れ込まないように)。 もう一度で再開";
     });
     // Debug: 右クリックで「JWT Decode」コンテキストメニュー
     // (カーソル位置 or 選択範囲の文字列から JWT を取り出して decode し popover 表示)
@@ -1241,6 +1244,12 @@ export class AgentWindow {
     const box = this.el.querySelector(".debug-scroll");
     const count = this.debugFrames.length;
     this.el.querySelector(".debug-meta-count").textContent = String(count);
+    const tabCount = this.el.querySelector('.aw-tab[data-tab="debug"] .tab-count');
+    if (tabCount) tabCount.textContent = String(count);
+
+    // frames が減った (clear 等) 場合、 append-only では古い DOM エントリが残るので
+    // box をリセットして描き直す。 これが無いと clear ボタンが効かない。
+    if (box.children.length > count) box.innerHTML = "";
 
     // append-only render for performance
     const existing = box.children.length;
