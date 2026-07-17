@@ -3453,8 +3453,14 @@ body.is-dark .agent-tag { color: #5BB8E8; }
   flex-wrap: wrap; row-gap: 3px;
   margin-top: 8px;
   font-family: var(--f-mono);
-  font-size: calc(10px * var(--fs-mul, 1.1) * var(--fs, 1));
+  font-size: calc(8.5px * var(--fs-mul, 1.1) * var(--fs, 1));
   color: var(--ink-4);
+}
+/* ヒントバー内の kbd も小さめ・コンパクトに (バー全体を控えめにする)。 */
+.compose-meta kbd {
+  font-size: calc(8.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  padding: 0 3px;
+  border-bottom-width: 1px;
 }
 .compose-meta-item { display: inline-flex; align-items: center; gap: 4px; }
 /* キー操作ヒント: 折り返し時も右寄せを維持 (収まらなければ 2 行目へ回る)。 */
