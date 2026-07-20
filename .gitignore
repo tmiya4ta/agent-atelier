@@ -31,3 +31,7 @@ credentials.env.txt
 
 # Anypoint Studio per-machine analytics id (machine-specific, never commit)
 .studio_analytics_id.txt
+
+# 内部ネットワーク構成 (public repo に載せない)
+edge/Caddyfile
+docs/infrastructure.md
