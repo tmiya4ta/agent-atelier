@@ -11,6 +11,7 @@
 // 起動: node server/customers-mcp.js   (PORT 環境変数で上書き可)
 "use strict";
 const http = require("http");
+const crypto = require("crypto");
 
 const PORT = parseInt(process.env.PORT || "8102", 10);
 const PROTOCOL_VERSION = "2025-03-26";
@@ -133,11 +134,15 @@ function handleRpc(msg) {
 
 // ─── HTTP サーバ ──────────────────────────
 const server = http.createServer((req, res) => {
+  // Correlation ID: リクエストの X-Correlation-ID をそのままレスポンスに返す。
+  // 無ければ生成 (Mule 4 の HTTP Listener と同じ挙動 — mcp-inventory-api で確認済み)。
+  const correlationId = req.headers["x-correlation-id"] || crypto.randomUUID();
+  res.setHeader("X-Correlation-ID", correlationId);
   // CORS (ブラウザから直接叩けるように)
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept, Mcp-Session-Id, mcp-session-id, Authorization, Last-Event-ID");
-  res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept, Mcp-Session-Id, mcp-session-id, Authorization, Last-Event-ID, X-Correlation-ID");
+  res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id, X-Correlation-ID");
 
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
