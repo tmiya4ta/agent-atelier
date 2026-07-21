@@ -195,6 +195,19 @@ const server = http.createServer((req, res) => {
         res.writeHead(202); res.end();
         return;
       }
+      // list_customers を SSE で呼んだら 1 件ずつ別の data: フレームで流す
+      // (sse-logging が「イベントごと」に個別ログすることを確認するデモ)。
+      if (acceptsSse && msg.method === "tools/call" && msg.params && msg.params.name === "list_customers") {
+        let out;
+        try { out = callTool("list_customers", msg.params.arguments || {}); }
+        catch { out = { customers: [] }; }
+        res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive" });
+        out.customers.forEach((c, i) => {
+          res.write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { seq: i + 1, of: out.customers.length, customer: c } })}\n\n`);
+        });
+        res.end();
+        return;
+      }
       const resp = handleRpc(msg);
       acceptsSse ? sendSse(resp) : sendJson(resp);
     });
