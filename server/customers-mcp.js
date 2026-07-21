@@ -163,6 +163,18 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === "POST" && url === "/mcp") {
+    // Accept に text/event-stream があれば SSE ストリームで返す (MCP Streamable HTTP)。
+    // 単発リクエストなので JSON-RPC レスポンスを 1 フレーム送って閉じる。
+    const acceptsSse = /text\/event-stream/.test(req.headers["accept"] || "");
+    const sendSse = (...payloads) => {
+      res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive" });
+      for (const p of payloads) res.write(`event: message\ndata: ${JSON.stringify(p)}\n\n`);
+      res.end();
+    };
+    const sendJson = (payload) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(payload));
+    };
     let body = "";
     req.on("data", c => { body += c; if (body.length > 1e6) req.destroy(); });
     req.on("end", () => {
@@ -172,11 +184,10 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }));
         return;
       }
-      // バッチ (配列) 対応
+      // バッチ (配列): SSE なら各レスポンスを別フレームで返す
       if (Array.isArray(msg)) {
         const responses = msg.map(handleRpc).filter(r => r !== null && r !== undefined);
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(responses));
+        acceptsSse ? sendSse(...responses) : sendJson(responses);
         return;
       }
       // notification (id 無し) は本体なしで受領
@@ -185,8 +196,7 @@ const server = http.createServer((req, res) => {
         return;
       }
       const resp = handleRpc(msg);
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(resp));
+      acceptsSse ? sendSse(resp) : sendJson(resp);
     });
     return;
   }
