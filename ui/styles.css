@@ -4107,6 +4107,27 @@ body.is-dark .dbg-body {
   cursor: pointer;
 }
 .set-decode-btn:hover { color: var(--accent-ink); border-color: var(--accent); background: var(--paper); }
+
+/* Agent: MCP servers セクション (Settings) */
+.set-mcp-add, .set-mcp-remove {
+  justify-self: end;
+  padding: 3px 10px;
+  font-family: var(--f-mono);
+  font-size: calc(10px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.set-mcp-add:hover { color: var(--accent-ink); border-color: var(--accent); background: var(--paper); }
+.set-mcp-remove:hover { color: var(--caution); border-color: var(--caution); background: var(--paper); }
+.set-mcp-head .set-row-title { font-weight: 600; }
+.mcp-st { font-size: 0.85em; margin-left: 6px; }
+.mcp-ok  { color: #14834A; }
+.mcp-err { color: var(--caution); }
+.mcp-wait { color: var(--ink-3); }
 /* raw token textarea 内のコピーボタン (hover で出現、 chat の copy と同じ) */
 .set-rawtoken-field { position: relative; }
 .set-rawtoken-copy {

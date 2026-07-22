@@ -1,6 +1,7 @@
 // AgentWindow — フローティングウインドウ
 // 1接続=1ウインドウ。Chat / Agent Card / Debug / Settings の4タブ。
 import { t } from "./i18n.js";
+import { modalPrompt } from "./modal.js";
 
 let zCounter = 10;
 let idCounter = 0;
@@ -342,6 +343,11 @@ export class AgentWindow {
     // 認証セッション切れ (Authorization Code 等で対話的再認証が必要) → クールな再認証バナーを出す
     this.adapter.addEventListener("auth-required", (e) => {
       this._showReauthBanner(e.detail || {});
+    });
+
+    // Agent: MCP サーバの add/remove/接続状態変化 → Settings の一覧を再描画
+    this.adapter.addEventListener("servers-changed", () => {
+      if (this.protoMode === "agent") this._renderSettings();
     });
   }
 
@@ -1499,6 +1505,35 @@ export class AgentWindow {
   // ───────────────────────────────────────────
   // Settings (static prototype)
   // ───────────────────────────────────────────
+  // Agent: MCP servers セクションの HTML。Settings 内に置き、servers-changed で再描画される。
+  // 追加入力は modalPrompt (別レイヤ) なので、この再描画に入力中の値は巻き込まれない。
+  _mcpServersSectionHtml() {
+    const servers = this.adapter.serverSummaries?.() || [];
+    const rows = servers.map(s => {
+      const st = s.state === "open"
+        ? `<span class="mcp-st mcp-ok">● ${s.toolCount} tools</span>`
+        : s.state === "error"
+          ? `<span class="mcp-st mcp-err">✕ ${escapeHtml(s.error || "error")}</span>`
+          : `<span class="mcp-st mcp-wait">… connecting</span>`;
+      return `<div class="set-row set-mcp-row">
+          <div class="set-row-text">
+            <div class="set-row-title">${escapeHtml(s.name)} ${st}</div>
+            <div class="set-row-sub">${escapeHtml(s.url)}</div>
+          </div>
+          <button type="button" class="set-mcp-remove" data-srv="${escapeHtml(s.id)}">remove</button>
+        </div>`;
+    }).join("");
+    return `
+        <div class="set-row set-mcp-head">
+          <div class="set-row-text">
+            <div class="set-row-title">MCP servers</div>
+            <div class="set-row-sub">LLM に渡すツールの供給元。複数登録できます。</div>
+          </div>
+          <button type="button" class="set-mcp-add">+ add</button>
+        </div>
+        <div class="set-mcp-list">${rows || `<div class="set-row-sub set-mcp-empty" style="padding:6px 2px;opacity:.7;">(なし — 「+ add」で MCP endpoint を登録してください)</div>`}</div>`;
+  }
+
   _renderSettings() {
     const box = this.el.querySelector(".settings-scroll");
     const configuredUrl = this.adapter.config.url || "";
@@ -1545,6 +1580,7 @@ export class AgentWindow {
 
       <div class="set-section">
         <h4>Connection</h4>
+        ${this.protoMode === "agent" ? this._mcpServersSectionHtml() : `
         <div class="set-row" title="Connect ダイアログで入力した Discovery URL。 ${this.protoMode === "mcp" ? "MCP server (POST /mcp) を直接叩きます。" : "Atelier はこの URL の /.well-known/agent-card.json を取得して AgentCard を解釈します。 実際のチャット送信先は AgentCard 側の url フィールドです。"}">
           <div class="set-row-text">
             <div class="set-row-title">Discovery URL <span class="set-row-help" aria-hidden="true">?</span></div>
@@ -1562,6 +1598,7 @@ export class AgentWindow {
         </div>
         ${urlMismatch ? `<div class="set-warn">⚠ 参考: Discovery URL と Effective endpoint が異なります。 AgentCard の url フィールドに従い、 メッセージは Effective endpoint に送信されます (gateway/proxy 経由などで意図的に異なる場合もあります)。 意図しない場合はサーバ側で agent-card の url を見直してください。</div>` : ""}
         ` : ""}
+        `}
         <div class="set-row" title="HTTP Authorization ヘッダに付ける bearer token。 connect ダイアログで指定したものが保存されています。">
           <div class="set-row-text">
             <div class="set-row-title">Authorization <span class="set-row-help" aria-hidden="true">?</span></div>
@@ -1626,6 +1663,20 @@ export class AgentWindow {
         };
         if (navigator.clipboard?.writeText) navigator.clipboard.writeText(src).then(done).catch(() => { fallbackCopy(src); done(); });
         else { fallbackCopy(src); done(); }
+      });
+    });
+
+    // Agent: MCP servers の add / remove (入力は modalPrompt = 再描画に巻き込まれない)
+    box.querySelector(".set-mcp-add")?.addEventListener("click", async () => {
+      const url = await modalPrompt({ title: "Add MCP server", label: "MCP endpoint URL", placeholder: "https://…/mcp" });
+      if (url && url.trim()) {
+        try { await this.adapter.addServer?.({ url: url.trim() }); }
+        catch (e) { console.warn("addServer failed:", e); }
+      }
+    });
+    box.querySelectorAll(".set-mcp-remove").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        try { await this.adapter.removeServer?.(btn.dataset.srv); } catch {}
       });
     });
 

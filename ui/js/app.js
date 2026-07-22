@@ -6690,7 +6690,8 @@ async function submitDialog() {
   const dbDatabase = $("#dlgDbDatabase")?.value.trim() || undefined;
   const dbUser     = $("#dlgDbUser")?.value.trim() || undefined;
   const dbPassword = $("#dlgDbPassword")?.value || undefined;   // password は trim しない
-  if (!raw) {
+  if (!raw && state.selectedProto !== "agent") {
+    // Agent は url 不要 (window を先に開き、MCP は Settings で追加する)
     $("#dlgUrl").focus();
     return;
   }
@@ -6774,6 +6775,12 @@ async function submitDialog() {
 
 // ─── Connect ────────────────────────────────────────
 async function connect({ protoId, url, name, auth, authRef, persona, channel, emulate, mockTools, mockReply, database, user, password }, opts = {}) {
+  // Agent は url 不要 — window を先に開き、MCP は Settings タブで追加する。
+  // window/bookmark は (protoId, url) でキー化するので synthetic url を振る
+  // (url 空だと全 Agent window が 1 キーに衝突し dedup/reconnect が誤動作する)。
+  if (protoId === "agent" && !url) {
+    url = `agent://local/${(crypto.randomUUID?.() || Math.random().toString(36).slice(2)).slice(0, 8)}`;
+  }
   const proto = getProtocol(protoId);
   if (!proto || !proto.AdapterClass) {
     await modalAlert({

@@ -1,28 +1,25 @@
-// AgentAdapter — ブラウザ内 MCP Host (LLM + MCP tool-use ループ)
+// AgentAdapter — ブラウザ内 MCP Host (LLM + 複数 MCP の tool-use ループ)
 //
 // A2A のように chat で会話できるが、中身は Atelier 自身が回す agent loop:
 //   ユーザー入力 → LLM 応答 → tool_use 検出 → MCP callTool → tool_result → 再び LLM
 //   → stop_reason=end_turn まで繰り返す。
 //
-// LLM は現状「ダミー(決め打ち)」。server/agent-poc.js の dummyLLM をそのまま移植。
-// Anthropic Messages API 互換の応答 { role, stop_reason, content[] } を返すので、
-// ★ dummyLLM() を実 LLM 呼び出し (fetch /proxy → api.anthropic.com 等) に差し替える
-//   だけで実 agent になる。loop 本体・MCP 実行・tool schema 変換は無改修。
+// Claude Code の mcpServers のように、MCP サーバを複数登録できる。
+//   - 接続時は 0 個で開く (window を先に開く)。
+//   - Settings タブで動的に add/remove する (addServer / removeServer)。
+//   - 全サーバの tools を prefix 付き (mcp__<srvId>__<tool>) で集約し LLM に渡す。
+//   - tool_use が来たら prefix から (server, baseName) を逆引きして callTool。
 //
-// MCP 実行は既存 MCPAdapter を composition で内部利用する:
-//   - config.url = 使う MCP サーバの endpoint (MCP window で繋がる URL がそのまま使える)
-//   - connect() で MCP に接続 → tools/list を LLM の tool schema に変換
-//   - MCP の "rpc" を転送するので、tools/call の生 JSON-RPC も debug タブに出る
+// LLM は現状「ダミー(決め打ち)」。dummyLLM() を実 LLM 呼び出しに差し替えるだけで
+// 実 agent になる (loop 本体・MCP 実行・tool schema 変換は無改修)。
 //
-// 可視化:
-//   - LLM の各ステップ → "rpc" (debug タブに llm request/response)
-//   - tool 呼び出し → "status" (chat に「🔧 calling ...」を逐次表示)
-//   - 最終回答 → "message" (通常の agent メッセージ)
+// ⚠ 既知の制限: send() は毎回 messages を新規に組むので single-turn (会話履歴なし)。
+//   ダミーは履歴を見ないので無害だが、実 LLM 化時に履歴保持を足すこと。
 
 import { ProtocolAdapter } from "./base.js";
 import { MCPAdapter }      from "./mcp.js";
 
-const MAX_STEPS = 6;
+const MAX_STEPS = 8;
 
 export class AgentAdapter extends ProtocolAdapter {
   static get id()    { return "agent"; }
@@ -30,110 +27,177 @@ export class AgentAdapter extends ProtocolAdapter {
 
   constructor(config) {
     super(config);
-    this.mcpUrl = config.url;
-    this.mcp    = null;   // 内部 MCPAdapter
-    this.tools  = [];     // Anthropic 形式の tool 定義
-    this.turn   = 0;
+    // synthetic URL: window/bookmark 機構は (protoId, url) でキー化するので、
+    // url 空だと全 Agent window が 1 キーに collapse する (dedup/reconnect 誤動作)。
+    // 生成時に agent://local/<id> を振っておく (app.js 側でも同じ url を bookmark に使う)。
+    if (!this.config.url) this.config.url = `agent://local/${genId()}`;
+    // config.mcpServers = [{ name?, url, auth? }] から復元 (永続化・Phase 2)。
+    this._seed   = Array.isArray(config.mcpServers) ? config.mcpServers.slice() : [];
+    this.servers = [];   // [{ id, name, url, auth, mcp, tools, state, error }]
+    this._srvSeq = 0;
+    this.turn    = 0;
   }
 
-  // chat の「履歴クリア」から呼ばれる (window.js)。会話状態を持たないので turn だけ戻す。
   resetContext() { this.turn = 0; }
 
   async connect() {
     this._setState("connecting");
-    try {
-      // ── 内部 MCP に接続 ──
-      this.mcp = new MCPAdapter({
-        url:          this.mcpUrl,
-        auth:         this.config.auth,
-        authHeaders:  this.config.authHeaders,
-        authRef:      this.config.authRef,
-        refreshAuth:  this.config.refreshAuth
-      });
-      // MCP の生フレーム (initialize / tools/list / tools/call) を debug タブへ転送
-      this.mcp.addEventListener("rpc", (e) => this._emit("rpc", e.detail));
-
-      await this.mcp.connect();
-      this.tools = toAnthropicTools(this.mcp.tools);
-
-      // agent card 相当 (A2A window の card タブに「使える tools」を見せる)
-      const srvName = this.mcp.serverInfo?.name || "mcp";
-      this.agentCard = {
-        name:        this.config.name || `agent · ${srvName}`,
-        description: `ダミー LLM + MCP tool-use ループ。tool source = ${srvName}。`,
-        version:     "poc",
-        capabilities: {},
-        skills: this.tools.map(t => ({ id: t.name, name: t.name, description: t.description }))
-      };
-
-      this._setState("open");
-      this.startedAt = Date.now();
-      this._emit("open", { card: this.agentCard });
-    } catch (err) {
-      this._setState("error");
-      this._emit("error", err);
-      throw err;
+    // 0 個でも即 open (MCP は後から Settings で add)
+    this.agentCard = this._buildCard();
+    this._setState("open");
+    this.startedAt = Date.now();
+    this._emit("open", { card: this.agentCard });
+    // seed の MCP を順に接続 (失敗しても open は維持)
+    for (const s of this._seed) {
+      try { await this.addServer(s); } catch { /* keep going */ }
     }
   }
 
   async disconnect() {
-    try { await this.mcp?.disconnect(); } catch { /* ignore */ }
-    this.mcp = null;
+    for (const s of this.servers) { try { await s.mcp?.disconnect(); } catch {} }
+    this.servers = [];
     await super.disconnect();
   }
 
-  // 停止ボタン: 進行中の MCP fetch を中断する
+  // 停止ボタン: 進行中の MCP fetch を全部止める
   abort() {
-    try { this.mcp?.abort(); } catch { /* ignore */ }
+    for (const s of this.servers) { try { s.mcp?.abort(); } catch {} }
     super.abort();
   }
 
-  // ── agent loop 本体 (ここは実 LLM でも無改修) ──
+  // ─── MCP サーバの動的追加/削除 (Settings から呼ぶ) ───────────
+  async addServer({ url, auth, name } = {}) {
+    if (!url) throw new Error("url required");
+    const id  = `s${++this._srvSeq}`;
+    const rec = { id, name: name || hostLabel(url), url, auth: auth || undefined,
+                  mcp: null, tools: [], state: "connecting", error: null };
+    this.servers.push(rec);
+    this._emit("servers-changed", { servers: this.serverSummaries() });
+
+    try {
+      const mcp = new MCPAdapter({
+        url, auth: rec.auth,
+        authHeaders: this.config.authHeaders,
+        refreshAuth: this.config.refreshAuth
+      });
+      // 各 MCP の生フレーム (initialize / tools/list / tools/call) を debug へ転送。
+      // どのサーバか分かるよう method に [name] を付ける。
+      mcp.addEventListener("rpc", (e) => {
+        const d = e.detail || {};
+        this._emit("rpc", { ...d, method: `[${rec.name}] ${d.method || ""}` });
+      });
+      rec.mcp = mcp;
+      await mcp.connect();
+      rec.tools = Array.isArray(mcp.tools) ? mcp.tools : [];
+      rec.state = "open";
+    } catch (e) {
+      rec.state = "error";
+      rec.error = e?.message || String(e);
+    }
+    this.agentCard = this._buildCard();
+    this._emit("servers-changed", { servers: this.serverSummaries() });
+    return rec.state;
+  }
+
+  async removeServer(id) {
+    const i = this.servers.findIndex(s => s.id === id);
+    if (i < 0) return;
+    const [rec] = this.servers.splice(i, 1);
+    try { await rec.mcp?.disconnect(); } catch {}
+    this.agentCard = this._buildCard();
+    this._emit("servers-changed", { servers: this.serverSummaries() });
+  }
+
+  // window (Settings) が描画に使う軽量サマリ
+  serverSummaries() {
+    return this.servers.map(s => ({
+      id: s.id, name: s.name, url: s.url, state: s.state, error: s.error, toolCount: s.tools.length
+    }));
+  }
+
+  // 永続化用 (Phase 2): 復元に必要な最小情報
+  serverConfigs() {
+    return this.servers.map(s => ({ name: s.name, url: s.url, auth: s.auth }));
+  }
+
+  _buildCard() {
+    const tools = this._allTools();
+    return {
+      name:        this.config.name || "agent",
+      description: `ブラウザ内 MCP Host (LLM 現状ダミー)。MCP servers: ${this.servers.length} / tools: ${tools.length}。`,
+      version:     "poc",
+      capabilities: {},
+      skills: tools.map(t => ({ id: t.name, name: t.name, description: t.description }))
+    };
+  }
+
+  // 全 MCP の tools を prefix 付き (mcp__<srvId>__<tool>) で集約。名前衝突を回避。
+  _allTools() {
+    const out = [];
+    for (const s of this.servers) {
+      if (s.state !== "open") continue;
+      for (const t of s.tools) {
+        out.push({
+          name:         `mcp__${s.id}__${t.name}`,
+          description:  `[${s.name}] ${t.description || ""}`,
+          input_schema: t.inputSchema || t.input_schema || { type: "object", properties: {} },
+          _srv: s.id, _base: t.name
+        });
+      }
+    }
+    return out;
+  }
+
+  // prefix 名 → { srv, base }
+  _resolveTool(name) {
+    const m = /^mcp__(s\d+)__(.+)$/.exec(name || "");
+    if (!m) return null;
+    const srv = this.servers.find(s => s.id === m[1]);
+    return srv ? { srv, base: m[2] } : null;
+  }
+
+  // ─── agent loop 本体 (実 LLM でも無改修) ───────────────────
   async send(text, _opts = {}) {
     if (this.state !== "open") throw new Error("not connected");
+    const tools = this._allTools();   // 毎回 live 再読 (mid-session 追加を拾う)
+    if (!tools.length) {
+      this._emit("message", { role: "agent",
+        text: "⚠️ まだ MCP サーバが接続されていません。Settings タブで MCP を追加してください。", final: true });
+      return;
+    }
     this.turn += 1;
     const messages = [{ role: "user", content: text }];
 
     for (let step = 1; step <= MAX_STEPS; step++) {
-      const resp = dummyLLM(messages, this.tools);
-
-      // LLM 往復を debug に出す (実 LLM 化したときと同じ見え方)
+      const resp = dummyLLM(messages, tools);
       this._emit("rpc", {
         dir: "out", method: `LLM · step ${step} (dummy)`,
         headers: { "Content-Type": "application/json" },
-        payload: { model: "dummy", messages, tools: this.tools },
-        raw: JSON.stringify({ messages, tools: this.tools }, null, 2)
+        payload: { model: "dummy", messages, tools }, raw: JSON.stringify({ messages, tools }, null, 2)
       });
-      this._emit("rpc", {
-        dir: "in", method: `LLM · ${resp.stop_reason}`,
-        payload: resp, raw: JSON.stringify(resp, null, 2)
-      });
+      this._emit("rpc", { dir: "in", method: `LLM · ${resp.stop_reason}`, payload: resp, raw: JSON.stringify(resp, null, 2) });
 
       if (resp.stop_reason === "tool_use") {
         const tu = resp.content.find(c => c.type === "tool_use");
-        // chat に逐次「何を呼んでいるか」を出す
         this._emit("status", { state: "working", text: `🔧 ${tu.name}(${JSON.stringify(tu.input)})` });
-
-        // assistant の tool_use を履歴へ
         messages.push({ role: "assistant", content: resp.content });
 
-        // 実際に MCP を叩く (tools/call の rpc は転送済みなので debug に出る)
+        const resolved = this._resolveTool(tu.name);
         let contentStr, isError = false;
-        try {
-          const out = await this.mcp.callTool(tu.name, tu.input);
-          isError = !!out.isError;
-          contentStr = typeof out.parsed === "string" ? out.parsed : JSON.stringify(out.parsed);
-        } catch (e) {
-          if (e?.name === "AbortError") { this._emit("aborted", { method: "tools/call" }); throw e; }
-          isError = true;
-          contentStr = `tool error: ${e.message}`;
+        if (!resolved) {
+          isError = true; contentStr = `unknown tool: ${tu.name}`;
+        } else {
+          try {
+            const out = await resolved.srv.mcp.callTool(resolved.base, tu.input);
+            isError = !!out.isError;
+            contentStr = typeof out.parsed === "string" ? out.parsed : JSON.stringify(out.parsed);
+          } catch (e) {
+            if (e?.name === "AbortError") { this._emit("aborted", { method: "tools/call" }); throw e; }
+            isError = true; contentStr = `tool error: ${e.message}`;
+          }
         }
-
-        // tool_result を履歴へ
-        messages.push({
-          role: "user",
-          content: [{ type: "tool_result", tool_use_id: tu.id, content: contentStr, is_error: isError }]
-        });
+        messages.push({ role: "user",
+          content: [{ type: "tool_result", tool_use_id: tu.id, content: contentStr, is_error: isError }] });
         continue;
       }
 
@@ -142,41 +206,22 @@ export class AgentAdapter extends ProtocolAdapter {
       this._emit("message", { role: "agent", text: finalText, final: true });
       return;
     }
-
     this._emit("message", { role: "agent", text: "⚠️ MAX_STEPS 到達 (loop 上限で打ち切り)", final: true });
   }
 }
 
-// ─── MCP tools → Anthropic Messages 形式の tool schema ───────────
-// MCP の inputSchema は JSON Schema なので input_schema にキー名を変えるだけ。
-function toAnthropicTools(mcpTools) {
-  return (Array.isArray(mcpTools) ? mcpTools : []).map(t => ({
-    name: t.name,
-    description: t.description || "",
-    input_schema: t.inputSchema || t.input_schema || { type: "object", properties: {} }
-  }));
-}
-
-// ─── ダミー LLM (server/agent-poc.js と同じロジック) ────────────
-// Anthropic Messages API 互換の応答 { role, stop_reason, content[] } を返す。
-//   content: {type:"text",text} | {type:"tool_use",id,name,input}
-// ★実 LLM に差し替えるのはこの関数だけ。
+// ─── ダミー LLM (server/agent-poc.js と同じ決め打ち) ────────────
+// tools は prefix 付き名 (mcp__<srvId>__<tool>) なので、base 名で判定して
+// prefix 付きの完全名で tool_use を返す。★実 LLM に差し替えるのはこの関数だけ。
 let toolUseSeq = 0;
 function dummyLLM(messages, tools) {
-  // 直近が tool_result なら「最終回答フェーズ」
   const lastMsg = messages[messages.length - 1];
   const hasToolResult = lastMsg && lastMsg.role === "user" && Array.isArray(lastMsg.content)
     && lastMsg.content.some(c => c.type === "tool_result");
-
   if (hasToolResult) {
     const tr = lastMsg.content.find(c => c.type === "tool_result");
-    const payload = tr ? tr.content : "";
-    return {
-      role: "assistant",
-      stop_reason: "end_turn",
-      content: [{ type: "text",
-        text: `【ダミーLLMの最終回答】ツール結果をもとに回答します:\n${payload}` }]
-    };
+    return { role: "assistant", stop_reason: "end_turn",
+      content: [{ type: "text", text: `【ダミーLLMの最終回答】ツール結果をもとに回答します:\n${tr ? tr.content : ""}` }] };
   }
 
   const firstUser = messages.find(m => m.role === "user");
@@ -184,42 +229,51 @@ function dummyLLM(messages, tools) {
     ? firstUser.content
     : (firstUser?.content || []).filter(c => c.type === "text").map(c => c.text).join(" ");
 
-  const toolNames = new Set((tools || []).map(t => t.name));
-  const mk = (name, input) => ({
-    role: "assistant",
-    stop_reason: "tool_use",
-    content: [{ type: "tool_use", id: `toolu_dummy_${++toolUseSeq}`, name, input }]
+  // base 名 → prefix 付き完全名 の逆引き (最初に見つかったサーバを採用)
+  const byBase = new Map();
+  for (const t of (tools || [])) {
+    const base = /^mcp__s\d+__(.+)$/.exec(t.name)?.[1] || t.name;
+    if (!byBase.has(base)) byBase.set(base, t.name);
+  }
+  const mk = (base, input) => ({
+    role: "assistant", stop_reason: "tool_use",
+    content: [{ type: "tool_use", id: `toolu_dummy_${++toolUseSeq}`,
+                name: byBase.get(base) || (tools[0] && tools[0].name), input }]
   });
 
-  // 1) 顧客ID (C-1234 / C1234) が含まれれば get_customer
+  // 1) 顧客ID → get_customer
   const idm = prompt.match(/C-?\d{3,}/i);
-  if (idm && toolNames.has("get_customer")) {
+  if (idm && byBase.has("get_customer")) {
     return mk("get_customer", { id: idm[0].toUpperCase().replace(/^C(?!-)/, "C-") });
   }
-
   // 2) 一覧系
-  if (toolNames.has("list_customers") && /一覧|リスト|\blist\b|全部|すべて|全顧客/i.test(prompt)) {
+  if (byBase.has("list_customers") && /一覧|リスト|\blist\b|全部|すべて|全顧客/i.test(prompt)) {
     let status;
     if (/active|アクティブ|稼働/i.test(prompt))      status = "active";
     else if (/trial|トライアル|試用/i.test(prompt))  status = "trial";
     else if (/churn|解約|離脱/i.test(prompt))        status = "churned";
     return mk("list_customers", status ? { status } : {});
   }
-
   // 3) 検索
-  if (toolNames.has("search_customers")) {
+  if (byBase.has("search_customers")) {
     const q = prompt.replace(/[。、．，!?！？]/g, " ").trim();
     return mk("search_customers", { query: q });
   }
-
-  // 4) fallback: 最初のツールを引数なしで呼ぶ (customers 以外の MCP でも一応動かす)
+  // 4) fallback: 最初のツールを引数なしで
   const first = (tools || [])[0];
-  if (first) return mk(first.name, {});
+  if (first) {
+    return { role: "assistant", stop_reason: "tool_use",
+      content: [{ type: "tool_use", id: `toolu_dummy_${++toolUseSeq}`, name: first.name, input: {} }] };
+  }
+  return { role: "assistant", stop_reason: "end_turn",
+    content: [{ type: "text", text: "(ダミーLLM) 使えるツールがありません。" }] };
+}
 
-  // ツールが1つも無い → そのまま回答
-  return {
-    role: "assistant",
-    stop_reason: "end_turn",
-    content: [{ type: "text", text: "(ダミーLLM) 使えるツールがありません。" }]
-  };
+function genId() {
+  try { if (crypto?.randomUUID) return crypto.randomUUID().slice(0, 8); } catch {}
+  return Math.floor(Math.random() * 1e9).toString(36);
+}
+function hostLabel(url) {
+  try { return new URL(/^https?:\/\//i.test(url) ? url : "https://" + url).host; }
+  catch { return url; }
 }
