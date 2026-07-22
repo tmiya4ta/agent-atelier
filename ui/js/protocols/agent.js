@@ -3,10 +3,11 @@
 // A2A のように chat で会話できるが、中身は Atelier 自身が回す agent loop:
 //   ユーザー入力 → LLM 応答 → tool_use 検出 → MCP callTool → tool_result → 再び LLM
 //   → stop_reason=end_turn まで繰り返す。
+//   MCP が 0 個なら tool 無しで普通に会話する (LLM とおしゃべり)。
 //
 // Claude Code の mcpServers のように、MCP サーバを複数登録できる。
 //   - 接続時は 0 個で開く (window を先に開く)。
-//   - Settings タブで動的に add/remove する (addServer / removeServer)。
+//   - Settings タブで動的に add/remove する (addServer / removeServer)。各 MCP に auth も付けられる。
 //   - 全サーバの tools を prefix 付き (mcp__<srvId>__<tool>) で集約し LLM に渡す。
 //   - tool_use が来たら prefix から (server, baseName) を逆引きして callTool。
 //
@@ -31,9 +32,9 @@ export class AgentAdapter extends ProtocolAdapter {
     // url 空だと全 Agent window が 1 キーに collapse する (dedup/reconnect 誤動作)。
     // 生成時に agent://local/<id> を振っておく (app.js 側でも同じ url を bookmark に使う)。
     if (!this.config.url) this.config.url = `agent://local/${genId()}`;
-    // config.mcpServers = [{ name?, url, auth? }] から復元 (永続化・Phase 2)。
+    // config.mcpServers = [{ name?, url, auth?, authHeaders? }] から復元 (永続化・Phase 2)。
     this._seed   = Array.isArray(config.mcpServers) ? config.mcpServers.slice() : [];
-    this.servers = [];   // [{ id, name, url, auth, mcp, tools, state, error }]
+    this.servers = [];   // [{ id, name, url, auth, authHeaders, mcp, tools, state, error }]
     this._srvSeq = 0;
     this.turn    = 0;
   }
@@ -42,7 +43,7 @@ export class AgentAdapter extends ProtocolAdapter {
 
   async connect() {
     this._setState("connecting");
-    // 0 個でも即 open (MCP は後から Settings で add)
+    // 0 個でも即 open (MCP は後から Settings で add。tool 無しでも会話はできる)
     this.agentCard = this._buildCard();
     this._setState("open");
     this.startedAt = Date.now();
@@ -66,10 +67,11 @@ export class AgentAdapter extends ProtocolAdapter {
   }
 
   // ─── MCP サーバの動的追加/削除 (Settings から呼ぶ) ───────────
-  async addServer({ url, auth, name } = {}) {
+  async addServer({ url, auth, authHeaders, name } = {}) {
     if (!url) throw new Error("url required");
     const id  = `s${++this._srvSeq}`;
     const rec = { id, name: name || hostLabel(url), url, auth: auth || undefined,
+                  authHeaders: authHeaders || undefined,
                   mcp: null, tools: [], state: "connecting", error: null };
     this.servers.push(rec);
     this._emit("servers-changed", { servers: this.serverSummaries() });
@@ -77,7 +79,7 @@ export class AgentAdapter extends ProtocolAdapter {
     try {
       const mcp = new MCPAdapter({
         url, auth: rec.auth,
-        authHeaders: this.config.authHeaders,
+        authHeaders: rec.authHeaders || this.config.authHeaders,
         refreshAuth: this.config.refreshAuth
       });
       // 各 MCP の生フレーム (initialize / tools/list / tools/call) を debug へ転送。
@@ -111,13 +113,14 @@ export class AgentAdapter extends ProtocolAdapter {
   // window (Settings) が描画に使う軽量サマリ
   serverSummaries() {
     return this.servers.map(s => ({
-      id: s.id, name: s.name, url: s.url, state: s.state, error: s.error, toolCount: s.tools.length
+      id: s.id, name: s.name, url: s.url, state: s.state, error: s.error,
+      toolCount: s.tools.length, hasAuth: !!(s.auth || s.authHeaders)
     }));
   }
 
   // 永続化用 (Phase 2): 復元に必要な最小情報
   serverConfigs() {
-    return this.servers.map(s => ({ name: s.name, url: s.url, auth: s.auth }));
+    return this.servers.map(s => ({ name: s.name, url: s.url, auth: s.auth, authHeaders: s.authHeaders }));
   }
 
   _buildCard() {
@@ -160,11 +163,7 @@ export class AgentAdapter extends ProtocolAdapter {
   async send(text, _opts = {}) {
     if (this.state !== "open") throw new Error("not connected");
     const tools = this._allTools();   // 毎回 live 再読 (mid-session 追加を拾う)
-    if (!tools.length) {
-      this._emit("message", { role: "agent",
-        text: "⚠️ まだ MCP サーバが接続されていません。Settings タブで MCP を追加してください。", final: true });
-      return;
-    }
+    // tools が 0 個でも普通に会話する (ダミーはツール無しなら dummyChat を返す)。
     this.turn += 1;
     const messages = [{ role: "user", content: text }];
 
@@ -259,14 +258,25 @@ function dummyLLM(messages, tools) {
     const q = prompt.replace(/[。、．，!?！？]/g, " ").trim();
     return mk("search_customers", { query: q });
   }
-  // 4) fallback: 最初のツールを引数なしで
+  // 4) tools はあるが該当なし → 最初のツールを引数なしで (ダミーの苦しい fallback)
   const first = (tools || [])[0];
   if (first) {
     return { role: "assistant", stop_reason: "tool_use",
       content: [{ type: "tool_use", id: `toolu_dummy_${++toolUseSeq}`, name: first.name, input: {} }] };
   }
+  // 5) tools が 0 個 → 普通のおしゃべり (MCP 無しでも会話できる)
   return { role: "assistant", stop_reason: "end_turn",
-    content: [{ type: "text", text: "(ダミーLLM) 使えるツールがありません。" }] };
+    content: [{ type: "text", text: dummyChat(prompt) }] };
+}
+
+// ツール無しのおしゃべり応答 (ダミーなので定型)。★実 LLM ならここも普通の会話になる。
+function dummyChat(prompt) {
+  const p = (prompt || "").trim();
+  if (!p) return "(ダミー LLM) メッセージをどうぞ。";
+  if (/^(こんにちは|こんばんは|おはよう|やあ|hi|hello|hey)\b/i.test(p)) {
+    return "こんにちは! ダミー LLM です。Settings タブの「MCP servers」でツールを追加すると、それを使って答えられるようになります。";
+  }
+  return `(ダミー LLM) 「${p}」を受け取りました。今はツールが無いので普通に返事するだけです。Settings で MCP を追加するとツールを使えます。`;
 }
 
 function genId() {

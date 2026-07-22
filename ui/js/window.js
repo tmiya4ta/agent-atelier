@@ -1,7 +1,7 @@
 // AgentWindow — フローティングウインドウ
 // 1接続=1ウインドウ。Chat / Agent Card / Debug / Settings の4タブ。
 import { t } from "./i18n.js";
-import { modalPrompt } from "./modal.js";
+import { modalMcpAdd } from "./modal.js";
 
 let zCounter = 10;
 let idCounter = 0;
@@ -1668,11 +1668,20 @@ export class AgentWindow {
 
     // Agent: MCP servers の add / remove (入力は modalPrompt = 再描画に巻き込まれない)
     box.querySelector(".set-mcp-add")?.addEventListener("click", async () => {
-      const url = await modalPrompt({ title: "Add MCP server", label: "MCP endpoint URL", placeholder: "https://…/mcp" });
-      if (url && url.trim()) {
-        try { await this.adapter.addServer?.({ url: url.trim() }); }
-        catch (e) { console.warn("addServer failed:", e); }
+      // auth 選択肢: manual + identity 一覧 (接続ダイアログと同じ authApi)
+      const authOptions = [{ value: "", label: "manual (no auth)" }];
+      (this.authApi?.list?.() || []).forEach(idn =>
+        authOptions.push({ value: idn.id, label: `${idn.name} · ${this.authApi.badge(idn.kind)}` }));
+      const res = await modalMcpAdd({ title: "Add MCP server", authOptions });
+      if (!res || !res.url) return;
+      // identity を選んだら token/header を解決して addServer に渡す
+      let auth, authHeaders;
+      if (res.authRef && this.authApi?.resolve) {
+        try { const a = await this.authApi.resolve(res.authRef); auth = a?.auth; authHeaders = a?.authHeaders; }
+        catch (e) { console.warn("auth resolve failed:", e); }
       }
+      try { await this.adapter.addServer?.({ url: res.url, auth, authHeaders }); }
+      catch (e) { console.warn("addServer failed:", e); }
     });
     box.querySelectorAll(".set-mcp-remove").forEach(btn => {
       btn.addEventListener("click", async () => {

@@ -281,6 +281,62 @@ export function modalNewWindow({ title, defaultName, authOptions = [], defaultAu
   });
 }
 
+// modalMcpAdd — MCP サーバ追加ダイアログ。URL + AUTH(identity) を選ぶ。
+//   authOptions: [{ value, label }] (先頭 manual="" + identity)。
+//   返り値: { url, authRef } または null (cancel)。
+export function modalMcpAdd({ title, authOptions = [], defaultAuthRef = "" } = {}) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement("div");
+    wrap.className = "modal-backdrop";
+    const optsHtml = authOptions.map(o =>
+      `<option value="${escapeHtml(o.value)}"${o.value === defaultAuthRef ? " selected" : ""}>${escapeHtml(o.label)}</option>`).join("");
+    wrap.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true">
+        <header class="modal-head">
+          <span class="modal-eyebrow">add mcp</span>
+          <h3 class="modal-title">${escapeHtml(title || "Add MCP server")}</h3>
+        </header>
+        <div class="modal-body">
+          <label class="modal-label">MCP endpoint URL</label>
+          <input class="modal-input modal-mcp-url" type="text" autocomplete="off" placeholder="https://…/mcp" />
+          <label class="modal-label">AUTH</label>
+          <select class="modal-input modal-mcp-auth" aria-label="auth">${optsHtml}</select>
+          <span class="modal-hint">identity を選ぶと Bearer token を自動付与 (manual = 認証なし)</span>
+        </div>
+        <footer class="modal-foot">
+          <div class="modal-foot-actions">
+            <button type="button" class="ghost-btn modal-cancel">Cancel</button>
+            <button type="button" class="primary-btn modal-confirm"><span>Add</span><span class="arrow">→</span></button>
+          </div>
+        </footer>
+      </div>
+    `;
+    document.body.appendChild(wrap);
+    requestAnimationFrame(() => wrap.classList.add("is-open"));
+    const urlEl  = wrap.querySelector(".modal-mcp-url");
+    const authEl = wrap.querySelector(".modal-mcp-auth");
+    const close = (result) => {
+      wrap.classList.remove("is-open");
+      setTimeout(() => wrap.remove(), 220);
+      document.removeEventListener("keydown", onKey, true);
+      resolve(result);
+    };
+    const submit = () => {
+      const url = urlEl.value.trim();
+      if (!url) { urlEl.focus(); return; }
+      close({ url, authRef: authEl.value || "" });
+    };
+    wrap.querySelector(".modal-confirm").addEventListener("click", submit);
+    wrap.querySelector(".modal-cancel").addEventListener("click", () => close(null));
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(null); }
+      else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); submit(); }
+    };
+    document.addEventListener("keydown", onKey, true);
+    setTimeout(() => { urlEl.focus(); }, 50);
+  });
+}
+
 // modalExport — Export ダイアログ。 ファイル名 + 「Secret を含める」チェック +
 // チェック時にスライド表示される passphrase 欄。
 //   返り値: { name, includeSecrets, passphrase } または null (cancel)。
