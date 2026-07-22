@@ -4,6 +4,7 @@
 import { A2AAdapter }   from "./a2a.js";
 import { SlackAdapter } from "./slack.js";
 import { MCPAdapter }   from "./mcp.js";
+import { AgentAdapter } from "./agent.js";
 import { MockAdapter }  from "./mock.js";
 import { DbAdapter }    from "./db.js";
 
@@ -23,6 +24,14 @@ export const PROTOCOLS = [
     sub: "model context",
     description: "Model Context Protocol · JSON-RPC 2.0 over HTTP",
     AdapterClass: MCPAdapter,
+    status: "ready"
+  },
+  {
+    id: "agent",
+    label: "Agent",
+    sub: "llm + mcp loop",
+    description: "MCP Host · LLM(現状ダミー)が MCP tools を tool-use ループで実行 · url = MCP endpoint",
+    AdapterClass: AgentAdapter,
     status: "ready"
   },
   {

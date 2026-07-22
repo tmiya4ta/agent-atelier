@@ -4257,6 +4257,7 @@ function applyProtoSpecificFields() {
   const isMcp   = proto === "mcp";
   const isMock  = proto === "mock";
   const isDb    = proto === "db";
+  const isAgent = proto === "agent";
   // DB 専用フィールド (type / discover / database / user / password) の表示制御
   const dbFields = $("#dlgDbFields");
   if (dbFields) dbFields.hidden = !isDb;
@@ -4316,8 +4317,9 @@ function applyProtoSpecificFields() {
   const authField  = $("#dlgAuthRef")?.closest(".field");
   const testBtn    = $("#dlgTest");
   const advanced   = document.querySelector("#connectDialog .advanced");
-  if (urlLabel)  urlLabel.textContent  = isMock ? "agent name" : "discovery url";
+  if (urlLabel)  urlLabel.textContent  = isMock ? "agent name" : isAgent ? "mcp endpoint" : "discovery url";
   if (urlHint)   urlHint.textContent   = isMock ? "The name alone conveys the role (e.g. Credit Review / Fraud Detection / Incident)"
+                                                : isAgent ? "MCP endpoint (/mcp)。LLM(現状ダミー)が MCP tools を tool-use ループで実行"
                                                 : "A2A: base URL → AgentCard resolution / MCP: /mcp endpoint";
   if (urlPrefix) urlPrefix.textContent = isMock ? "name" : "url";
   // mock では display name 行・auth 行・test ボタン・advanced を畳む。
