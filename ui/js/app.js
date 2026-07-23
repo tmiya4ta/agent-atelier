@@ -1129,12 +1129,15 @@ function renderBookmarks() {
       }
       if (wins.length > 0) {
         const { win, ws } = wins[0];
+        // MCP は chat タブを隠して tools が主役。フォーカス時に chat へ切り替えると
+        // A2A 風の空 chat が出てしまうので、MCP は tools に切り替える。それ以外は chat。
+        const primaryTab = win.protoMode === "mcp" ? "tools" : "chat";
         if (ws.id !== state.activeWs) {
           switchWorkspace(ws.id);
-          setTimeout(() => { win.focus(); win.switchTab("chat"); }, 50);
+          setTimeout(() => { win.focus(); win.switchTab(primaryTab); }, 50);
         } else {
           win.focus();
-          win.switchTab("chat");
+          win.switchTab(primaryTab);
         }
       } else if (closed.length > 0) {
         reopenClosedWindow(closed[0]);
@@ -1172,13 +1175,15 @@ function renderBookmarks() {
             win.close();   // 設定は closedWindows に残る (再オープン可能)
             return;
           }
-          // フォーカス (青く光る) した上で chat タブを表示する。
+          // フォーカス (青く光る) した上で主タブを表示する。
+          // MCP は chat を隠して tools が主役なので tools に切り替える (chat だと空 chat が出る)。
+          const primaryTab = win.protoMode === "mcp" ? "tools" : "chat";
           if (!isActiveWs) {
             switchWorkspace(ws.id);
-            setTimeout(() => { win.focus(); win.switchTab("chat"); }, 50);
+            setTimeout(() => { win.focus(); win.switchTab(primaryTab); }, 50);
           } else {
             win.focus();
-            win.switchTab("chat");
+            win.switchTab(primaryTab);
           }
         });
         inner.appendChild(btn);
