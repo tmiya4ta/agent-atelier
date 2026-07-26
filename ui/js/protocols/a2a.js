@@ -580,11 +580,7 @@ function collectText(msg) {
   return parts
     .map(p => {
       if (p.kind === "text" && typeof p.text === "string") return p.text;
-      if (p.kind === "data" && p.data != null) {
-        // データパートを文字列化 (JSON 出力エージェント対策)
-        try { return "```json\n" + JSON.stringify(p.data, null, 2) + "\n```"; }
-        catch { return ""; }
-      }
+      // data part (raw JSON) は表示しない
       return "";
     })
     .filter(Boolean)
