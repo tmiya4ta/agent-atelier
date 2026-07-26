@@ -1538,7 +1538,12 @@ export class AgentWindow {
     const box = this.el.querySelector(".settings-scroll");
     const configuredUrl = this.adapter.config.url || "";
     const card          = this.adapter.agentCard || null;
-    const effectiveUrl  = card?.url || "";
+    // effectiveUrl は adapter が実際に POST する先 (a2a.js の rpcUrl と同じロジック)。
+    // AgentCard に url フィールドが無いサーバ (spec 上は必須だが省略する実装がある) では
+    // adapter 側は Discovery URL にフォールバックして接続に成功するので、 表示もそれに合わせる。
+    // card?.url だけを見ると「取得済みなのに url が無い」ケースを「まだ接続中」と誤表示してしまう。
+    const effectiveUrl  = card?.url || this.adapter.rpcUrl || (card ? stripTrailingSlash(configuredUrl) : "");
+    const cardLoaded     = !!card;
     const urlMismatch   = effectiveUrl && configuredUrl && !effectiveUrl.startsWith(stripTrailingSlash(configuredUrl)) && !configuredUrl.startsWith(stripTrailingSlash(effectiveUrl));
     const cardTip = this.protoMode === "mcp"
       ? "MCP では agent card は提供されないため、 接続先はそのまま Discovery URL です。"
@@ -1592,7 +1597,7 @@ export class AgentWindow {
         <div class="set-row" title="${cardTip}">
           <div class="set-row-text">
             <div class="set-row-title">Effective endpoint <span class="set-row-help" aria-hidden="true">?</span></div>
-            <div class="set-row-sub">${effectiveUrl ? "AgentCard の url。 メッセージはここに POST されます。" : "AgentCard 未取得 — 接続中…"}</div>
+            <div class="set-row-sub">${cardLoaded ? (card?.url ? "AgentCard の url。 メッセージはここに POST されます。" : "AgentCard に url フィールドが無いため Discovery URL にフォールバック。 メッセージはここに POST されます。") : "AgentCard 未取得 — 接続中…"}</div>
           </div>
           ${copyFieldHtml(effectiveUrl, { cls: urlMismatch ? "is-warn" : "", placeholder: "(loading…)", title: cardTip })}
         </div>

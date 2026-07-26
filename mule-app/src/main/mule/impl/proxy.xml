@@ -81,6 +81,7 @@ var h = attributes.headers default {}
     (if (h."mcp-session-id"?) { "Mcp-Session-Id": h."mcp-session-id" } else {}),
     (if (h."mcp-protocol-version"?) { "Mcp-Protocol-Version": h."mcp-protocol-version" } else {}),
     (if (h."x-clouderby-session-id"?) { "X-Clouderby-Session-Id": h."x-clouderby-session-id" } else {}),
+    (if (h."a2a-version"?) { "A2A-Version": h."a2a-version" } else {}),
     "Accept": h.accept default "*/*"
 }]]></ee:set-variable>
                         <!-- client が SSE を要求しているか (Accept: text/event-stream) -->

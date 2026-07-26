@@ -33,6 +33,13 @@ export class A2AAdapter extends ProtocolAdapter {
     // 同じ task を継続する。 これが無いと毎ターン新規 task 扱いになり、 broker が直前の
     // 問いかけ ("一覧を取得しますか?") を忘れて文脈が切れる (「はい」が通じない)。
     this.taskId = null;
+    // メッセージのワイヤー形式。 null = 未判定 (まず legacy を試す)。
+    //   "legacy" — A2A 0.3 系の素朴な JSON-RPC (kind 判別子, method="message/send")。
+    //   "proto"  — A2A 1.0 の正規スキーマ (protobuf 由来, method="SendMessage", kind 無し)。
+    // AgentCard の supportedInterfaces でトランスポートを宣言しないサーバもあるため、
+    // 事前判定はできない。 send() が -32601 (Method not found) を見て自動フォールバックし、
+    // 一度判定したらセッション中はそのまま使い続ける。
+    this._msgStyle = null;
   }
 
   // 履歴クリアからのフック (window.js から呼ぶ)。 contextId を null に戻すと
@@ -68,7 +75,7 @@ export class A2AAdapter extends ProtocolAdapter {
     const cached = readCardCache(this.endpoint);
     if (cached) {
       this.agentCard = cached.card;
-      this.rpcUrl    = cached.card.url || trimSlash(this.endpoint);
+      this.rpcUrl    = cached.card.url || ensureTrailingSlash(this.endpoint);
       this._emit("rpc", {
         dir: "in",
         method: `cache HIT · agent card · ${shortPath(cached.cardUrl)}`,
@@ -123,7 +130,7 @@ export class A2AAdapter extends ProtocolAdapter {
     }
 
     this.agentCard = card;
-    this.rpcUrl    = card.url || trimSlash(this.endpoint);
+    this.rpcUrl    = card.url || ensureTrailingSlash(this.endpoint);
     writeCardCache(this.endpoint, card, cardUrl);
 
     this._emit("rpc", {
@@ -142,6 +149,26 @@ export class A2AAdapter extends ProtocolAdapter {
     return this._fetchCard({ emitOpen: false });
   }
 
+  // legacy (A2A 0.3 系, kind 判別子) / proto (A2A 1.0 正規スキーマ) いずれかの
+  // message/send リクエスト body を組み立てる。
+  _buildMessageBody(reqId, text, legacyMethod, style) {
+    if (style === "proto") {
+      const message = { messageId: uuid(), role: "ROLE_USER", parts: [{ text }] };
+      if (this.contextId) message.contextId = this.contextId;
+      if (this.taskId) message.taskId = this.taskId;
+      return { jsonrpc: "2.0", id: reqId, method: "SendMessage", params: { message, configuration: {} } };
+    }
+    const message = {
+      kind: "message",                        // A2A 0.3+ で discriminator として必須
+      role: "user",
+      parts: [{ kind: "text", text }],
+      messageId: uuid()
+    };
+    if (this.contextId) message.contextId = this.contextId;
+    if (this.taskId) message.taskId = this.taskId;
+    return { jsonrpc: "2.0", id: reqId, method: legacyMethod, params: { message, configuration: {} } };
+  }
+
   async send(text, opts = {}) {
     if (this.state !== "open") throw new Error("not connected");
     await this._ensureFreshAuth();   // 期限切れトークンをここで更新
@@ -149,32 +176,24 @@ export class A2AAdapter extends ProtocolAdapter {
     const reqId = `req-${this.turn}`;
 
     const useStream = !!(opts.stream && this.agentCard?.capabilities?.streaming);
-    const method = useStream ? "message/stream" : "message/send";
+    const legacyMethod = useStream ? "message/stream" : "message/send";
 
-    const message = {
-      kind: "message",                        // A2A 0.3+ で discriminator として必須
-      role: "user",
-      parts: [{ kind: "text", text }],
-      messageId: uuid()
-    };
-    // 既存セッションがあるときだけ contextId を付ける。
-    // 初回 (this.contextId === null) は server に採番させる。
-    if (this.contextId) message.contextId = this.contextId;
-    // 追加入力待ち (input-required) の task が残っていれば、 同じ task を継続する。
-    // これが無いと毎ターン新規 task になり、 直前の問いかけの文脈が引き継がれない。
-    if (this.taskId) message.taskId = this.taskId;
-
-    const body = {
-      jsonrpc: "2.0",
-      id: reqId,
-      method,
-      params: { message, configuration: {} }
-    };
+    // style 判定: 既に分かっていればそれを使う。 未判定ならまず legacy で試し、
+    // -32601 (Method not found) が返ってきたら proto で自動的に再送する (下記)。
+    let style  = this._msgStyle || "legacy";
+    let method = style === "proto" ? "SendMessage" : legacyMethod;
+    let body   = this._buildMessageBody(reqId, text, legacyMethod, style);
 
     const headers = {
       "Content-Type": "application/json",
-      // message/stream のときは SSE を受ける。 そうでなければ JSON。
-      Accept: useStream ? "text/event-stream" : "application/json"
+      // message/stream (legacy) のときだけ SSE を受ける。 proto の streaming (SendStreamingMessage)
+      // は未実装なので、 proto style では常に JSON を要求する。
+      Accept: (useStream && style === "legacy") ? "text/event-stream" : "application/json",
+      // spec: "Clients MUST send the A2A-Version header with each request" (Major.Minor)。
+      // AgentCard の protocolVersion から算出 (例 "0.3.0" → "0.3")。 card 自体が
+      // protocolVersion を省略している server もあるので、 その場合は現行 GA の "1.0" を既定にする
+      // (未送信だと server 側は "0.3" 扱いにする実装もあり、 厳格な gateway policy では拒否されうる)。
+      "A2A-Version": a2aVersionHeader(this.agentCard)
     };
     if (this.config.auth) headers["Authorization"] = `Bearer ${this.config.auth}`;
     if (this.config.authHeaders) Object.assign(headers, this.config.authHeaders);
@@ -188,30 +207,54 @@ export class A2AAdapter extends ProtocolAdapter {
     this._inflight = ac;
 
     try {
-      const res = await fetch(proxify(this.rpcUrl), { method: "POST", headers, body: JSON.stringify(body), signal: ac.signal });
+      let res = await fetch(proxify(this.rpcUrl), { method: "POST", headers, body: JSON.stringify(body), signal: ac.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       // ── streaming (SSE) 経路 ───────────────────────────────
       // server が text/event-stream を返したら 1 イベントずつ読み、
       // status-update / artifact-update を逐次 message として emit する。
       const ctype = res.headers.get("content-type") || "";
-      if (useStream && ctype.includes("text/event-stream")) {
+      if (useStream && style === "legacy" && ctype.includes("text/event-stream")) {
         await this._consumeSse(res, method, ac, headersToObj(res.headers));
         return;
       }
 
-      const data = await res.json();
+      let data = await res.json();
 
       this._emit("rpc", {
         dir: "in", method: `200 OK · ${method}`,
         headers: headersToObj(res.headers), payload: data, raw: JSON.stringify(data, null, 2)
       });
 
+      // legacy で "Method not found" (-32601) なら、 このサーバは message/send ではなく
+      // A2A 1.0 の正規スキーマ (proto3-JSON, method="SendMessage") を話す (例: v2 gateway)。
+      // 1 回だけ proto 形式で自動的に再送し、 以後このセッションでは proto を使い続ける。
+      if (data.error?.code === -32601 && style === "legacy" && !this._msgStyle) {
+        this._msgStyle = "proto";
+        style  = "proto";
+        method = "SendMessage";
+        headers.Accept = "application/json";
+        body = this._buildMessageBody(reqId, text, legacyMethod, style);
+        this._emit("rpc", {
+          dir: "out", method: `${method} (auto-retry: proto schema)`, headers, payload: body, raw: JSON.stringify(body, null, 2)
+        });
+        res = await fetch(proxify(this.rpcUrl), { method: "POST", headers, body: JSON.stringify(body), signal: ac.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        data = await res.json();
+        this._emit("rpc", {
+          dir: "in", method: `200 OK · ${method}`,
+          headers: headersToObj(res.headers), payload: data, raw: JSON.stringify(data, null, 2)
+        });
+      }
+
       if (data.error) throw new Error(`RPC error: ${data.error.message || data.error.code}`);
+
+      // proto 応答は legacy と同じ内部形状 (kind/status.state 文字列/role 文字列) に正規化してから
+      // 以降の処理 (collectMessages/collectText/_trackTask) に渡す。 これで下流は無改修で共用できる。
+      const result = style === "proto" ? protoResultToLegacy(data.result) : (data.result || {});
 
       // server が採番した contextId を保持 (A2A 0.3 で task.contextId / message.contextId の
       // どちらにも乗ってくる可能性があるので両方見る)
-      const result = data.result || {};
       const ctx = result.contextId
         || result.task?.contextId
         || result.message?.contextId
@@ -389,6 +432,21 @@ function normalizeUrl(u) {
   return u;
 }
 function trimSlash(u) { return u.replace(/\/+$/, ""); }
+// AgentCard に url フィールドが無いサーバ (spec 上は必須だが省略する実装がある) 向けの
+// フォールバック先。 単純に trimSlash すると、 末尾スラッシュ有りでしかルーティングしない
+// gateway (Flex Gateway のベースパス等) で 404 になる。 見てきた実例 (card.url を持つ agent)
+// は軒並み末尾スラッシュ付きだったので、 フォールバックでも末尾スラッシュを 1 個保証する。
+function ensureTrailingSlash(u) { return trimSlash(u) + "/"; }
+// AgentCard.protocolVersion ("0.3.0" 等) → ヘッダー値 "Major.Minor" ("0.3")。
+// card 未取得 / protocolVersion 省略時は現行 GA の "1.0" を既定にする。
+function a2aVersionHeader(card) {
+  const v = card?.protocolVersion;
+  if (typeof v === "string" && /^\d+\.\d+/.test(v)) {
+    const m = v.match(/^(\d+)\.(\d+)/);
+    return `${m[1]}.${m[2]}`;
+  }
+  return "1.0";
+}
 
 function candidateCardUrls(endpoint) {
   if (/\/\.well-known\/agent-card\.json\b/.test(endpoint)) return [endpoint];
@@ -419,6 +477,69 @@ function proxify(targetUrl) {
     if (t.origin === location.origin) return targetUrl;
   } catch { /* fall through */ }
   return `/proxy?url=${encodeURIComponent(targetUrl)}`;
+}
+
+// ─── A2A 1.0 正規スキーマ (protobuf 由来, lf.a2a.v1) → legacy 内部形状への変換 ───
+// SendMessageResponse は oneof { Task task; Message message; } なので proto3 の JSON
+// マッピングでは data.result が { task: {...} } か { message: {...} } になる
+// (a2a.proto: SendMessageResponse / Task / Message / Part / Role / TaskState を参照)。
+// legacy 側 (collectMessages/collectText/_trackTask) が理解する形へ正規化することで、
+// 下流のロジックを一切変更せずに両スキーマを共用する。
+function protoRoleToLegacy(role) {
+  return role === "ROLE_USER" ? "user" : "agent";   // ROLE_AGENT / ROLE_UNSPECIFIED / 不明 → agent
+}
+const PROTO_TASK_STATE_MAP = {
+  TASK_STATE_SUBMITTED:      "submitted",
+  TASK_STATE_WORKING:        "working",
+  TASK_STATE_COMPLETED:      "completed",
+  TASK_STATE_FAILED:         "failed",
+  TASK_STATE_CANCELED:       "canceled",
+  TASK_STATE_INPUT_REQUIRED: "input-required",
+  TASK_STATE_REJECTED:       "rejected",
+  TASK_STATE_AUTH_REQUIRED:  "auth-required"
+};
+function protoTaskStateToLegacy(state) { return PROTO_TASK_STATE_MAP[state] || ""; }
+
+// Part は oneof (text|raw|url|data) のフラット表現。 kind 判別子は無いので
+// 中身から legacy 形式 ({kind:"text",text} / {kind:"data",data}) を組み立てる。
+// url/raw (ファイル的な part) は legacy 側に file 用の描画が無いため、
+// 中身が見えるよう data kind としてダンプする (せめて情報は失わない)。
+function protoPartToLegacy(p) {
+  if (!p) return { kind: "text", text: "" };
+  if (typeof p.text === "string") return { kind: "text", text: p.text };
+  if (p.data !== undefined) return { kind: "data", data: p.data };
+  if (p.url) return { kind: "data", data: { url: p.url, filename: p.filename, mediaType: p.mediaType } };
+  if (p.raw) return { kind: "data", data: { filename: p.filename, mediaType: p.mediaType, note: "binary (raw) content omitted" } };
+  return { kind: "text", text: "" };
+}
+function protoMessageToLegacy(m) {
+  if (!m) return null;
+  return {
+    role: protoRoleToLegacy(m.role),
+    parts: (m.parts || []).map(protoPartToLegacy),
+    messageId: m.messageId,
+    contextId: m.contextId,
+    taskId: m.taskId
+  };
+}
+function protoTaskToLegacy(t) {
+  if (!t) return null;
+  return {
+    id: t.id,
+    contextId: t.contextId,
+    status: {
+      state: protoTaskStateToLegacy(t.status?.state),
+      message: protoMessageToLegacy(t.status?.message)
+    },
+    artifacts: (t.artifacts || []).map(a => ({ role: "agent", parts: (a.parts || []).map(protoPartToLegacy) })),
+    history: (t.history || []).map(protoMessageToLegacy)
+  };
+}
+function protoResultToLegacy(protoResult) {
+  if (!protoResult) return protoResult;
+  if (protoResult.task)    return { kind: "task", ...protoTaskToLegacy(protoResult.task) };
+  if (protoResult.message) return protoMessageToLegacy(protoResult.message);
+  return protoResult;
 }
 
 // A2A 0.3+ で result の形が増えたため、複数候補を見て messages を集める
