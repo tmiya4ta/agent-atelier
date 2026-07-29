@@ -2,6 +2,7 @@
 // 1接続=1ウインドウ。Chat / Agent Card / Debug / Settings の4タブ。
 import { t } from "./i18n.js";
 import { modalMcpAdd } from "./modal.js";
+import { buildUrl as buildRestUrl } from "./protocols/rest.js";
 
 let zCounter = 10;
 let idCounter = 0;
@@ -246,7 +247,9 @@ export class AgentWindow {
     this._applyPinnedState();
 
     // MCP モード: tools タブを露出し、 chat タブを使わない構成に切り替える。
-    if (this.protoMode === "mcp") this._setupMcpMode(node);
+    if (this.protoMode === "mcp")  this._setupMcpMode(node);
+    // REST モード: endpoints + raw タブを露出し、 chat は使わない。
+    if (this.protoMode === "rest") this._setupRestMode(node);
 
     // 既に open 済み adapter を渡された場合は、 open event 相当の初期描画を即時実行
     if (this.adapter.state === "open" && this.adapter.agentCard) {
@@ -347,7 +350,7 @@ export class AgentWindow {
 
     // Agent / A2A: MCP サーバの add/remove/接続状態変化 → Settings の一覧を再描画
     this.adapter.addEventListener("servers-changed", () => {
-      if (this.protoMode === "agent" || this.protoMode === "a2a") this._renderSettings();
+      if (this.protoMode === "a2a") this._renderSettings();
     });
   }
 
@@ -1585,7 +1588,15 @@ export class AgentWindow {
 
       <div class="set-section">
         <h4>Connection</h4>
-        ${this.protoMode === "agent" ? this._mcpServersSectionHtml() : `
+        ${this.protoMode === "rest" ? `
+        <div class="set-row" title="Connect ダイアログで入力した base URL (任意)。 raw タブの URL 欄に初期値として入るだけで、 実際の送信先は raw タブで都度指定します。">
+          <div class="set-row-text">
+            <div class="set-row-title">Base URL</div>
+            <div class="set-row-sub">任意。 raw タブの初期値になるだけで、 送信先はその都度指定します。</div>
+          </div>
+          ${copyFieldHtml(this.adapter.baseUrl || "", { placeholder: "(未設定)" })}
+        </div>
+        ` : `
         <div class="set-row" title="Connect ダイアログで入力した Discovery URL。 ${this.protoMode === "mcp" ? "MCP server (POST /mcp) を直接叩きます。" : "Atelier はこの URL の /.well-known/agent-card.json を取得して AgentCard を解釈します。 実際のチャット送信先は AgentCard 側の url フィールドです。"}">
           <div class="set-row-text">
             <div class="set-row-title">Discovery URL <span class="set-row-help" aria-hidden="true">?</span></div>
@@ -2084,6 +2095,285 @@ export class AgentWindow {
       result.classList.add("is-error");
       result.textContent = String(err.message || err);
     }
+  }
+
+  // ═══════════════════════════════════════════════
+  // REST モード (OpenAPI 駆動の endpoints + raw リクエスト)
+  // ═══════════════════════════════════════════════
+  // 現在は raw タブのみ。 OpenAPI 由来の endpoints タブは実装済みだが非表示
+  // (rest.js の connect() が spec を取りにいかないため中身が空になる)。
+  // 復活させるときは endpoints タブを show に戻し、 _restApplyOpen を購読する。
+  _setupRestMode(node) {
+    const chatTab = node.querySelector('.aw-tab[data-tab="chat"]');
+    if (chatTab) { chatTab.hidden = true; chatTab.classList.remove("is-active"); }
+    node.querySelector(".pane-chat")?.classList.remove("is-active");
+    const rawTab = node.querySelector('.aw-tab[data-tab="raw"]');
+    if (rawTab) { rawTab.hidden = false; rawTab.classList.add("is-active"); }
+    node.querySelector(".pane-raw")?.classList.add("is-active");
+    // agent card タブは REST では接続情報しか出せないので "info" にする
+    const cardTab = node.querySelector('.aw-tab[data-tab="card"] span:last-child');
+    if (cardTab) cardTab.textContent = "info";
+
+    this._wireRawPane(node);
+    this._renderRestSpecInfo();
+  }
+
+  _restApplyOpen(detail, node) {
+    this._restOps = Array.isArray(detail?.operations) ? detail.operations : [];
+    const root = node || this.el;
+    const cnt = root.querySelector('.aw-tab[data-tab="rest"] .tab-count');
+    if (cnt) cnt.textContent = String(this._restOps.length);
+    const base = root.querySelector(".rest-base");
+    if (base) base.textContent = this.adapter.baseUrl || "";
+    const note = root.querySelector(".rest-note");
+    if (note) {
+      const err = detail?.specError || this.adapter.specError;
+      note.hidden = !err;
+      // spec が読めなくても raw タブは使えるので、 行き止まりにせず誘導する
+      if (err) note.textContent = `spec を読み込めませんでした: ${err} — raw タブから直接リクエストできます。`;
+    }
+    this._renderRestList();
+    this._renderRestSpecInfo();
+  }
+
+  _renderRestList() {
+    if (!this._restDom) return;
+    const { list } = this._restDom;
+    list.innerHTML = "";
+    const ops = this._restOps || [];
+    if (!ops.length) {
+      list.innerHTML = '<div class="tools-empty">no endpoints</div>';
+      return;
+    }
+    for (const op of ops) {
+      const argc = op.params.length + (op.body ? 1 : 0);
+      const acc = document.createElement("div");
+      acc.className = "tool-acc rest-op";
+      acc.dataset.op = op.id;
+      acc.dataset.search = `${op.method} ${op.path} ${op.summary} ${op.id}`.toLowerCase();
+      acc.innerHTML = `
+        <button type="button" class="tool-item">
+          <span class="rest-verb" data-m="${escapeHtml(op.method)}">${escapeHtml(op.method)}</span>
+          <span class="tool-item-main">
+            <span class="tool-item-name">${escapeHtml(op.path)}</span>
+            <span class="tool-item-desc">${escapeHtml(op.summary || op.description || "")}</span>
+          </span>
+          <span class="tool-item-tags">
+            ${argc ? `<span class="tool-tag">${argc} arg${argc === 1 ? "" : "s"}</span>`
+                   : `<span class="tool-tag is-noargs">no args</span>`}
+          </span>
+          <span class="tool-go" aria-hidden="true">▾</span>
+        </button>
+        <div class="tool-acc-body"><div class="tool-acc-inner"></div></div>
+      `;
+      list.appendChild(acc);
+    }
+  }
+
+  // アコーディオン body: 説明 + パラメータ (path/query/header) + body + Send + 結果
+  _buildRestOpBody(acc, op) {
+    const inner = acc.querySelector(".tool-acc-inner");
+    inner.innerHTML = "";
+    if (op.description || op.summary) {
+      const d = document.createElement("p");
+      d.className = "tool-form-desc";
+      d.textContent = op.description || op.summary;
+      inner.appendChild(d);
+    }
+    const fields = document.createElement("form");
+    fields.className = "tool-form-fields";
+    fields.addEventListener("submit", e => e.preventDefault());
+
+    for (const p of op.params) {
+      // in:body (Swagger 2) は body テキストエリアで扱うのでフォーム項目にはしない
+      if (p.in === "body") continue;
+      fields.appendChild(this._buildRestField(p));
+    }
+    if (op.body) {
+      const row = document.createElement("label");
+      row.className = "tool-field";
+      row.innerHTML = `<span class="tool-field-label">body${op.bodyRequired ? " *" : ""}</span>` +
+                      `<span class="tool-field-desc">${escapeHtml(op.bodyContentType || "application/json")}</span>`;
+      const ta = document.createElement("textarea");
+      ta.className = "tool-field-input rest-body-input";
+      ta.rows = 5;
+      ta.spellcheck = false;
+      ta.value = op.bodySample || "";
+      row.appendChild(ta);
+      fields.appendChild(row);
+    }
+    if (!fields.children.length) {
+      const note = document.createElement("p");
+      note.className = "tool-form-empty";
+      note.textContent = "(no parameters — Send directly)";
+      fields.appendChild(note);
+    }
+    inner.appendChild(fields);
+
+    // 実際に送る URL のプレビュー (入力に追随)
+    const preview = document.createElement("div");
+    preview.className = "rest-preview";
+    inner.appendChild(preview);
+    const refresh = () => { preview.textContent = `${op.method} ${this._restUrlFor(op, fields)}`; };
+    fields.addEventListener("input", refresh);
+    refresh();
+
+    const actions = document.createElement("div");
+    actions.className = "tool-acc-actions";
+    const run = document.createElement("button");
+    run.type = "button"; run.className = "tool-run"; run.textContent = "Send";
+    actions.appendChild(run);
+    inner.appendChild(actions);
+
+    const result = document.createElement("pre");
+    result.className = "tool-result";
+    result.hidden = true;
+    inner.appendChild(result);
+
+    run.addEventListener("click", () => this._runRestOp(op, fields, result));
+  }
+
+  _buildRestField(p) {
+    const row = document.createElement("label");
+    row.className = "tool-field";
+    const label = document.createElement("span");
+    label.className = "tool-field-label";
+    label.textContent = `${p.name}${p.required ? " *" : ""}`;
+    const desc = document.createElement("span");
+    desc.className = "tool-field-desc";
+    desc.textContent = [p.in, p.description].filter(Boolean).join(" · ");
+
+    let input;
+    if (Array.isArray(p.enum) && p.enum.length) {
+      input = document.createElement("select");
+      // 任意項目は空選択を許す (未入力なら送らない)
+      if (!p.required) input.appendChild(new Option("", ""));
+      for (const v of p.enum) input.appendChild(new Option(String(v), String(v)));
+    } else if (p.type === "integer" || p.type === "number") {
+      input = document.createElement("input");
+      input.type = "number";
+      if (p.type === "integer") input.step = "1";
+    } else if (p.type === "boolean") {
+      input = document.createElement("select");
+      input.appendChild(new Option("", ""));
+      input.appendChild(new Option("true", "true"));
+      input.appendChild(new Option("false", "false"));
+    } else {
+      input = document.createElement("input");
+      input.type = "text";
+    }
+    input.className = "tool-field-input";
+    input.dataset.name = p.name;
+    input.dataset.in   = p.in;
+    if (p.default !== "" && p.default != null) input.value = String(p.default);
+
+    row.appendChild(label);
+    row.appendChild(desc);
+    row.appendChild(input);
+    return row;
+  }
+
+  // フォームから { path, query, header, body } を集める
+  _restValues(fields) {
+    const v = { path: {}, query: {}, header: {}, body: undefined };
+    for (const el of fields.querySelectorAll(".tool-field-input")) {
+      if (el.classList.contains("rest-body-input")) { v.body = el.value; continue; }
+      const raw = el.value;
+      if (raw === "" || raw == null) continue;
+      const where = el.dataset.in;
+      if (where === "path" || where === "query" || where === "header") v[where][el.dataset.name] = raw;
+      else v.query[el.dataset.name] = raw;   // 未知の in は query 扱い
+    }
+    return v;
+  }
+
+  _restUrlFor(op, fields) {
+    try { return buildRestUrl(this.adapter.baseUrl, op, this._restValues(fields)); }
+    catch { return op.path; }
+  }
+
+  async _runRestOp(op, fields, result) {
+    result.hidden = false;
+    result.classList.remove("is-error");
+    result.textContent = "sending…";
+    try {
+      const out = await this.adapter.callOperation(op, this._restValues(fields));
+      this._showRestResult(result, out);
+    } catch (e) {
+      result.classList.add("is-error");
+      result.textContent = String(e?.message || e);
+    }
+  }
+
+  // status 行 + body。 JSON は syntaxJson で色付けし、 それ以外は生テキスト。
+  _showRestResult(pre, out) {
+    pre.classList.toggle("is-error", !out.ok);
+    const head = `${out.status} ${out.statusText || ""}  ·  ${out.ms}ms  ·  ${out.via}\n\n`;
+    let bodyHtml = "";
+    try {
+      bodyHtml = syntaxJson(JSON.parse(out.body));
+      pre.innerHTML = `<span class="rest-status-line">${escapeHtml(head)}</span>` + bodyHtml;
+      return;
+    } catch { /* not JSON */ }
+    pre.textContent = head + out.body;
+  }
+
+  _renderRestSpecInfo() {
+    const scroll = this.el.querySelector(".card-scroll");
+    if (!scroll) return;
+    const rows = [
+      `<dt>mode</dt><dd>raw HTTP</dd>`,
+      `<dt>base URL</dt><dd>${escapeHtml(this.adapter.baseUrl || "(未設定 — raw タブで完全な URL を入力)")}</dd>`
+    ];
+    scroll.innerHTML = `<dl class="card-dl">${rows.join("")}</dl>` +
+      `<p class="card-desc">メソッド / URL / ヘッダ / ボディを直接指定して送信します。` +
+      ` CORS を許可しているホストへは直接、 それ以外は /proxy 経由 (allowlist 内のみ) で送られます。</p>`;
+  }
+
+  // raw タブ: メソッド + URL + ヘッダ + ボディを素で送る
+  _wireRawPane(node) {
+    const pane = node.querySelector(".pane-raw");
+    if (!pane) return;
+    const methodEl = pane.querySelector(".raw-method");
+    const urlEl    = pane.querySelector(".raw-url");
+    const hdrEl    = pane.querySelector(".raw-headers");
+    const bodyEl   = pane.querySelector(".raw-body");
+    const statusEl = pane.querySelector(".raw-status");
+    const resEl    = pane.querySelector(".raw-result");
+
+    // 接続時に base URL を入れていれば初期値にする (毎回打ち直さなくて済む)。
+    // 末尾に "/" は足さない — 入力された URL が既に完全なエンドポイントのことがあり、
+    // 勝手に付けると別のパスを叩いてしまう。
+    const seed = () => { if (!urlEl.value && this.adapter.baseUrl) urlEl.value = this.adapter.baseUrl; };
+    this.adapter.addEventListener("open", seed);
+    if (this.adapter.state === "open") seed();
+
+    const send = async () => {
+      const url = urlEl.value.trim();
+      if (!url) return;
+      const headers = {};
+      for (const line of hdrEl.value.split("\n")) {
+        const i = line.indexOf(":");
+        if (i <= 0) continue;
+        headers[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+      }
+      statusEl.hidden = false; statusEl.textContent = "sending…"; statusEl.className = "raw-status";
+      resEl.hidden = false; resEl.textContent = "";
+      try {
+        const out = await this.adapter.rawRequest({
+          method: methodEl.value, url, headers, body: bodyEl.value
+        });
+        statusEl.textContent = `${out.status} ${out.statusText || ""}  ·  ${out.ms}ms  ·  ${out.via}`;
+        statusEl.className = "raw-status" + (out.ok ? " is-ok" : " is-error");
+        try { resEl.innerHTML = syntaxJson(JSON.parse(out.body)); }
+        catch { resEl.textContent = out.body; }
+      } catch (e) {
+        statusEl.textContent = String(e?.message || e);
+        statusEl.className = "raw-status is-error";
+      }
+    };
+    pane.querySelector(".raw-send")?.addEventListener("click", send);
+    urlEl.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); send(); } });
   }
 
   _renderMcpServerInfo(info, tools) {

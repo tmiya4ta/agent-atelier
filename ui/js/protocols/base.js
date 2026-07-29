@@ -37,6 +37,13 @@ export class ProtocolAdapter extends EventTarget {
   static get id() { return "base"; }
   static get label() { return "Base"; }
 
+  // ウインドウをフォーカスしたとき最初に開くタブ。 chat を持たない実装
+  // (MCP の tools, REST の endpoints 等) はここを上書きする。
+  // app.js が protoMode で分岐していると、 非チャット系を足すたびに
+  // 「サイドバーから開くと空の chat が出る」バグが再発するので、
+  // どのタブが主役かはプロトコル自身に宣言させる。
+  static get primaryTab() { return "chat"; }
+
   // helpers
   _emit(type, detail) { this.dispatchEvent(new CustomEvent(type, { detail })); }
   _setState(s)        { this.state = s; }

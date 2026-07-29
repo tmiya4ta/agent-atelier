@@ -19,6 +19,8 @@ import { ProtocolAdapter, headersToObj } from "./base.js";
 export class MCPAdapter extends ProtocolAdapter {
   static get id()    { return "mcp"; }
   static get label() { return "MCP"; }
+  // chat は隠して tools が主役 (window.js _setupMcpMode)
+  static get primaryTab() { return "tools"; }
 
   constructor(config) {
     super(config);

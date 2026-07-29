@@ -34,6 +34,11 @@
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"
           integrity="sha384-+VfUPEb0PdtChMwmBcBmykRMDd+v6D/oFmB3rZM/puCMDYcIvF968OimRh4KQY9a"
           crossorigin="anonymous"></script>
+  <!-- YAML パーサ — REST protocol の OpenAPI spec 用 (Exchange の OAS は YAML が多い)。
+       JSON spec だけなら不要だが、 読めないと endpoints タブが空になるので同梱する。 -->
+  <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"
+          integrity="sha384-+pxiN6T7yvpryuJmE1gM9PX7yQit15auDb+ZwwvJOd/4be2Cie5/IuVXgQb/S9du"
+          crossorigin="anonymous"></script>
 </head>
 <body>
   <!-- ───────────────  TOP RAIL  ─────────────── -->
@@ -1157,6 +1162,13 @@ clear
           <span class="tab-glyph">◈</span><span>tools</span>
           <span class="tab-count">0</span>
         </button>
+        <button class="aw-tab" data-tab="rest" hidden>
+          <span class="tab-glyph">◈</span><span>endpoints</span>
+          <span class="tab-count">0</span>
+        </button>
+        <button class="aw-tab" data-tab="raw" hidden>
+          <span class="tab-glyph">▤</span><span>raw</span>
+        </button>
         <button class="aw-tab" data-tab="settings">
           <span class="tab-glyph">○</span><span>settings</span>
         </button>
@@ -1239,6 +1251,37 @@ clear
             </div>
             <pre class="tool-result" hidden></pre>
           </div>
+        </section>
+
+        <!-- REST ENDPOINTS PANE (OpenAPI 由来の operation 一覧。 MCP tools と同じ
+             アコーディオン + 動的フォームの構造を流用する) -->
+        <section class="pane pane-rest" data-pane="rest">
+          <div class="rest-head">
+            <input class="rest-filter" type="search" placeholder="filter endpoints…" aria-label="filter endpoints" />
+            <span class="rest-base" title="requests are sent to this base URL"></span>
+          </div>
+          <div class="rest-note" hidden></div>
+          <div class="tools-list rest-list" aria-label="REST endpoints"></div>
+        </section>
+
+        <!-- REST RAW PANE (spec が無い / spec に載っていない endpoint を素で叩く) -->
+        <section class="pane pane-raw" data-pane="raw">
+          <div class="raw-form">
+            <div class="raw-line">
+              <select class="raw-method" aria-label="HTTP method">
+                <option>GET</option><option>POST</option><option>PUT</option>
+                <option>PATCH</option><option>DELETE</option><option>HEAD</option><option>OPTIONS</option>
+              </select>
+              <input class="raw-url" type="text" spellcheck="false" placeholder="https://api.example.com/v1/items" aria-label="request URL" />
+              <button type="button" class="raw-send">Send</button>
+            </div>
+            <label class="raw-label">headers <span class="raw-hint">1 行 1 個 · <code>Name: value</code></span></label>
+            <textarea class="raw-headers" rows="3" spellcheck="false" placeholder="Accept: application/json"></textarea>
+            <label class="raw-label">body</label>
+            <textarea class="raw-body" rows="6" spellcheck="false" placeholder='{ "key": "value" }'></textarea>
+          </div>
+          <div class="raw-status" hidden></div>
+          <pre class="raw-result" hidden></pre>
         </section>
 
         <!-- AGENT CARD PANE -->

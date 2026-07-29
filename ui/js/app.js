@@ -389,6 +389,10 @@ function wireSideResize() {
       document.body.style.cursor = "";
       document.body.classList.remove("is-resizing-side");
       dirty();
+      // 幅が変わるとウインドウ領域も変わるので、 snap ボタンと同じ fit を自動でかける。
+      // ドラッグ中ではなく確定時に 1 回だけ (move ごとに走らせると重い上に、
+      // 途中経過のレイアウトに引きずられて配置が壊れる)。
+      snapAfterSideResize();
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -402,7 +406,18 @@ function wireSideResize() {
     state.sidePanelW = SIDE_PANEL_W_DEF;
     applySidePanelW();
     dirty();
+    snapAfterSideResize();
   });
+}
+
+// サイドバー幅の変更を確定したあとに走らせる自動 snap。
+// applySidePanelW() は CSS 変数を書き換えるだけなので、 レイアウトが実際に
+// 反映されてから測りたい。 rAF 2 回で style 適用 → reflow を待ってから fit する。
+// ウインドウが 0 個 / 全部ピン留めのときは tileWindows 側が no-op になる。
+function snapAfterSideResize() {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    try { tileWindows("fit"); } catch (e) { console.warn("auto-snap after sidebar resize failed:", e); }
+  }));
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1022,6 +1037,9 @@ function renderBookmarks() {
   root.innerHTML = "";
   state._connExpanded = state._connExpanded || {};
   state.bookmarks = state.bookmarks || [];
+  // レジストリから外したプロトコル (agent / slack) の登録は、 クリックしても
+  // 接続できず操作不能なだけなので一覧から落とす。
+  state.bookmarks = state.bookmarks.filter(b => !!getProtocol(b.protoId));
 
   // 各 bookmark に対応する開いているウインドウを集計
   const winsByKey = new Map();
@@ -1184,9 +1202,10 @@ function renderBookmarks() {
       }
       if (wins.length > 0) {
         const { win, ws } = wins[0];
-        // MCP は chat タブを隠して tools が主役。フォーカス時に chat へ切り替えると
-        // A2A 風の空 chat が出てしまうので、MCP は tools に切り替える。それ以外は chat。
-        const primaryTab = win.protoMode === "mcp" ? "tools" : "chat";
+        // chat を持たないプロトコル (MCP=tools, REST=endpoints) でフォーカス時に
+        // chat へ切り替えると、 空の chat が出てしまう。 どのタブが主役かは
+        // adapter 自身に宣言させる (ProtocolAdapter.primaryTab)。
+        const primaryTab = win.adapter?.constructor?.primaryTab || "chat";
         if (ws.id !== state.activeWs) {
           switchWorkspace(ws.id);
           setTimeout(() => { win.focus(); win.switchTab(primaryTab); }, 50);
@@ -1231,8 +1250,8 @@ function renderBookmarks() {
             return;
           }
           // フォーカス (青く光る) した上で主タブを表示する。
-          // MCP は chat を隠して tools が主役なので tools に切り替える (chat だと空 chat が出る)。
-          const primaryTab = win.protoMode === "mcp" ? "tools" : "chat";
+          // どのタブが主役かは adapter 自身の宣言に従う (ProtocolAdapter.primaryTab)。
+          const primaryTab = win.adapter?.constructor?.primaryTab || "chat";
           if (!isActiveWs) {
             switchWorkspace(ws.id);
             setTimeout(() => { win.focus(); win.switchTab(primaryTab); }, 50);
@@ -4317,7 +4336,7 @@ function applyProtoSpecificFields() {
   const isMcp   = proto === "mcp";
   const isMock  = proto === "mock";
   const isDb    = proto === "db";
-  const isAgent = proto === "agent";
+  const isRest  = proto === "rest";
   // DB 専用フィールド (type / discover / database / user / password) の表示制御
   const dbFields = $("#dlgDbFields");
   if (dbFields) dbFields.hidden = !isDb;
@@ -4377,9 +4396,9 @@ function applyProtoSpecificFields() {
   const authField  = $("#dlgAuthRef")?.closest(".field");
   const testBtn    = $("#dlgTest");
   const advanced   = document.querySelector("#connectDialog .advanced");
-  if (urlLabel)  urlLabel.textContent  = isMock ? "agent name" : isAgent ? "mcp endpoint" : "discovery url";
+  if (urlLabel)  urlLabel.textContent  = isMock ? "agent name" : isRest ? "base url" : "discovery url";
   if (urlHint)   urlHint.textContent   = isMock ? "The name alone conveys the role (e.g. Credit Review / Fraud Detection / Incident)"
-                                                : isAgent ? "MCP endpoint (/mcp)。LLM(現状ダミー)が MCP tools を tool-use ループで実行"
+                                                : isRest ? "任意。 raw タブの初期値に入るだけで、 叩く先は raw タブで都度指定します"
                                                 : "A2A: base URL → AgentCard resolution / MCP: /mcp endpoint";
   if (urlPrefix) urlPrefix.textContent = isMock ? "name" : "url";
   // mock では display name 行・auth 行・test ボタン・advanced を畳む。
@@ -6654,6 +6673,22 @@ async function testDialog() {
           (tcount != null ? ` · ${tcount} table${tcount === 1 ? "" : "s"}` : "") +
           ` · ${ms}ms`);
       }
+    } else if (protoId === "rest") {
+      // REST は「その URL に GET して応答が返るか」を見るだけ。 base URL は任意入力で
+      // 404 等でも到達自体は確認できるので、 status は成否ではなく事実として出す。
+      const result = await testRest(url, auth, authHeaders);
+      const ms = Math.round(performance.now() - t0);
+      // proxyDenied = Atelier 自身の /proxy が allowlist で弾いた = 相手に届いていない。
+      // それ以外の非 2xx は「相手までは届いた」ので意味が違う。
+      const note = result.proxyDenied
+        ? `<br/><span class='dts-warn'>⚠ CORS が無いホストなので /proxy 経由になりましたが、 このホストは allowlist 外のため Atelier が拒否しました。 相手には届いていません。</span>`
+        : result.ok ? ""
+        : `<br/><span class='dts-warn'>相手までは届いています (base URL は任意なので、 実際のパスは raw タブで指定します)。</span>`;
+      setDialogTestStatus(result.ok ? "ok" : result.proxyDenied ? "err" : "warn",
+        `<span class='dts-dot'></span> ${result.status} ${escapeHtml(result.statusText || "")}` +
+        ` · via <code>${escapeHtml(result.via)}</code>` +
+        (result.contentType ? ` · <code>${escapeHtml(result.contentType.split(";")[0])}</code>` : "") +
+        ` · ${ms}ms` + note);
     } else {
       setDialogTestStatus("info", `Test for protocol <code>${escapeHtml(protoId)}</code> is not supported yet.`);
     }
@@ -6677,6 +6712,36 @@ function proxifyForTest(target) {
     if (t.origin === location.origin) return target;
   } catch { /* fallthrough */ }
   return `/proxy?url=${encodeURIComponent(target)}`;
+}
+
+// REST の接続テスト。 rest.js の _fetchText と同じ「直 fetch → だめなら /proxy」順序。
+// ここで adapter を作らないのは他プロトコルの test と揃えるため (接続は張らない)。
+async function testRest(url, auth, authHeaders) {
+  const headers = { Accept: "application/json, */*" };
+  if (auth) headers["Authorization"] = `Bearer ${auth}`;
+  if (authHeaders) Object.assign(headers, authHeaders);
+  // 403 は「相手が拒否」と「Atelier の /proxy が allowlist で弾いた」で意味が全く違う。
+  // 後者は相手に届いてすらいないので、 本文を見て区別できるようにする。
+  const pick = async (res, via) => {
+    const out = {
+      ok: res.ok, status: res.status, statusText: res.statusText, via,
+      contentType: res.headers.get("content-type") || "", proxyDenied: false
+    };
+    if (via === "proxy" && res.status === 403) {
+      try {
+        const body = await res.clone().text();
+        out.proxyDenied = body.includes("proxy denied");
+      } catch { /* 本文が読めなければ判定しない */ }
+    }
+    return out;
+  };
+  let sameOriginUrl = false;
+  try { sameOriginUrl = new URL(url, location.href).origin === location.origin; } catch { /* noop */ }
+  if (!sameOriginUrl) {
+    try { return await pick(await fetch(url, { headers }), "direct"); }
+    catch { /* CORS 等 → /proxy へ */ }
+  }
+  return await pick(await fetch(proxifyForTest(url), { headers }), sameOriginUrl ? "same-origin" : "proxy");
 }
 
 async function testMcp(endpoint, auth, authHeaders) {
@@ -6750,8 +6815,8 @@ async function submitDialog() {
   const dbDatabase = $("#dlgDbDatabase")?.value.trim() || undefined;
   const dbUser     = $("#dlgDbUser")?.value.trim() || undefined;
   const dbPassword = $("#dlgDbPassword")?.value || undefined;   // password は trim しない
-  if (!raw && state.selectedProto !== "agent") {
-    // Agent は url 不要 (window を先に開き、MCP は Settings で追加する)
+  if (!raw && state.selectedProto !== "rest") {
+    // REST は url 不要 (base URL は任意。 叩く先は raw タブで都度指定する)
     $("#dlgUrl").focus();
     return;
   }
@@ -6838,11 +6903,18 @@ async function connect({ protoId, url, name, auth, authRef, persona, channel, em
   // Agent は url 不要 — window を先に開き、MCP は Settings タブで追加する。
   // window/bookmark は (protoId, url) でキー化するので synthetic url を振る
   // (url 空だと全 Agent window が 1 キーに衝突し dedup/reconnect が誤動作する)。
-  if (protoId === "agent" && !url) {
-    url = `agent://local/${(crypto.randomUUID?.() || Math.random().toString(36).slice(2)).slice(0, 8)}`;
+  if (protoId === "rest" && !url) {
+    url = `rest://local/${(crypto.randomUUID?.() || Math.random().toString(36).slice(2)).slice(0, 8)}`;
   }
   const proto = getProtocol(protoId);
   if (!proto || !proto.AdapterClass) {
+    // 保存済みセッションの復元中は黙って飛ばす。 レジストリから外した
+    // プロトコル (agent / slack) の window が残っていると、 起動のたびに
+    // 「未対応」モーダルが窓の数だけ出てしまうため。
+    if (opts.restore || opts.skipDirty) {
+      console.warn(`skipping restore of unknown protocol: ${protoId} (${url || ""})`);
+      return false;
+    }
     await modalAlert({
       title:   "Protocol not supported yet",
       message: `The ${protoId} adapter is not implemented yet.`
