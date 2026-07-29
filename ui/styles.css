@@ -415,6 +415,23 @@ body.is-sidebar-collapsed .sidebar-toggle { color: var(--ink); }
   background: var(--ink);
   border-radius: 1px;
 }
+/* DnD: 移動中のタブは半透明 */
+.ws-tab.is-dragging { opacity: 0.45; cursor: grabbing; }
+/* DnD: drop hint — タブは横並びなので、 左半分 hover なら左端に、
+   右半分なら右端に縦の accent ライン (bookmark 一覧の横ラインと対になる)。
+   ::before は is-active の下線が使っているので ::after を使う。 */
+.ws-tab.drop-before::after,
+.ws-tab.drop-after::after {
+  content: "";
+  position: absolute;
+  top: 3px; bottom: 3px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+.ws-tab.drop-before::after { left: -3px; }
+.ws-tab.drop-after::after  { right: -3px; }
 
 .ws-tab-dot {
   width: 6px; height: 6px;
@@ -5733,7 +5750,12 @@ body { transition: background-color 0.25s ease, color 0.25s ease; }
 .tool-acc.is-open > .tool-acc-body { grid-template-rows: 1fr; }
 .tool-acc-inner { overflow: hidden; min-height: 0; }
 .tool-acc.is-open > .tool-acc-body > .tool-acc-inner { padding: 12px; }
-.tool-acc-inner > .tool-form-fields { margin: 0; }
+/* accordion の中では親 (.tool-acc-inner) が内容依存の高さなので、
+   .tool-form-fields の max-height:40% が「auto の 40%」という解決不能な指定になり、
+   ブラウザによっては数フィールドでも切り詰められる (2 args のうち 1 つしか見えない)。
+   ここは accordion 自体が伸び、 溢れれば tools pane 側がスクロールするので上限を外す。
+   40% の上限は pane 全体を使う form ビュー (result を必ず見せたい) 側の都合。 */
+.tool-acc-inner > .tool-form-fields { margin: 0; max-height: none; overflow-y: visible; }
 .tool-acc-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
 .tool-acc-inner .tool-result { flex: none; margin-top: 10px; }
 

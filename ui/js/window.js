@@ -345,9 +345,9 @@ export class AgentWindow {
       this._showReauthBanner(e.detail || {});
     });
 
-    // Agent: MCP サーバの add/remove/接続状態変化 → Settings の一覧を再描画
+    // Agent / A2A: MCP サーバの add/remove/接続状態変化 → Settings の一覧を再描画
     this.adapter.addEventListener("servers-changed", () => {
-      if (this.protoMode === "agent") this._renderSettings();
+      if (this.protoMode === "agent" || this.protoMode === "a2a") this._renderSettings();
     });
   }
 
@@ -1604,6 +1604,10 @@ export class AgentWindow {
         ${urlMismatch ? `<div class="set-warn">⚠ 参考: Discovery URL と Effective endpoint が異なります。 AgentCard の url フィールドに従い、 メッセージは Effective endpoint に送信されます (gateway/proxy 経由などで意図的に異なる場合もあります)。 意図しない場合はサーバ側で agent-card の url を見直してください。</div>` : ""}
         ` : ""}
         `}
+        ${this.protoMode === "a2a" ? `
+        <div class="set-row-sub" style="padding:8px 2px 4px;opacity:.75;">登録した MCP のツール一覧を、送信のたびに相手エージェントへ渡します (data part)。 エージェントが input-required + tool-call で呼び返してきたら、Atelier がここで実行して結果を送り返します。</div>
+        ${this._mcpServersSectionHtml()}
+        ` : ""}
         <div class="set-row" title="HTTP Authorization ヘッダに付ける bearer token。 connect ダイアログで指定したものが保存されています。">
           <div class="set-row-text">
             <div class="set-row-title">Authorization <span class="set-row-help" aria-hidden="true">?</span></div>

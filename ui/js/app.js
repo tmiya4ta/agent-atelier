@@ -837,7 +837,44 @@ function renderTabs() {
     if (ws.id === state.activeWs) tab.classList.add("is-active");
     if (ws.windows.length > 0)    tab.classList.add("has-windows");
     tab.dataset.wsId = ws.id;
-    tab.title = "Double-click to rename";
+    tab.title = "Double-click to rename · drag to reorder";
+    tab.draggable = true;
+
+    // ── DnD で並び替え (sidebar の bookmark と同じ方式。 ただしタブは横並びなので
+    //    hover 判定は左半分 / 右半分)。 rename 用の contentEditable と衝突しないよう、
+    //    編集中 (contentEditable=true) は draggable を切っておく — さもないと
+    //    テキスト選択のドラッグがタブ移動として拾われる。 ──
+    tab.addEventListener("dragstart", (e) => {
+      if (tab.querySelector(".ws-tab-name").isContentEditable) { e.preventDefault(); return; }
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/atelier-ws", ws.id);
+      tab.classList.add("is-dragging");
+    });
+    tab.addEventListener("dragend", () => {
+      tab.classList.remove("is-dragging");
+      document.querySelectorAll(".ws-tab").forEach(t => t.classList.remove("drop-before", "drop-after"));
+    });
+    tab.addEventListener("dragover", (e) => {
+      const id = e.dataTransfer.getData("text/atelier-ws") ||
+                 document.querySelector(".ws-tab.is-dragging")?.dataset.wsId;
+      if (!id || id === ws.id) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const rect = tab.getBoundingClientRect();
+      const before = (e.clientX - rect.left) < rect.width / 2;
+      tab.classList.toggle("drop-before", before);
+      tab.classList.toggle("drop-after",  !before);
+    });
+    tab.addEventListener("dragleave", () => tab.classList.remove("drop-before", "drop-after"));
+    tab.addEventListener("drop", (e) => {
+      e.preventDefault();
+      const fromId = e.dataTransfer.getData("text/atelier-ws") ||
+                     document.querySelector(".ws-tab.is-dragging")?.dataset.wsId;
+      const before = tab.classList.contains("drop-before");
+      tab.classList.remove("drop-before", "drop-after");
+      if (!fromId || fromId === ws.id) return;
+      reorderWorkspace(fromId, ws.id, before ? "before" : "after");
+    });
     tab.innerHTML = `
       <span class="ws-tab-dot"></span>
       <span class="ws-tab-name">${escapeHtml(ws.name)}</span>
@@ -861,6 +898,9 @@ function renderTabs() {
       if (e.target.closest(".ws-tab-close")) return;
       const nameEl = tab.querySelector(".ws-tab-name");
       nameEl.contentEditable = "true";
+      // draggable な祖先があるとブラウザは内部テキストの選択ドラッグを
+      // 要素のドラッグとして扱う。 編集中だけ外し、 commit で戻す。
+      tab.draggable = false;
       nameEl.focus();
       const range = document.createRange();
       range.selectNodeContents(nameEl);
@@ -869,6 +909,7 @@ function renderTabs() {
 
       const commit = () => {
         nameEl.contentEditable = "false";
+        tab.draggable = true;
         const v = nameEl.textContent.trim();
         if (v && v !== ws.name) renameWorkspace(ws.id, v);
         else nameEl.textContent = ws.name;
@@ -884,6 +925,20 @@ function renderTabs() {
     });
     root.appendChild(tab);
   });
+}
+
+// タブ (workspace) の並び替え。 state.workspaces の順序がそのままタブの並びで、
+// 保存時も同じ配列順で書き出されるので、 配列を並べ替えて再描画するだけでよい。
+function reorderWorkspace(fromId, targetId, where /* "before" | "after" */) {
+  const arr = state.workspaces;
+  const fromIdx = arr.findIndex(w => w.id === fromId);
+  if (fromIdx < 0) return;
+  const [moved] = arr.splice(fromIdx, 1);
+  const targetIdx = arr.findIndex(w => w.id === targetId);
+  if (targetIdx < 0) arr.push(moved);
+  else arr.splice(where === "before" ? targetIdx : targetIdx + 1, 0, moved);
+  dirty();
+  renderTabs();
 }
 
 function wireWsTabs() {

@@ -12,6 +12,7 @@
 //   ローカル(同一オリジン)のURLは直接fetch。
 
 import { ProtocolAdapter, headersToObj } from "./base.js";
+import { MCPAdapter }      from "./mcp.js";
 
 export class A2AAdapter extends ProtocolAdapter {
   static get id()    { return "a2a"; }
@@ -22,6 +23,14 @@ export class A2AAdapter extends ProtocolAdapter {
     this.endpoint = normalizeUrl(config.url);
     this.rpcUrl   = null;
     this.turn = 0;
+    // A2A window にも Agent window と同じ MCP 複数登録ができる。
+    // 送信時に tools/list をまとめて data part で相手エージェントへ渡し、
+    // エージェントが input-required + tool-call データで呼び返したら
+    // ここで実際に tools/call を実行して結果を次ターンとして送り返す
+    // (詳細は send()/_sendTurn() を参照)。
+    this._seed   = Array.isArray(config.mcpServers) ? config.mcpServers.slice() : [];
+    this.servers = [];   // [{ id, name, url, auth, authHeaders, mcp, tools, state, error }]
+    this._srvSeq = 0;
     // contextId — A2A 0.3 の会話 ID。 サーバ側で会話履歴 (memory) を保つ識別子。
     // 初回は null にしておき、 サーバから返ってきた contextId をそのまま使う。
     // (MAF broker のように「先に read、 無ければ 500」と実装された server を救うため。
@@ -87,10 +96,94 @@ export class A2AAdapter extends ProtocolAdapter {
       this._emit("open", { card: cached.card });
       // 裏で再検証 (失敗しても open は維持; card が更新されたら state.agentCard を差し替え)
       this._revalidateCard().catch(() => {});
+      await this._connectSeedServers();
       return;
     }
 
     await this._fetchCard({ emitOpen: true });
+    await this._connectSeedServers();
+  }
+
+  async _connectSeedServers() {
+    for (const s of this._seed) {
+      try { await this.addServer(s); } catch { /* keep going */ }
+    }
+  }
+
+  async disconnect() {
+    for (const s of this.servers) { try { await s.mcp?.disconnect(); } catch {} }
+    this.servers = [];
+    await super.disconnect();
+  }
+
+  abort() {
+    for (const s of this.servers) { try { s.mcp?.abort(); } catch {} }
+    super.abort();
+  }
+
+  // ─── MCP サーバの動的追加/削除 (Settings から呼ぶ。Agent window と同じ形) ───
+  async addServer({ url, auth, authHeaders, name } = {}) {
+    if (!url) throw new Error("url required");
+    const id  = `s${++this._srvSeq}`;
+    const rec = { id, name: name || hostLabel(url), url, auth: auth || undefined,
+                  authHeaders: authHeaders || undefined,
+                  mcp: null, tools: [], state: "connecting", error: null };
+    this.servers.push(rec);
+    this._emit("servers-changed", { servers: this.serverSummaries() });
+
+    try {
+      const mcp = new MCPAdapter({ url, auth: rec.auth, authHeaders: rec.authHeaders });
+      mcp.addEventListener("rpc", (e) => {
+        const d = e.detail || {};
+        this._emit("rpc", { ...d, method: `[${rec.name}] ${d.method || ""}` });
+      });
+      rec.mcp = mcp;
+      await mcp.connect();
+      rec.tools = Array.isArray(mcp.tools) ? mcp.tools : [];
+      rec.state = "open";
+    } catch (e) {
+      rec.state = "error";
+      rec.error = e?.message || String(e);
+    }
+    this._emit("servers-changed", { servers: this.serverSummaries() });
+    return rec.state;
+  }
+
+  async removeServer(id) {
+    const i = this.servers.findIndex(s => s.id === id);
+    if (i < 0) return;
+    const [rec] = this.servers.splice(i, 1);
+    try { await rec.mcp?.disconnect(); } catch {}
+    this._emit("servers-changed", { servers: this.serverSummaries() });
+  }
+
+  serverSummaries() {
+    return this.servers.map(s => ({
+      id: s.id, name: s.name, url: s.url, state: s.state, error: s.error,
+      toolCount: s.tools.length, hasAuth: !!(s.auth || s.authHeaders)
+    }));
+  }
+
+  serverConfigs() {
+    return this.servers.map(s => ({ name: s.name, url: s.url, auth: s.auth, authHeaders: s.authHeaders }));
+  }
+
+  // 全 MCP の tools を prefix 付き (mcp__<srvId>__<tool>) で集約。相手エージェントに
+  // そのまま JSON Schema として渡せる形 (name/description/input_schema)。
+  _allTools() {
+    const out = [];
+    for (const s of this.servers) {
+      if (s.state !== "open") continue;
+      for (const t of s.tools) {
+        out.push({
+          name:         `mcp__${s.id}__${t.name}`,
+          description:  `[${s.name}] ${t.description || ""}`,
+          input_schema: t.inputSchema || t.input_schema || { type: "object", properties: {} },
+          _srv: s.id, _base: t.name
+        });
+      }
+    }
+    return out;
   }
 
   async _fetchCard({ emitOpen = false } = {}) {
@@ -151,17 +244,25 @@ export class A2AAdapter extends ProtocolAdapter {
 
   // legacy (A2A 0.3 系, kind 判別子) / proto (A2A 1.0 正規スキーマ) いずれかの
   // message/send リクエスト body を組み立てる。
-  _buildMessageBody(reqId, text, legacyMethod, style) {
+  // extraData: 追加で乗せる data part の配列 (例: 登録済み MCP tools 一覧、tool 実行結果)。
+  _buildMessageBody(reqId, text, legacyMethod, style, extraData = []) {
+    const dataParts = extraData.map(d => style === "proto" ? { data: d } : { kind: "data", data: d });
     if (style === "proto") {
-      const message = { messageId: uuid(), role: "ROLE_USER", parts: [{ text }] };
+      const parts = [];
+      if (text) parts.push({ text });
+      parts.push(...dataParts);
+      const message = { messageId: uuid(), role: "ROLE_USER", parts };
       if (this.contextId) message.contextId = this.contextId;
       if (this.taskId) message.taskId = this.taskId;
       return { jsonrpc: "2.0", id: reqId, method: "SendMessage", params: { message, configuration: {} } };
     }
+    const parts = [];
+    if (text) parts.push({ kind: "text", text });
+    parts.push(...dataParts);
     const message = {
       kind: "message",                        // A2A 0.3+ で discriminator として必須
       role: "user",
-      parts: [{ kind: "text", text }],
+      parts,
       messageId: uuid()
     };
     if (this.contextId) message.contextId = this.contextId;
@@ -172,17 +273,46 @@ export class A2AAdapter extends ProtocolAdapter {
   async send(text, opts = {}) {
     if (this.state !== "open") throw new Error("not connected");
     await this._ensureFreshAuth();   // 期限切れトークンをここで更新
-    this.turn += 1;
-    const reqId = `req-${this.turn}`;
 
     const useStream = !!(opts.stream && this.agentCard?.capabilities?.streaming);
+    // 登録済み MCP サーバの URL 一覧 (+ 参考として現在分かっているツール一覧) を渡す。
+    // 実際の tools/list・tools/call は相手エージェントが直接 MCP サーバに対して行う
+    // (Atelier は仲介しない — Atelier はあくまで MCP サーバを紹介するだけ)。
+    const mcpServers = this.servers.filter(s => s.state === "open").map(s => ({ url: s.url, name: s.name }));
+    const tools = this._allTools();
+    const initialData = [];
+    if (mcpServers.length) initialData.push({ mcpServers });
+    if (tools.length) initialData.push({ tools });
+
+    const first = await this._postTurn(text, initialData, useStream);
+    if (!first) return; // streaming 経路は _postTurn 内で emit 済み
+
+    const { result, ac } = first;
+    this._trackTask(result);
+    const messages = collectMessages(result);
+    const delayMs = 400 + Math.random() * 600;
+    await new Promise((resolve, reject) => {
+      const t = setTimeout(resolve, delayMs);
+      ac.signal.addEventListener("abort", () => { clearTimeout(t); reject(new DOMException("aborted", "AbortError")); }, { once: true });
+    });
+    for (const m of messages) {
+      const txt = collectText(m);
+      if (txt) this._emit("message", { role: m.role || "agent", text: txt, final: true });
+    }
+  }
+
+  // 1 リクエスト分の送受信 (legacy↔proto 自動フォールバック込み)。 streaming の場合は
+  // _consumeSse に委譲して null を返す (呼び出し側はそこで打ち切る)。
+  async _postTurn(text, extraData, useStream) {
+    this.turn += 1;
+    const reqId = `req-${this.turn}`;
     const legacyMethod = useStream ? "message/stream" : "message/send";
 
     // style 判定: 既に分かっていればそれを使う。 未判定ならまず legacy で試し、
     // -32601 (Method not found) が返ってきたら proto で自動的に再送する (下記)。
     let style  = this._msgStyle || "legacy";
     let method = style === "proto" ? "SendMessage" : legacyMethod;
-    let body   = this._buildMessageBody(reqId, text, legacyMethod, style);
+    let body   = this._buildMessageBody(reqId, text, legacyMethod, style, extraData);
 
     const headers = {
       "Content-Type": "application/json",
@@ -208,6 +338,17 @@ export class A2AAdapter extends ProtocolAdapter {
 
     try {
       let res = await fetch(proxify(this.rpcUrl), { method: "POST", headers, body: JSON.stringify(body), signal: ac.signal });
+      // AgentCard の url を末尾スラッシュ無しで publish しているのに、 実際の
+      // listener は "<path>/" にしか無い server がある (Flex Gateway 経由の
+      // Mule アプリで実際に遭遇: スラッシュ無しは 404、 付ければ 200)。
+      // カードの url は信用して先に試し、 404 のときだけ 1 回だけ付けて再送する。
+      // 成功したら rpcUrl 自体を差し替え、 以降のターンは最初から正しい URL を使う。
+      if (res.status === 404 && !this.rpcUrl.endsWith("/")) {
+        const slashed = this.rpcUrl + "/";
+        this._emit("rpc", { dir: "err", method: `404 · ${method}`, raw: `${this.rpcUrl}\nretrying with trailing slash: ${slashed}` });
+        const res2 = await fetch(proxify(slashed), { method: "POST", headers, body: JSON.stringify(body), signal: ac.signal });
+        if (res2.ok) { this.rpcUrl = slashed; res = res2; }
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       // ── streaming (SSE) 経路 ───────────────────────────────
@@ -234,7 +375,7 @@ export class A2AAdapter extends ProtocolAdapter {
         style  = "proto";
         method = "SendMessage";
         headers.Accept = "application/json";
-        body = this._buildMessageBody(reqId, text, legacyMethod, style);
+        body = this._buildMessageBody(reqId, text, legacyMethod, style, extraData);
         this._emit("rpc", {
           dir: "out", method: `${method} (auto-retry: proto schema)`, headers, payload: body, raw: JSON.stringify(body, null, 2)
         });
@@ -260,26 +401,10 @@ export class A2AAdapter extends ProtocolAdapter {
         || result.message?.contextId
         || result.status?.contextId;
       if (ctx && !this.contextId) this.contextId = ctx;
-      // input-required の task なら taskId を継続保持する
+      // input-required の task なら taskId を継続保持する (ツール呼び出しループの継続にも使う)
       this._trackTask(result);
 
-      // A2A 0.3 互換: 応答が様々な形を取りうるため、テキストパートを掘り出す
-      const messages = collectMessages(result);
-      // LLM-like "thinking" delay: simulate think time before surfacing the reply
-      // (scriptRunner の `< Agent` wait もこの emit を待つので、順序が保たれる)
-      // 停止ボタンで中断できるよう、 signal abort で reject する race にする。
-      const delayMs = 1500 + Math.random() * 2000;
-      await new Promise((resolve, reject) => {
-        const t = setTimeout(resolve, delayMs);
-        ac.signal.addEventListener("abort", () => {
-          clearTimeout(t);
-          reject(new DOMException("aborted", "AbortError"));
-        }, { once: true });
-      });
-      for (const m of messages) {
-        const txt = collectText(m);
-        if (txt) this._emit("message", { role: m.role || "agent", text: txt, final: true });
-      }
+      return { result, ac };
     } catch (e) {
       if (e?.name === "AbortError") {
         this._emit("rpc", { dir: "err", method: `aborted · ${method}`, raw: "stopped by user" });
@@ -460,6 +585,11 @@ function candidateCardUrls(endpoint) {
 
 function shortPath(u) {
   try { return new URL(u).pathname; } catch { return u; }
+}
+
+function hostLabel(url) {
+  try { return new URL(/^https?:\/\//i.test(url) ? url : "https://" + url).host; }
+  catch { return url; }
 }
 
 function uuid() {

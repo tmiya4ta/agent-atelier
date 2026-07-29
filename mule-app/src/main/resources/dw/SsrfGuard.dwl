@@ -36,7 +36,8 @@ var ALLOW_SUFFIX = [
   "login.microsoftonline.com",  // Microsoft Entra ID OAuth2 token/authorize endpoint
   "fonts.googleapis.com",
   "fonts.gstatic.com",
-  "cdn.jsdelivr.net"
+  "cdn.jsdelivr.net",
+  "theorems.io"              // 自ドメイン配下の A2A/MCP デモエージェント (mcp-agent, customers 等)
 ]
 
 // "10" 等の各オクテットを Number 化 (非数なら -1)
