@@ -74,10 +74,15 @@ async function mcpRpc(url, sessionId, method, params, isNotification) {
   return { sessionId: newSessionId, result: data.result };
 }
 
+// SSE ボディから JSON-RPC 応答を取り出す。
+// 1 レスポンスを複数の data: フレームに分けて流すサーバがある
+// (customers-mcp の list_customers は 1 件ずつ {seq, of, customer} で送る)。
+// 最後のフレームだけ採ると件数が落ちるので、 result を持つフレームは全部集める。
+// 単一フレームなら従来どおりそのまま、 複数なら { streamed, frames } にまとめる。
 function parseSseJsonRpc(text) {
-  const frames = String(text || "").split(/\n\n+/);
-  let last = {};
-  for (const frame of frames) {
+  const results = [];
+  let errored = null, id;
+  for (const frame of String(text || "").split(/\n\n+/)) {
     let dataStr = "";
     for (const raw of frame.split("\n")) {
       const line = raw.replace(/\r$/, "");
@@ -86,10 +91,15 @@ function parseSseJsonRpc(text) {
     if (!dataStr) continue;
     try {
       const obj = JSON.parse(dataStr);
-      if (obj.result !== undefined || obj.error !== undefined) last = obj;
-    } catch { /* skip malformed frame */ }
+      if (obj.id !== undefined) id = obj.id;
+      if (obj.error !== undefined) errored = obj;
+      else if (obj.result !== undefined) results.push(obj.result);
+    } catch { /* 壊れたフレームは飛ばす */ }
   }
-  return last;
+  if (errored) return errored;
+  if (!results.length) return {};
+  if (results.length === 1) return { jsonrpc: "2.0", id, result: results[0] };
+  return { jsonrpc: "2.0", id, result: { streamed: true, count: results.length, frames: results } };
 }
 
 async function mcpListTools(url) {

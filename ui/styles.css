@@ -3540,6 +3540,37 @@ body.is-dark .agent-tag { color: #5BB8E8; }
   background: rgba(45,75,255, 0.06);
 }
 
+/* chat 下の MCP 追加ボタン。 capabilities と同じ pill で揃える
+   (同じ列に並ぶ「このウインドウについての操作」なので、 見た目も同格にする)。 */
+.compose-mcp {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 6px;
+  padding: 3px 9px 3px 7px;
+  font-family: var(--f-mono);
+  font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink-2);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.compose-mcp:hover { color: var(--accent); border-color: var(--accent); }
+.compose-mcp:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+/* 件数バッジ。 0 件のときは JS 側で hidden にする (無い情報は出さない)。 */
+.compose-mcp-count {
+  font-style: normal;
+  min-width: 15px; padding: 0 4px;
+  border-radius: 999px;
+  background: var(--line-2);
+  color: var(--ink-3);
+  font-size: calc(9px * var(--fs-mul, 1.1) * var(--fs, 1));
+  text-align: center;
+}
+.compose-mcp:hover .compose-mcp-count { background: var(--panel-soft); color: var(--accent); }
+
 /* chat-region: chat-scroll と caps-overlay を縦並び flex で内包。
    pane の高さの中で compose を除いた領域だけが overlay の対象になる
    (= 入力ボックスには絶対に被らない)。 */
@@ -3575,14 +3606,23 @@ body.is-dark .agent-tag { color: #5BB8E8; }
 
 /* Capabilities overlay: chat-region 内に絶対配置、 左からスライドイン + フェードイン。
    ガラス感は無し: ネイビーべた塗り + 不透明寄りで読みやすさ優先。 */
+/* ─── capabilities overlay ───────────────────────────────
+   相手エージェントの「素性 / できること / 今の結線」を読ませるパネル。
+   以前は rgba(0,22,74,.30) の薄被せで、 明るい chat が透けて白文字が読めなかった。
+   可読性の要点は「不透明にすること」なので、 色は独自の濃紺ではなくテーマ
+   トークン (--panel/--ink/--line) を使い、 light/dark にそのまま追従させる
+   (ここだけ暗いと UI の中で浮く)。
+   書体は mono 主体: 中身は仕様書なので、 その語彙に合わせる。 */
 .caps-overlay {
   position: absolute;
   left: 0; top: 0;
-  width: min(280px, 75%);
+  width: min(320px, 82%);
   height: 100%;
-  background: rgba(0, 22, 74, 0.30);
-  color: #ffffff;
-  border-right: 1px solid rgba(255,255,255, 0.10);
+  background: var(--panel);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  color: var(--ink);
+  border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
   z-index: 6;
@@ -3591,66 +3631,153 @@ body.is-dark .agent-tag { color: #5BB8E8; }
   transition: opacity 0.28s cubic-bezier(.2,.8,.2,1),
               transform 0.28s cubic-bezier(.2,.8,.2,1);
   pointer-events: none;
-  box-shadow: 4px 0 18px -8px rgba(0,22,74, 0.30);
+  box-shadow: 12px 0 30px -20px rgba(0,22,74, 0.35);
 }
-.caps-overlay.is-visible {
-  opacity: 1;
-  transform: translateX(0);
-  pointer-events: auto;
+.caps-overlay.is-visible { opacity: 1; transform: translateX(0); pointer-events: auto; }
+@media (prefers-reduced-motion: reduce) {
+  .caps-overlay { transition: opacity 0.01s linear; transform: none; }
+  .caps-overlay.is-visible { transform: none; }
 }
+
 .caps-overlay-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 4px 8px 4px 12px;
-  border-bottom: 1px solid rgba(255,255,255, 0.10);
+  padding: 7px 8px 7px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-soft);
   font-family: var(--f-mono);
-  font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1));
-  letter-spacing: 0.08em;
-  color: rgba(255,255,255, 0.78);
+  font-size: calc(9px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.16em;
+  color: var(--ink-4);
   text-transform: uppercase;
   min-height: 22px;
 }
 .caps-overlay-close {
-  width: 18px; height: 18px;
+  width: 20px; height: 20px;
   display: grid; place-items: center;
   border-radius: 3px;
-  color: rgba(255,255,255, 0.72);
+  color: var(--ink-3);
   background: transparent;
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
-.caps-overlay-close:hover {
-  background: rgba(255,255,255, 0.12);
-  color: #fff;
-}
+.caps-overlay-close:hover { background: var(--line-2); color: var(--ink); }
+.caps-overlay-close:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
 .caps-overlay-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px 14px 18px;
-  font-size: calc(12px * var(--fs-mul, 1.1) * var(--fs, 1));
-}
-.caps-skill-list {
-  display: flex; flex-direction: column;
-  gap: 4px;
-}
-.caps-skill-item {
+  flex: 1; overflow-y: auto;
+  padding: 14px 14px 20px;
   font-family: var(--f-mono);
+  font-size: calc(11px * var(--fs-mul, 1.1) * var(--fs, 1));
+  line-height: 1.55;
+}
+
+/* identity: ここだけ UI 書体で、 名前を主役にする */
+.caps-id { padding-bottom: 12px; border-bottom: 1px solid var(--line-2); }
+.caps-id-name {
+  font-family: var(--f-ui);
+  font-size: calc(14.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  font-weight: 600; letter-spacing: -0.01em;
+  color: var(--ink); word-break: break-word;
+}
+.caps-id-meta {
+  margin-top: 3px;
+  font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.08em; color: var(--accent-ink);
+}
+.caps-id-desc {
+  margin: 7px 0 0;
+  font-family: var(--f-ui);
   font-size: calc(11.5px * var(--fs-mul, 1.1) * var(--fs, 1));
-  color: rgba(255,255,255, 0.92);
-  padding: 5px 8px;
-  border-radius: 4px;
-  cursor: default;
-  transition: background 0.12s ease;
-  /* description が長くても overlay 幅に収まるように、 wrap + word-break。
-     ツールチップは title 属性で OS native のものを使う。 */
-  word-break: break-word;
+  color: var(--ink-3); word-break: break-word;
 }
-.caps-skill-item:hover { background: rgba(255,255,255, 0.10); }
-.caps-empty {
-  color: rgba(255,255,255, 0.7);
-  font-style: italic;
-  padding: 24px 0;
-  text-align: center;
+
+.caps-sec { padding: 12px 0; border-bottom: 1px solid var(--line-2); }
+.caps-sec:last-child { border-bottom: none; }
+.caps-sec-h {
+  margin: 0 0 7px;
+  font-size: calc(9px * var(--fs-mul, 1.1) * var(--fs, 1));
+  font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--ink-4);
 }
+.caps-sec-h em { font-style: normal; color: var(--ink-3); }
+
+/* key/value 行 */
+.caps-kv { display: flex; gap: 10px; align-items: baseline; padding: 1px 0; }
+.caps-kv > span { flex: 0 0 34px; color: var(--ink-4); }
+.caps-kv > b { font-weight: 500; color: var(--ink); word-break: break-all; }
+.caps-kv-url > b {
+  color: var(--ink-3);
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* signature: capability レジスタ。 A2A の capabilities は boolean の
+   ネゴシエーション結果なので、 有る物だけ並べるより ON/OFF を明示する。 */
+.caps-flags { display: flex; flex-direction: column; gap: 2px; }
+.caps-flag {
+  display: flex; align-items: center; gap: 9px;
+  padding: 3px 0;
+  color: var(--ink-4);
+}
+.caps-flag > i {
+  width: 6px; height: 6px; border-radius: 50%;
+  border: 1px solid currentColor; background: transparent;
+  flex: 0 0 auto;
+}
+.caps-flag > span { flex: 1; }
+.caps-flag > b {
+  font-weight: 500; font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.1em;
+}
+.caps-flag.is-on { color: var(--accent-ink); }
+.caps-flag.is-on > i { background: currentColor; }
+.caps-flag.is-on > span { color: var(--ink); }
+
+/* skills: 説明を隠さず出す (これが今回の主眼) */
+.caps-skills { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+.caps-skill { padding-left: 9px; border-left: 2px solid var(--line); }
+.caps-skill-name {
+  font-family: var(--f-ui); font-weight: 600;
+  font-size: calc(12px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink); word-break: break-word;
+}
+.caps-skill-desc {
+  margin-top: 2px;
+  font-family: var(--f-ui);
+  font-size: calc(11px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink-3); word-break: break-word;
+}
+.caps-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.caps-tag {
+  padding: 1px 6px; border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: calc(9px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.06em; color: var(--ink-4);
+}
+
+/* wiring: この window に繋いだ MCP サーバ */
+.caps-wires { display: flex; flex-direction: column; gap: 2px; }
+.caps-wire {
+  display: flex; align-items: center; gap: 9px; padding: 3px 0;
+  color: var(--ink-4);
+}
+.caps-wire > i {
+  width: 6px; height: 6px; border-radius: 50%;
+  border: 1px solid currentColor; flex: 0 0 auto;
+}
+.caps-wire > span {
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--ink-3);
+}
+.caps-wire > b { font-weight: 500; font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1)); }
+.caps-wire.is-on { color: var(--accent-ink); }
+.caps-wire.is-on > i { background: currentColor; }
+.caps-wire.is-on > span { color: var(--ink); }
+
+.caps-none, .caps-empty {
+  color: var(--ink-4);
+  font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+}
+.caps-empty { padding: 28px 0; text-align: center; }
 
 body.is-dark .compose-caps[aria-expanded="true"] {
   background: rgba(85,128,255, 0.12);
@@ -4149,6 +4276,38 @@ body.is-dark .dbg-body {
 .set-mcp-add:hover { color: var(--accent-ink); border-color: var(--accent); background: var(--paper); }
 .set-mcp-remove:hover { color: var(--caution); border-color: var(--caution); background: var(--paper); }
 .set-mcp-head .set-row-title { font-weight: 600; }
+
+/* 一覧は「MCP servers」見出しにぶら下がる子。 これまで通常の設定行と同じ字下げ・
+   同じ区切り線だったため、 次の Authorization と同階層に見えて境目が分からなかった。
+   字下げ + 左罫線で親子を明示し、 行間の区切り線は消してグループとして固める。 */
+.set-mcp-head { border-bottom: none; padding-bottom: 2px; }
+.set-mcp-list {
+  margin: 0 0 4px 10px;
+  padding-left: 12px;
+  border-left: 2px solid var(--line);
+}
+.set-mcp-row {
+  border-bottom: none;
+  padding: 6px 0;
+  gap: 10px;
+}
+.set-mcp-row + .set-mcp-row { border-top: 1px solid var(--line-2); }
+.set-mcp-row .set-row-title { font-weight: 500; }
+.set-mcp-row .set-row-sub {
+  font-family: var(--f-mono);
+  font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink-4);
+  word-break: break-all;
+}
+.set-mcp-empty { padding: 6px 0 !important; }
+/* 見出しの前に置く説明。 セクションの導入なので、 行ではなく地の文として置く。 */
+.set-mcp-note {
+  padding: 10px 2px 2px;
+  font-size: calc(11px * var(--fs-mul, 1.1) * var(--fs, 1));
+  line-height: 1.5;
+  color: var(--ink-4);
+}
+
 .mcp-st { font-size: 0.85em; margin-left: 6px; }
 .mcp-ok  { color: #14834A; }
 .mcp-err { color: var(--caution); }
@@ -6549,3 +6708,7 @@ body.is-dark .auth-gate-btn2 { background: var(--panel); color: var(--ink-2); }
   color: var(--ink); white-space: pre-wrap; word-break: break-word;
   overflow: auto; max-height: 55%;
 }
+
+/* Export ダイアログで、 名前欄の代わりに出す導入文
+   (保存先ダイアログが名前も扱うので、 ここでは何が起きるかだけ伝える)。 */
+.modal-hint-lead { margin: 0 0 4px; }

@@ -5783,11 +5783,51 @@ async function openImportPicker() {
   else if (choice === "file") $("#importFile").click();
 }
 
+// テキストを名前付きでローカルに保存する。
+// File System Access API があれば保存先を選ばせ (Chrome/Edge)、 無ければ従来どおり
+// <a download> でブラウザの既定ダウンロード先に落とす (Firefox/Safari)。
+// showSaveFilePicker は transient user activation を要求するので、 呼び出しは
+// ユーザー操作から続く同じタスクの中で行うこと (ここは Export クリックの続き)。
+async function saveTextAsFile(text, suggestedName) {
+  if (typeof window.showSaveFilePicker === "function") {
+    // AbortError (ダイアログを閉じた) は呼び出し側で握って無視する。
+    // それ以外の失敗 (権限拒否など) は下の従来手段へ落とす。
+    let handle;
+    try {
+      handle = await window.showSaveFilePicker({
+        suggestedName,
+        types: [{ description: "Atelier export (JSON)", accept: { "application/json": [".json"] } }]
+      });
+    } catch (e) {
+      if (e?.name === "AbortError") throw e;
+      handle = null;
+    }
+    if (handle) {
+      const w = await handle.createWritable();
+      await w.write(text);
+      await w.close();
+      return;
+    }
+  }
+  const blob = new Blob([text], { type: "application/json" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href = url; a.download = suggestedName;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
 function wireBackup() {
   $("#btnExport").addEventListener("click", async () => {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const defaultName = `atelier-export-${stamp}`;
-    const r = await modalExport({ title: "Name this export", defaultValue: defaultName });
+    // 保存先ダイアログが使えるなら、 名前は OS 側で入力させる (2 度手間を避ける)。
+    const nativePicker = typeof window.showSaveFilePicker === "function";
+    const r = await modalExport({
+      title: nativePicker ? "Export settings" : "Name this export",
+      defaultValue: defaultName,
+      askName: !nativePicker
+    });
     if (!r) return;
     const includeSecrets = !!r.includeSecrets;
     const safe = r.name.replace(/\.json$/i, "").replace(/[\\/:*?"<>|]+/g, "_").trim() || defaultName;
@@ -5823,16 +5863,9 @@ function wireBackup() {
       } else {
         json = persist.exportJson();
       }
-      const blob = new Blob([json], { type: "application/json" });
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement("a");
-      a.href     = url;
-      a.download = `${safe}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      await saveTextAsFile(json, `${safe}.json`);
     } catch (err) {
+      if (err?.name === "AbortError") return;   // 保存ダイアログを閉じただけ
       await modalAlert({ title: "Export failed", message: err?.message || String(err) });
     }
   });
@@ -6582,6 +6615,12 @@ function closeDialog() {
   $("#connectDialog").hidden = true;
   state._editingBookmarkKey = null;
   clearDialogTest();
+  // 新規 MCP 作成の待ち受けが残っていれば cancel 扱いで解放する
+  // (放置すると呼び出し側の await が永久に返らない)。
+  if (state._mcpRefReturn) {
+    const cb = state._mcpRefReturn; state._mcpRefReturn = null;
+    try { cb(null); } catch {}
+  }
 }
 
 // ダイアログの上端を「畳んだ状態がちょうど縦中央」になる位置に固定する。
@@ -6977,6 +7016,21 @@ async function connect({ protoId, url, name, auth, authRef, persona, channel, em
         list:    () => state.identities || [],
         badge:   (kind) => kindBadge(kind),
         resolve: (authRef) => resolveAuthForConnection({ authRef })
+      },
+      // A2A window の「MCP servers」で、 登録済みの MCP コネクションから選べるようにする。
+      // その場で URL を打つ使い捨て登録はやめ、 サイドバーの MCP コネクションを唯一の
+      // 供給元にする (同じサーバの URL / auth が二重管理になるのを避ける)。
+      mcpApi: {
+        list: () => (state.bookmarks || [])
+          .filter(b => b.protoId === "mcp")
+          .map(b => ({ key: b.key, url: b.url, name: b.name || hostFromUrl(b.url) || b.url })),
+        // 「+ 新規作成…」用。 通常の connect ダイアログを MCP で開き、 登録が終わったら
+        // その bookmark を返す (identity の __new__ と同じ流儀)。
+        create: () => new Promise((resolve) => {
+          state._mcpRefReturn = (b) => resolve(b || null);
+          state.selectedProto = "mcp";
+          openDialog();
+        })
       }
     });
   }
@@ -6988,6 +7042,12 @@ async function connect({ protoId, url, name, auth, authRef, persona, channel, em
   upsertBookmark({
     protoId, url, name, auth, authRef, persona, channel, emulate, mockTools, mockReply, database, user, password
   });
+  // A2A の「MCP servers」から "+ 新規作成…" で開かれていた場合、 出来上がった
+  // bookmark を呼び出し元へ返す (identity の _authRefReturn と同じ流儀)。
+  if (state._mcpRefReturn && protoId === "mcp") {
+    const cb = state._mcpRefReturn; state._mcpRefReturn = null;
+    try { cb((state.bookmarks || []).find(b => b.key === bookmarkKey("mcp", url)) || null); } catch {}
+  }
 
   renderTabs();
   renderBookmarks();

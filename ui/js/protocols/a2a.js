@@ -390,6 +390,12 @@ export class A2AAdapter extends ProtocolAdapter {
 
       if (data.error) throw new Error(`RPC error: ${data.error.message || data.error.code}`);
 
+      // 通った形式を記録する。 これまでは proto へフォールバックしたときしか
+      // 覚えておらず、 legacy がそのまま成功した場合は null のままだった。
+      // 判定済みなら次ターン以降そのまま使えるし、 capabilities の transport 表示も
+      // 「未判定」ではなく実際の形式を出せる。
+      this._msgStyle = style;
+
       // proto 応答は legacy と同じ内部形状 (kind/status.state 文字列/role 文字列) に正規化してから
       // 以降の処理 (collectMessages/collectText/_trackTask) に渡す。 これで下流は無改修で共用できる。
       const result = style === "proto" ? protoResultToLegacy(data.result) : (data.result || {});

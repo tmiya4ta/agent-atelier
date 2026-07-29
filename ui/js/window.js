@@ -21,7 +21,7 @@ function toolCategory(name) {
 }
 
 export class AgentWindow {
-  constructor({ adapter, layer, onClose, onFocus, onChange, instanceSuffix, restore, lockName, authApi }) {
+  constructor({ adapter, layer, onClose, onFocus, onChange, instanceSuffix, restore, lockName, authApi, mcpApi }) {
     this.id = `aw-${++idCounter}`;
     this.adapter = adapter;
     this.layer    = layer;
@@ -29,6 +29,7 @@ export class AgentWindow {
     this.onFocus  = onFocus;
     this.onChange = onChange;
     this.authApi  = authApi || null;   // settings の Authorization を identity から選ぶ用
+    this.mcpApi   = mcpApi  || null;   // A2A の MCP servers を登録済みコネクションから選ぶ用
     this.instanceSuffix = instanceSuffix || "";   // 重複ウインドウ用 " #2" など
     this.restore  = restore || null;
 
@@ -201,6 +202,13 @@ export class AgentWindow {
     const capsClose = node.querySelector(".caps-overlay-close");
     capsBtn.addEventListener("click", () => this._toggleCapsOverlay());
     capsClose.addEventListener("click", () => this._closeCapsOverlay());
+    // MCP 追加は A2A window でだけ意味がある (adapter に addServer がある場合)。
+    // Settings を開かずに、 会話しながら道具を足せるようにする。
+    const mcpBtn = node.querySelector(".compose-mcp");
+    if (mcpBtn && this.protoMode === "a2a" && typeof this.adapter.addServer === "function") {
+      mcpBtn.hidden = false;
+      mcpBtn.addEventListener("click", () => this.promptAddMcpServer());
+    }
     // 外側クリック (overlay の背景部) で閉じる挙動はなし — 入力中に消えると邪魔なので明示 close のみ。
     capsOverlay.addEventListener("click", (e) => e.stopPropagation());
 
@@ -350,7 +358,13 @@ export class AgentWindow {
 
     // Agent / A2A: MCP サーバの add/remove/接続状態変化 → Settings の一覧を再描画
     this.adapter.addEventListener("servers-changed", () => {
-      if (this.protoMode === "a2a") this._renderSettings();
+      if (this.protoMode !== "a2a") return;
+      this._renderSettings();
+      this._syncMcpBadge();
+      // capabilities を開いたまま追加したときに数が古いままにならないよう作り直す
+      if (this.el.querySelector(".caps-overlay")?.classList.contains("is-visible")) {
+        this._renderCapsOverlay();
+      }
     });
   }
 
@@ -593,6 +607,51 @@ export class AgentWindow {
     };
     ov.addEventListener("transitionend", onEnd);
   }
+  // chat 下 "mcp" ボタンの件数バッジ。 0 のときは出さない (無い情報を出さない)。
+  _syncMcpBadge() {
+    const el = this.el.querySelector(".compose-mcp-count");
+    if (!el) return;
+    const n = (this.adapter.serverSummaries?.() || []).length;
+    el.textContent = String(n);
+    el.hidden = n === 0;
+  }
+
+  // MCP サーバ追加ダイアログを出して adapter に足す。
+  // Settings の "+ add" と chat 下の "mcp" ボタンの両方から呼ばれる。
+  async promptAddMcpServer() {
+    // identity の一覧だけ渡す。 「no auth」「manual」の 2 つはダイアログ側が
+    // 常に先頭へ足すので、 ここでは入れない (二重に出てしまう)。
+    const authOptions = (this.authApi?.list?.() || []).map(idn =>
+      ({ value: idn.id, label: `${idn.name} · ${this.authApi.badge(idn.kind)}` }));
+    // 供給元は登録済みの MCP コネクション。 既に追加済みのものは選択肢から外す。
+    const already = new Set((this.adapter.serverSummaries?.() || []).map(s => s.url));
+    const servers = (this.mcpApi?.list?.() || []).filter(sv => !already.has(sv.url));
+    const res = await modalMcpAdd({
+      title: "Add MCP server", servers, authOptions,
+      onCreate: this.mcpApi?.create ? () => this.mcpApi.create() : null
+    });
+    if (!res || !res.url) return;
+    // 認証は 3 通り: 何もしない / manual (貼り付けた token をそのまま) /
+    // identity (毎回 resolve して自動更新)。 manual は authRef を持たないので
+    // res.auth をそのまま使う。
+    let auth = res.auth || undefined, authHeaders;
+    if (res.authRef && this.authApi?.resolve) {
+      try { const a = await this.authApi.resolve(res.authRef); auth = a?.auth; authHeaders = a?.authHeaders; }
+      catch (e) { console.warn("auth resolve failed:", e); }
+    }
+    try { await this.adapter.addServer?.({ url: res.url, auth, authHeaders }); }
+    catch (e) { console.warn("addServer failed:", e); }
+  }
+
+  // capabilities overlay — 「この相手は何者で / 何ができて / 今どう繋がっているか」を
+  // 1 画面で読ませる計器盤。 以前は skill 名を並べるだけで、 説明は OS の title 属性に
+  // 隠れていて実質読めなかった。 4 つのレジスタに分けて全部出す:
+  //   identity  … 名前 / version / protocol version
+  //   transport … 実際にネゴシエートされたワイヤー形式 + 送信先
+  //   flags     … capabilities の on/off (A2A は boolean のネゴシエーション結果なので、
+  //               「有る物だけ並べる」より on/off を明示した方が情報量が多い)
+  //   skills    … 名前 + 説明 + tag
+  //   wiring    … この window に登録済みの MCP サーバと tool 数
   _renderCapsOverlay() {
     const body = this.el.querySelector(".caps-overlay-body");
     if (!body) return;
@@ -601,19 +660,87 @@ export class AgentWindow {
       body.innerHTML = `<div class="caps-empty">agent card not loaded yet</div>`;
       return;
     }
-    const skills = card.skills || [];
-    if (!skills.length) {
-      body.innerHTML = `<div class="caps-empty">no skills declared</div>`;
-      return;
+    const esc = escapeHtml;
+    const out = [];
+
+    // ── identity ──
+    const meta = [card.version && `v${card.version}`, card.protocolVersion && `A2A ${card.protocolVersion}`]
+      .filter(Boolean).join("  ·  ");
+    out.push(`<div class="caps-id">
+        <div class="caps-id-name">${esc(card.name || "(no name)")}</div>
+        ${meta ? `<div class="caps-id-meta">${esc(meta)}</div>` : ""}
+        ${card.description ? `<p class="caps-id-desc">${esc(card.description)}</p>` : ""}
+      </div>`);
+
+    // ── transport ── 判定済みなら実測、 未送信なら「未判定」と正直に出す
+    const style = this.adapter._msgStyle;
+    const endpoint = this.adapter.rpcUrl || "";
+    if (endpoint || style !== undefined) {
+      const wire = style === "proto" ? "SendMessage · A2A 1.0 schema"
+                 : style === "legacy" ? "message/send · 0.3 schema"
+                 : "未判定 (最初の送信で確定)";
+      out.push(`<section class="caps-sec">
+          <h5 class="caps-sec-h">transport</h5>
+          <div class="caps-kv"><span>wire</span><b>${esc(wire)}</b></div>
+          ${endpoint ? `<div class="caps-kv caps-kv-url"><span>to</span><b title="${esc(endpoint)}">${esc(endpoint)}</b></div>` : ""}
+        </section>`);
     }
-    // skill 名だけ並べる。 description は title 属性 (OS native tooltip) で hover 時に表示。
-    body.innerHTML = `<div class="caps-skill-list">` +
-      skills.map(s => {
-        const name = s.name || s.id || "";
-        const desc = s.description || "";
-        return `<div class="caps-skill-item" title="${escapeHtml(desc)}">${escapeHtml(name)}</div>`;
-      }).join("") +
-      `</div>`;
+
+    // ── flags ── 宣言が無いものは OFF として扱う (spec 上の既定)
+    const cap = card.capabilities || {};
+    const flags = [
+      ["streaming",      !!cap.streaming],
+      ["push notify",    !!cap.pushNotifications],
+      ["state history",  !!cap.stateTransitionHistory]
+    ];
+    out.push(`<section class="caps-sec">
+        <h5 class="caps-sec-h">capabilities</h5>
+        <div class="caps-flags">${flags.map(([label, on]) =>
+          `<div class="caps-flag${on ? " is-on" : ""}">
+             <i aria-hidden="true"></i><span>${esc(label)}</span><b>${on ? "ON" : "OFF"}</b>
+           </div>`).join("")}</div>
+      </section>`);
+
+    // ── I/O modes ──
+    const inModes  = card.defaultInputModes  || [];
+    const outModes = card.defaultOutputModes || [];
+    if (inModes.length || outModes.length) {
+      out.push(`<section class="caps-sec">
+          <h5 class="caps-sec-h">i/o</h5>
+          ${inModes.length  ? `<div class="caps-kv"><span>in</span><b>${esc(inModes.join(", "))}</b></div>` : ""}
+          ${outModes.length ? `<div class="caps-kv"><span>out</span><b>${esc(outModes.join(", "))}</b></div>` : ""}
+        </section>`);
+    }
+
+    // ── skills ── 説明を隠さず出すのが今回の主眼
+    const skills = card.skills || [];
+    out.push(`<section class="caps-sec">
+        <h5 class="caps-sec-h">skills <em>${skills.length}</em></h5>
+        ${skills.length ? `<ul class="caps-skills">${skills.map(sk => `
+          <li class="caps-skill">
+            <div class="caps-skill-name">${esc(sk.name || sk.id || "")}</div>
+            ${sk.description ? `<div class="caps-skill-desc">${esc(sk.description)}</div>` : ""}
+            ${(sk.tags || []).length ? `<div class="caps-tags">${sk.tags.map(t =>
+               `<span class="caps-tag">${esc(t)}</span>`).join("")}</div>` : ""}
+          </li>`).join("")}</ul>`
+          : `<div class="caps-none">宣言されていません</div>`}
+      </section>`);
+
+    // ── wiring ── A2A window に登録した MCP サーバ (この相手が使える道具)
+    const servers = this.adapter.serverSummaries?.() || [];
+    if (servers.length) {
+      out.push(`<section class="caps-sec">
+          <h5 class="caps-sec-h">mcp servers <em>${servers.length}</em></h5>
+          <div class="caps-wires">${servers.map(sv => `
+            <div class="caps-wire${sv.state === "open" ? " is-on" : ""}">
+              <i aria-hidden="true"></i>
+              <span title="${esc(sv.url)}">${esc(sv.name)}</span>
+              <b>${sv.state === "open" ? `${sv.toolCount} tools` : esc(sv.state)}</b>
+            </div>`).join("")}</div>
+        </section>`);
+    }
+
+    body.innerHTML = out.join("");
   }
 
   // 入力履歴に push。 直前と同一なら重複しない。 上限超過分は先頭から落とす。
@@ -1616,7 +1743,7 @@ export class AgentWindow {
         ` : ""}
         `}
         ${this.protoMode === "a2a" ? `
-        <div class="set-row-sub" style="padding:8px 2px 4px;opacity:.75;">登録した MCP のツール一覧を、送信のたびに相手エージェントへ渡します (data part)。 エージェントが input-required + tool-call で呼び返してきたら、Atelier がここで実行して結果を送り返します。</div>
+        <div class="set-mcp-note">登録した MCP のツール一覧を、送信のたびに相手エージェントへ渡します。 実際の呼び出しはエージェント側が行います。</div>
         ${this._mcpServersSectionHtml()}
         ` : ""}
         <div class="set-row" title="HTTP Authorization ヘッダに付ける bearer token。 connect ダイアログで指定したものが保存されています。">
@@ -1686,23 +1813,9 @@ export class AgentWindow {
       });
     });
 
-    // Agent: MCP servers の add / remove (入力は modalPrompt = 再描画に巻き込まれない)
-    box.querySelector(".set-mcp-add")?.addEventListener("click", async () => {
-      // auth 選択肢: manual + identity 一覧 (接続ダイアログと同じ authApi)
-      const authOptions = [{ value: "", label: "manual (no auth)" }];
-      (this.authApi?.list?.() || []).forEach(idn =>
-        authOptions.push({ value: idn.id, label: `${idn.name} · ${this.authApi.badge(idn.kind)}` }));
-      const res = await modalMcpAdd({ title: "Add MCP server", authOptions });
-      if (!res || !res.url) return;
-      // identity を選んだら token/header を解決して addServer に渡す
-      let auth, authHeaders;
-      if (res.authRef && this.authApi?.resolve) {
-        try { const a = await this.authApi.resolve(res.authRef); auth = a?.auth; authHeaders = a?.authHeaders; }
-        catch (e) { console.warn("auth resolve failed:", e); }
-      }
-      try { await this.adapter.addServer?.({ url: res.url, auth, authHeaders }); }
-      catch (e) { console.warn("addServer failed:", e); }
-    });
+    // MCP servers の add / remove。 add は chat 下の "mcp" ボタンからも呼ぶので
+    // promptAddMcpServer() に切り出してある。
+    box.querySelector(".set-mcp-add")?.addEventListener("click", () => this.promptAddMcpServer());
     box.querySelectorAll(".set-mcp-remove").forEach(btn => {
       btn.addEventListener("click", async () => {
         try { await this.adapter.removeServer?.(btn.dataset.srv); } catch {}

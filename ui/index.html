@@ -1219,6 +1219,17 @@ clear
                 </svg>
                 <span>capabilities</span>
               </button>
+              <!-- MCP 追加: A2A window でだけ出す (window.js が hidden を外す)。
+                   Settings を開かなくても、 会話しながら道具を足せるようにする。 -->
+              <button class="compose-mcp" type="button" hidden
+                      title="Add an MCP server for this agent" aria-label="add MCP server">
+                <svg viewBox="0 0 14 14" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                  <line x1="7" y1="3" x2="7" y2="11"/>
+                  <line x1="3" y1="7" x2="11" y2="7"/>
+                </svg>
+                <span>mcp</span>
+                <em class="compose-mcp-count" hidden>0</em>
+              </button>
             </div>
             <div class="compose-row">
               <textarea class="compose-input" rows="1" placeholder="Type a message..."></textarea>
