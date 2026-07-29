@@ -278,7 +278,16 @@ export class A2AAdapter extends ProtocolAdapter {
     // 登録済み MCP サーバの URL 一覧 (+ 参考として現在分かっているツール一覧) を渡す。
     // 実際の tools/list・tools/call は相手エージェントが直接 MCP サーバに対して行う
     // (Atelier は仲介しない — Atelier はあくまで MCP サーバを紹介するだけ)。
-    const mcpServers = this.servers.filter(s => s.state === "open").map(s => ({ url: s.url, name: s.name }));
+    // 認証情報も渡す。 実際に tools/call するのは相手エージェントなので、 これが無いと
+    // 認証が必要な MCP サーバは「Atelier では一覧が見えるのにエージェントは呼べない」に
+    // なる。 ただし token を A2A メッセージに載せて相手へ送ることになるため、
+    // 信頼できるエージェントにだけ繋ぐこと (送信中は capabilities の該当行に "creds" と出る)。
+    const mcpServers = this.servers.filter(s => s.state === "open").map(s => {
+      const o = { url: s.url, name: s.name };
+      if (s.auth) o.auth = s.auth;
+      if (s.authHeaders && Object.keys(s.authHeaders).length) o.authHeaders = s.authHeaders;
+      return o;
+    });
     const tools = this._allTools();
     const initialData = [];
     if (mcpServers.length) initialData.push({ mcpServers });

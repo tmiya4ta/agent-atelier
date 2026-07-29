@@ -353,8 +353,12 @@ export function modalMcpAdd({ title, servers = [], authOptions = [], defaultAuth
     srvEl.addEventListener("change", async () => {
       if (srvEl.value !== "__new__") return;
       if (!onCreate) { srvEl.selectedIndex = 0; return; }
+      // 退避中は全面 backdrop がクリックを吸わないようにする。 CSS 側でも
+      // :not(.is-open) で切っているが、 ここでも明示しておく (取りこぼし防止)。
       wrap.classList.remove("is-open");
+      wrap.style.pointerEvents = "none";
       const created = await onCreate();
+      wrap.style.pointerEvents = "";
       wrap.classList.add("is-open");
       if (created && created.url) {
         const opt = document.createElement("option");

@@ -207,7 +207,28 @@ export class AgentWindow {
     const mcpBtn = node.querySelector(".compose-mcp");
     if (mcpBtn && this.protoMode === "a2a" && typeof this.adapter.addServer === "function") {
       mcpBtn.hidden = false;
-      mcpBtn.addEventListener("click", () => this.promptAddMcpServer());
+      // ボタンは一覧の開閉。 追加は一覧の中の + から (削除も一覧の × から)。
+      mcpBtn.addEventListener("click", (e) => { e.stopPropagation(); this._toggleMcpPop(); });
+      const pop = node.querySelector(".mcp-pop");
+      pop?.addEventListener("click", (e) => e.stopPropagation());
+      // 追加後は一覧を開いたままにする (足した結果をその場で確認したい)。
+      // 追加ダイアログ内のクリックは document まで伝播して外側クリック判定に
+      // 引っかかるため、 閉じられていても開き直す。
+      pop?.querySelector(".mcp-pop-add")?.addEventListener("click", async () => {
+        await this.promptAddMcpServer();
+        this._renderMcpPop();
+        pop.hidden = false;
+        this.el.querySelector(".compose-mcp")?.setAttribute("aria-expanded", "true");
+      });
+      // 一覧の × は行ごとに作り直されるので、 委譲で拾う
+      pop?.querySelector(".mcp-pop-list")?.addEventListener("click", async (e) => {
+        const btn = e.target.closest(".mcp-pop-del");
+        if (!btn) return;
+        try { await this.adapter.removeServer?.(btn.dataset.srv); } catch (err) { console.warn("removeServer failed:", err); }
+      });
+      // 外側クリックで閉じる (この window 内の他所を触ったときも閉じたい)
+      this._mcpPopAway = () => this._closeMcpPop();
+      document.addEventListener("click", this._mcpPopAway);
     }
     // 外側クリック (overlay の背景部) で閉じる挙動はなし — 入力中に消えると邪魔なので明示 close のみ。
     capsOverlay.addEventListener("click", (e) => e.stopPropagation());
@@ -361,6 +382,7 @@ export class AgentWindow {
       if (this.protoMode !== "a2a") return;
       this._renderSettings();
       this._syncMcpBadge();
+      if (!this.el.querySelector(".mcp-pop")?.hidden) this._renderMcpPop();
       // capabilities を開いたまま追加したときに数が古いままにならないよう作り直す
       if (this.el.querySelector(".caps-overlay")?.classList.contains("is-visible")) {
         this._renderCapsOverlay();
@@ -417,6 +439,8 @@ export class AgentWindow {
   close() {
     this._closeJwtMenu?.();        // 右クリックメニュー/popover が body に残らないように
     this._closeJwtPopover?.();
+    // document に付けた外側クリック監視を外す (window を閉じても残ると漏れる)
+    if (this._mcpPopAway) { document.removeEventListener("click", this._mcpPopAway); this._mcpPopAway = null; }
     this.adapter.disconnect?.();
     this.el.remove();
     this.onClose?.(this);
@@ -607,6 +631,39 @@ export class AgentWindow {
     };
     ov.addEventListener("transitionend", onEnd);
   }
+  // chat 下 "mcp" ボタンのポップオーバー (登録済み一覧 + 追加 + 削除)
+  _toggleMcpPop() {
+    const pop = this.el.querySelector(".mcp-pop");
+    if (!pop) return;
+    if (pop.hidden) { this._renderMcpPop(); pop.hidden = false; }
+    else pop.hidden = true;
+    this.el.querySelector(".compose-mcp")?.setAttribute("aria-expanded", String(!pop.hidden));
+  }
+  _closeMcpPop() {
+    const pop = this.el.querySelector(".mcp-pop");
+    if (!pop || pop.hidden) return;
+    pop.hidden = true;
+    this.el.querySelector(".compose-mcp")?.setAttribute("aria-expanded", "false");
+  }
+  _renderMcpPop() {
+    const list = this.el.querySelector(".mcp-pop-list");
+    if (!list) return;
+    const servers = this.adapter.serverSummaries?.() || [];
+    if (!servers.length) {
+      list.innerHTML = `<div class="mcp-pop-empty">まだ登録がありません。 + から追加できます。</div>`;
+      return;
+    }
+    list.innerHTML = servers.map(sv => `
+      <div class="mcp-pop-row${sv.state === "open" ? " is-on" : ""}">
+        <i aria-hidden="true"></i>
+        <span class="mcp-pop-name" title="${escapeHtml(sv.url)}">${escapeHtml(sv.name)}</span>
+        ${sv.hasAuth ? `<u class="mcp-pop-creds" title="このサーバの認証情報をエージェントへ渡しています">creds</u>` : ""}
+        <b class="mcp-pop-meta">${sv.state === "open" ? `${sv.toolCount} tools` : escapeHtml(sv.state)}</b>
+        <button type="button" class="mcp-pop-del" data-srv="${escapeHtml(sv.id)}"
+                title="Remove" aria-label="remove ${escapeHtml(sv.name)}">×</button>
+      </div>`).join("");
+  }
+
   // chat 下 "mcp" ボタンの件数バッジ。 0 のときは出さない (無い情報を出さない)。
   _syncMcpBadge() {
     const el = this.el.querySelector(".compose-mcp-count");
@@ -735,6 +792,7 @@ export class AgentWindow {
             <div class="caps-wire${sv.state === "open" ? " is-on" : ""}">
               <i aria-hidden="true"></i>
               <span title="${esc(sv.url)}">${esc(sv.name)}</span>
+              ${sv.hasAuth ? `<u class="caps-creds" title="このサーバの認証情報をエージェントへ渡しています">creds</u>` : ""}
               <b>${sv.state === "open" ? `${sv.toolCount} tools` : esc(sv.state)}</b>
             </div>`).join("")}</div>
         </section>`);

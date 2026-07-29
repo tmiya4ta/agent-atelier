@@ -1230,6 +1230,15 @@ clear
                 <span>mcp</span>
                 <em class="compose-mcp-count" hidden>0</em>
               </button>
+              <!-- 登録済み MCP の一覧。 mcp ボタンで開閉し、 行の × で外す。
+                   末尾の + から追加ダイアログへ。 -->
+              <div class="mcp-pop" hidden>
+                <div class="mcp-pop-head">
+                  <span class="mcp-pop-title">MCP servers</span>
+                  <button type="button" class="mcp-pop-add" title="Add MCP server" aria-label="add MCP server">+</button>
+                </div>
+                <div class="mcp-pop-list"></div>
+              </div>
             </div>
             <div class="compose-row">
               <textarea class="compose-input" rows="1" placeholder="Type a message..."></textarea>

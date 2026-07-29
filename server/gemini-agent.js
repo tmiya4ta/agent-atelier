@@ -84,12 +84,16 @@ function readBody(req) {
 
 // ─── MCP クライアント (Streamable HTTP。 mcp-agent.js と同じ最小実装) ───
 let mcpRpcSeq = 0;
-async function mcpRpc(url, sessionId, method, params, isNotification) {
+async function mcpRpc(url, sessionId, method, params, isNotification, auth) {
   const id = isNotification ? undefined : ++mcpRpcSeq;
   const body = isNotification ? { jsonrpc: "2.0", method, params }
                               : { jsonrpc: "2.0", id, method, params };
   const headers = { "Content-Type": "application/json", Accept: "application/json, text/event-stream" };
   if (sessionId) headers["Mcp-Session-Id"] = sessionId;
+  // 呼び出し元 (Atelier) から渡された MCP サーバの認証情報。 実際に tools/call するのは
+  // こちらなので、 これが無いと認証付き MCP サーバには繋げない。
+  if (auth?.auth) headers["Authorization"] = `Bearer ${auth.auth}`;
+  if (auth?.authHeaders) Object.assign(headers, auth.authHeaders);
   const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
   const newSessionId = res.headers.get("mcp-session-id") || sessionId;
   if (isNotification) return { sessionId: newSessionId, result: null };
@@ -126,16 +130,16 @@ function parseSseJsonRpc(text) {
   if (results.length === 1) return { jsonrpc: "2.0", id, result: results[0] };
   return { jsonrpc: "2.0", id, result: { streamed: true, count: results.length, frames: results } };
 }
-async function mcpListTools(url) {
+async function mcpListTools(url, auth) {
   const session = (await mcpRpc(url, null, "initialize", {
     protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "gemini-agent", version: "0.1.0" },
-  })).sessionId;
-  await mcpRpc(url, session, "notifications/initialized", {}, true);
-  const { result } = await mcpRpc(url, session, "tools/list", {});
+  }, false, auth)).sessionId;
+  await mcpRpc(url, session, "notifications/initialized", {}, true, auth);
+  const { result } = await mcpRpc(url, session, "tools/list", {}, false, auth);
   return { session, tools: Array.isArray(result?.tools) ? result.tools : [] };
 }
-async function mcpCallTool(url, session, name, args) {
-  const { result } = await mcpRpc(url, session, "tools/call", { name, arguments: args || {} });
+async function mcpCallTool(url, session, name, args, auth) {
+  const { result } = await mcpRpc(url, session, "tools/call", { name, arguments: args || {} }, false, auth);
   const content = result?.content?.[0]?.text;
   return { isError: !!result?.isError, content: content ?? JSON.stringify(result ?? {}) };
 }
@@ -145,7 +149,7 @@ async function gatherTools(mcpServers) {
   const out = [];
   for (const srv of mcpServers || []) {
     try {
-      const { session, tools } = await mcpListTools(srv.url);
+      const { session, tools } = await mcpListTools(srv.url, srv);
       out.push({ srv: { ...srv, session }, tools });
     } catch (e) {
       log(`tools/list failed for ${srv.url}: ${e.message}`);
@@ -372,7 +376,7 @@ async function runTurn(session, userText, toolsBySrv, contextId) {
         payload = { error: `unknown tool: ${call.name}` };
       } else {
         try {
-          const out = await mcpCallTool(hit.srv.url, hit.srv.session, hit.toolName, call.args || {});
+          const out = await mcpCallTool(hit.srv.url, hit.srv.session, hit.toolName, call.args || {}, hit.srv);
           // content は多くの MCP 実装で JSON 文字列。 パースできれば構造のまま渡す
           let parsed;
           try { parsed = JSON.parse(out.content); } catch { parsed = { text: out.content }; }

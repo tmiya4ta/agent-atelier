@@ -3525,7 +3525,7 @@ body.is-dark .agent-tag { color: #5BB8E8; }
   color: var(--ink-2);
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 5px;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
@@ -3553,7 +3553,7 @@ body.is-dark .agent-tag { color: #5BB8E8; }
   color: var(--ink-2);
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: 5px;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
@@ -3563,13 +3563,91 @@ body.is-dark .agent-tag { color: #5BB8E8; }
 .compose-mcp-count {
   font-style: normal;
   min-width: 15px; padding: 0 4px;
-  border-radius: 999px;
+  border-radius: 3px;
   background: var(--line-2);
   color: var(--ink-3);
   font-size: calc(9px * var(--fs-mul, 1.1) * var(--fs, 1));
   text-align: center;
 }
 .compose-mcp:hover .compose-mcp-count { background: var(--panel-soft); color: var(--accent); }
+
+/* mcp ボタンのポップオーバー: 登録済み一覧 + 追加(+) + 削除(×)。
+   compose-toolbar を基準に、 ボタンの上へ出す (下は入力欄で潰れるため)。 */
+.compose-toolbar { position: relative; }
+.mcp-pop {
+  position: absolute;
+  left: 0; bottom: calc(100% + 6px);
+  min-width: 260px; max-width: 380px;
+  z-index: 8;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px -12px rgba(0,22,74, 0.45);
+  overflow: hidden;
+}
+.mcp-pop-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 6px 6px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-soft);
+}
+.mcp-pop-title {
+  margin-right: auto;
+  font-family: var(--f-mono);
+  font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ink-4);
+}
+.mcp-pop-add {
+  width: 20px; height: 20px; display: grid; place-items: center;
+  border: 1px solid var(--line); border-radius: 4px;
+  background: var(--panel); color: var(--ink-3);
+  font-size: calc(13px * var(--fs-mul, 1.1) * var(--fs, 1)); line-height: 1;
+  cursor: pointer;
+}
+.mcp-pop-add:hover { color: var(--accent); border-color: var(--accent); }
+.mcp-pop-list { max-height: 220px; overflow-y: auto; }
+.mcp-pop-row {
+  display: flex; align-items: center; gap: 7px;
+  padding: 6px 6px 6px 10px;
+  color: var(--ink-4);
+  font-size: calc(11px * var(--fs-mul, 1.1) * var(--fs, 1));
+}
+.mcp-pop-row + .mcp-pop-row { border-top: 1px solid var(--line-2); }
+.mcp-pop-row > i {
+  width: 6px; height: 6px; border-radius: 50%;
+  border: 1px solid currentColor; flex: 0 0 auto;
+}
+.mcp-pop-row.is-on { color: var(--accent-ink); }
+.mcp-pop-row.is-on > i { background: currentColor; }
+.mcp-pop-name {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--ink);
+}
+.mcp-pop-meta {
+  font-weight: 500; flex: 0 0 auto;
+  font-family: var(--f-mono);
+  font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+}
+.mcp-pop-creds {
+  text-decoration: none; flex: 0 0 auto;
+  padding: 0 5px; border-radius: 3px;
+  border: 1px solid var(--caution, #B45B00); color: var(--caution, #B45B00);
+  font-size: calc(8.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+}
+.mcp-pop-del {
+  width: 18px; height: 18px; flex: 0 0 auto;
+  display: grid; place-items: center;
+  border: none; border-radius: 3px; background: transparent;
+  color: var(--ink-4); cursor: pointer; line-height: 1;
+  font-size: calc(13px * var(--fs-mul, 1.1) * var(--fs, 1));
+}
+.mcp-pop-del:hover { color: var(--caution, #B45B00); background: var(--line-2); }
+.mcp-pop-empty {
+  padding: 10px; color: var(--ink-4);
+  font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+}
 
 /* chat-region: chat-scroll と caps-overlay を縦並び flex で内包。
    pane の高さの中で compose を除いた領域だけが overlay の対象になる
@@ -3769,6 +3847,17 @@ body.is-dark .agent-tag { color: #5BB8E8; }
   color: var(--ink-3);
 }
 .caps-wire > b { font-weight: 500; font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1)); }
+/* 認証情報をエージェントへ渡しているサーバの目印。 資格情報が外に出ることは
+   黙って起こしてよい類ではないので、 一覧上で分かるようにしておく。 */
+.caps-creds {
+  text-decoration: none;
+  padding: 0 5px; border-radius: 999px;
+  border: 1px solid var(--caution, #B45B00);
+  color: var(--caution, #B45B00);
+  font-size: calc(8.5px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.06em;
+  flex: 0 0 auto;
+}
 .caps-wire.is-on { color: var(--accent-ink); }
 .caps-wire.is-on > i { background: currentColor; }
 .caps-wire.is-on > span { color: var(--ink); }
@@ -4921,6 +5010,10 @@ body.is-dark .tk-mock-text { color: #C8A85A; }
   transition: opacity 0.18s ease;
 }
 .modal-backdrop.is-open { opacity: 1; }
+/* 閉じ (or 一時退避) 中は透明なだけで DOM には残る。 z-index:200 の全面要素なので、
+   pointer-events を切らないと背後のダイアログのクリックを全部吸ってしまう
+   (MCP 追加 → 「+ 新規作成…」で接続ダイアログを出したとき操作不能になった)。 */
+.modal-backdrop:not(.is-open) { pointer-events: none; }
 /* 上固定 (中身が伸縮するダイアログ用。 中央寄せだと伸びた時に上がガタつくため) */
 .modal-backdrop.modal-top { place-items: start center; padding-top: 14vh; }
 
