@@ -454,8 +454,19 @@ function agentCard(base) {
     defaultOutputModes: ["text"],
     skills: [{
       id: "mcp-tool-use", name: "MCP ツール利用",
-      description: "渡された MCP サーバのツールを LLM が選んで呼び出し、結果を日本語で回答する。",
-      tags: ["mcp", "gemini", "function-calling"]
+      // examples は AgentSkill の任意フィールド (string[])。 Atelier は capabilities に
+      // 一覧を出し、 1 つを入力欄のゴーストとして Tab で確定できるようにしている。
+      // 何ができるかは接続された MCP サーバ次第なので、 ここの例は
+      // ハンズオン既定の構成 (Handson 3 の商品 MCP) を前提にした具体例にしている。
+      description: "渡された MCP サーバのツールを LLM が選んで呼び出し、結果を日本語で回答する。"
+                 + "何を答えられるかは接続された MCP サーバによって変わる (下の例は商品カタログを繋いだ場合)。",
+      tags: ["mcp", "gemini", "function-calling"],
+      examples: [
+        "どんな商品カテゴリがありますか？",
+        "Tシャツの一覧を見せて",
+        "一番安い商品はどれ？",
+        "50ドル以下のパンツを探して"
+      ]
     }]
   };
 }

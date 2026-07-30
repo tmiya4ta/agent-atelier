@@ -8,6 +8,10 @@ let zCounter = 10;
 let idCounter = 0;
 
 // MCP tool のカテゴリ別グリフ (read / write / other)
+// 入力欄の既定 placeholder。 AgentCard に skill examples があるときは
+// 一時的にその例へ差し替えるので、 戻す先をここに持つ (index.html と同値)。
+const DEFAULT_COMPOSE_PLACEHOLDER = "Type a message...";
+
 const TOOL_GLYPH = {
   read:  `<svg viewBox="0 0 16 16" width="13" height="13"><circle cx="3" cy="4" r="1" fill="currentColor"/><circle cx="3" cy="8" r="1" fill="currentColor"/><circle cx="3" cy="12" r="1" fill="currentColor"/><path d="M6 4h7M6 8h7M6 12h7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`,
   write: `<svg viewBox="0 0 16 16" width="13" height="13"><path d="M10.5 2.5 L13.5 5.5 L6 13 L3 13 L3 10 Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><line x1="9" y1="4" x2="12" y2="7" stroke="currentColor" stroke-width="1.3"/></svg>`,
@@ -153,6 +157,19 @@ export class AgentWindow {
         this._sendFromCompose();
         return;
       }
+      // Tab で、 placeholder に薄く出ている AgentCard の例を確定する。
+      // 入力欄が空でゴーストが出ているときだけ横取りする。 確定すると値が入って
+      // 空でなくなるので、 次の Tab は素通りしてフォーカス移動になる
+      // (キーボード操作の人を閉じ込めない)。 script の自動タイプ中は触らない。
+      if (e.key === "Tab" && !e.shiftKey && !ta.value && this._ghostExample
+          && !ta.classList.contains("is-autotyping")) {
+        e.preventDefault();
+        const text = this._ghostExample;
+        this._advanceGhostExample();      // 次に見せる例へ送る
+        this._setComposeValue(text);
+        this._syncGhostExample();
+        return;
+      }
       if (e.key === "ArrowUp" && !e.shiftKey && !e.ctrlKey && !e.altKey) {
         // カーソルが先頭行に居る時だけ履歴遡上 (複数行 textarea の編集を妨げない)
         const before = ta.value.slice(0, ta.selectionStart);
@@ -187,6 +204,8 @@ export class AgentWindow {
     ta.addEventListener("input", () => {
       ta.style.height = "auto";
       ta.style.height = Math.min(ta.scrollHeight, 140) + "px";
+      // 打ち始めたらゴーストを引っ込め、 空に戻したらまた出す
+      this._syncGhostExample();
     });
     this._sendBtn = sendBtn;
     this._busy = false;
@@ -777,6 +796,10 @@ export class AgentWindow {
           <li class="caps-skill">
             <div class="caps-skill-name">${esc(sk.name || sk.id || "")}</div>
             ${sk.description ? `<div class="caps-skill-desc">${esc(sk.description)}</div>` : ""}
+            ${/* examples は AgentSkill の任意フィールド。 宣言しないカードの方が多いので、
+                  無いときは行ごと出さない (skills 本体と違って "宣言されていません" も出さない)。 */
+              Array.isArray(sk.examples) && sk.examples.length ? `<ul class="caps-examples">${
+                sk.examples.map(x => `<li>${esc(String(x))}</li>`).join("")}</ul>` : ""}
             ${(sk.tags || []).length ? `<div class="caps-tags">${sk.tags.map(t =>
                `<span class="caps-tag">${esc(t)}</span>`).join("")}</div>` : ""}
           </li>`).join("")}</ul>`
@@ -822,6 +845,7 @@ export class AgentWindow {
     ta.style.height = Math.min(ta.scrollHeight, 140) + "px";
     const end = ta.value.length;
     ta.setSelectionRange(end, end);
+    this._syncGhostExample();
   }
 
   // Script から呼び出される。chat-stream を空にする + adapter の contextId を reroll
@@ -1321,8 +1345,50 @@ export class AgentWindow {
   // ───────────────────────────────────────────
   // Card
   // ───────────────────────────────────────────
+  // ── AgentCard の skill examples を入力欄のゴーストに出す ──────────────
+  // AgentSkill.examples (任意 · string[]) を全 skill から集める。 宣言していない
+  // カードの方が多いので、 空なら既定の placeholder のままにして何も足さない。
+  _ghostExamples() {
+    const skills = this.adapter?.agentCard?.skills || [];
+    return skills.flatMap(sk => Array.isArray(sk.examples) ? sk.examples : [])
+                 .map(x => String(x).trim()).filter(Boolean);
+  }
+
+  // Tab で確定するたびに次の例へ送る。 1 つだけ出し続けるより、
+  // 何回か押せば何ができるエージェントか伝わる。
+  _advanceGhostExample() {
+    const n = this._ghostExamples().length;
+    if (n) this._ghostIdx = ((this._ghostIdx || 0) + 1) % n;
+  }
+
+  // placeholder と <kbd>Tab</kbd> ヒントを現在の状態に合わせる。
+  // ゴーストを出すのは「例がある · 入力欄が空 · 自動タイプ中でない」ときだけ。
+  _syncGhostExample() {
+    const ta = this.el.querySelector(".compose-input");
+    if (!ta) return;
+    const ex = this._ghostExamples();
+    const on = ex.length > 0 && !ta.value && !ta.classList.contains("is-autotyping");
+    this._ghostExample = on ? ex[(this._ghostIdx || 0) % ex.length] : null;
+    ta.placeholder = this._ghostExample || DEFAULT_COMPOSE_PLACEHOLDER;
+    ta.classList.toggle("has-ghost", !!this._ghostExample);
+    // Tab が効くことは押す前には分からないので、 既存のキーヒント行に出す。
+    const hint = this.el.querySelector(".compose-meta-keys");
+    if (hint) {
+      const tabHint = hint.querySelector(".cm-tab-hint");
+      if (this._ghostExample && !tabHint) {
+        const span = document.createElement("span");
+        span.className = "cm-tab-hint";
+        span.innerHTML = ` &nbsp;<kbd>Tab</kbd> 例を入れる`;
+        hint.appendChild(span);
+      } else if (!this._ghostExample && tabHint) {
+        tabHint.remove();
+      }
+    }
+  }
+
   _renderCard(card) {
     if (!card) return;   // adapter が agent-card を発行しない (e.g., MCP) ときはスキップ
+    this._syncGhostExample();   // card が来て初めて examples が分かる
     const box = this.el.querySelector(".card-scroll");
     const initial = (card.name || "?").charAt(0).toUpperCase();
 
