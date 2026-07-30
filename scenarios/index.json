@@ -19,14 +19,14 @@
       "id": "AI-Workshop-Step2",
       "url": "/scenarios/AI-Workshop-Step2.json",
       "name": "AI Workshop — Step 2",
-      "description": "IT プロビジョニング / オフィスコンシェルジュ / 社員 MCP サーバー",
+      "description": "IT プロビジョニング / オフィスコンシェルジュ / 社員 MCP サーバー / Onboarding Broker",
       "counts": {
         "workspaces": 2,
-        "bookmarks": 3,
+        "bookmarks": 4,
         "scripts": 0,
         "identities": 0
       },
-      "exportedAt": "2026-07-29T01:56:48.295Z",
+      "exportedAt": "2026-07-30T15:24:50.910Z",
       "order": 20
     }
   ]
