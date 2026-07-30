@@ -1,0 +1,102 @@
+{
+  "app": "atelier",
+  "exportedAt": "2026-07-29T01:56:48.295Z",
+  "includesSecrets": false,
+  "state": {
+    "v": 1,
+    "zoom": 1,
+    "sidebarCollapsed": false,
+    "sidePanelW": 419,
+    "theme": "light",
+    "activeSideCat": "connections",
+    "identities": [],
+    "catalogs": [],
+    "scripts": [],
+    "selectedScriptId": null,
+    "scriptPinned": false,
+    "bookmarks": [
+      {
+        "key": "a2a::https://fgw-for-non-broker-app-apacj-egl8ul.zm3ejw.usa-e2.cloudhub.io/maf-my-it-provisioning-agent",
+        "protoId": "a2a",
+        "url": "https://fgw-for-non-broker-app-apacj-egl8ul.zm3ejw.usa-e2.cloudhub.io/maf-my-it-provisioning-agent",
+        "name": "ITプロビジョニング"
+      },
+      {
+        "key": "a2a::https://fgw-for-non-broker-app-apacj-egl8ul.zm3ejw.usa-e2.cloudhub.io/maf-my-office-concierge-agent/",
+        "protoId": "a2a",
+        "url": "https://fgw-for-non-broker-app-apacj-egl8ul.zm3ejw.usa-e2.cloudhub.io/maf-my-office-concierge-agent/",
+        "name": "オフィスコンシェルジュ"
+      },
+      {
+        "key": "mcp::https://fgw-for-non-broker-app-apacj-egl8ul.zm3ejw.usa-e2.cloudhub.io/maf-my-employee-db-mcp/mcp",
+        "protoId": "mcp",
+        "url": "https://fgw-for-non-broker-app-apacj-egl8ul.zm3ejw.usa-e2.cloudhub.io/maf-my-employee-db-mcp/mcp",
+        "name": "社員MCPサーバー"
+      }
+    ],
+    "closedWindows": [],
+    "activeWsIdx": 1,
+    "workspaces": [
+      {
+        "name": "Step2-Brokerなし",
+        "windows": [
+          {
+            "protoId": "a2a",
+            "config": {
+              "url": "https://fgw-for-non-broker-app-apacj-egl8ul.zm3ejw.usa-e2.cloudhub.io/maf-my-it-provisioning-agent",
+              "name": "ITプロビジョニング",
+              "auth": ""
+            },
+            "pos": {
+              "left": "972px",
+              "top": "16px",
+              "width": "465px",
+              "height": "787px",
+              "zIndex": "13"
+            },
+            "activeTab": "chat",
+            "pinned": false
+          },
+          {
+            "protoId": "a2a",
+            "config": {
+              "url": "https://fgw-for-non-broker-app-apacj-egl8ul.zm3ejw.usa-e2.cloudhub.io/maf-my-office-concierge-agent/",
+              "name": "オフィスコンシェルジュ",
+              "auth": ""
+            },
+            "pos": {
+              "left": "494px",
+              "top": "16px",
+              "width": "462px",
+              "height": "787px",
+              "zIndex": "38"
+            },
+            "activeTab": "chat",
+            "pinned": false
+          },
+          {
+            "protoId": "mcp",
+            "config": {
+              "url": "https://fgw-for-non-broker-app-apacj-egl8ul.zm3ejw.usa-e2.cloudhub.io/maf-my-employee-db-mcp/mcp",
+              "name": "社員MCPサーバー",
+              "auth": ""
+            },
+            "pos": {
+              "left": "16px",
+              "top": "16px",
+              "width": "462px",
+              "height": "787px",
+              "zIndex": "28"
+            },
+            "activeTab": "tools",
+            "pinned": false
+          }
+        ]
+      },
+      {
+        "name": "Step2-Brokerあり",
+        "windows": []
+      }
+    ]
+  }
+}

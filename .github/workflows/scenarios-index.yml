@@ -1,0 +1,51 @@
+# scenarios/*.json を追加・更新・削除したら scenarios/index.json を作り直して commit する。
+#
+# Atelier UI の Import → Repository は GitHub raw から index.json を直接読むので、
+# ここで push された時点で (再デプロイなしに) 一覧へ反映される。
+name: scenarios index
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scenarios/**"
+      # 自分が書き戻した index.json で再トリガーされないようにする。
+      # no-op ガード (下の git diff --quiet) と二重に効かせておく。
+      - "!scenarios/index.json"
+      - "tools/gen-scenarios-index.mjs"
+      - ".github/workflows/scenarios-index.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scenarios-index
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Regenerate index
+        run: node tools/gen-scenarios-index.mjs
+
+      - name: Commit if changed
+        run: |
+          # 中身が同じなら何も push しない。 これが無いと空 commit が積み上がり、
+          # push トリガーのループになりうる。
+          if git diff --quiet -- scenarios/index.json; then
+            echo "index.json は最新 — commit なし"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scenarios/index.json
+          git commit -m "chore(scenarios): index.json を再生成"
+          git push

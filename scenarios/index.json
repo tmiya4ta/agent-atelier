@@ -1,0 +1,31 @@
+{
+  "v": 1,
+  "items": [
+    {
+      "id": "AI-Workshop-Step1",
+      "url": "/scenarios/AI-Workshop-Step1.json",
+      "name": "AI Workshop Step1",
+      "description": "4 workspaces, 4 connections",
+      "counts": {
+        "workspaces": 4,
+        "bookmarks": 4,
+        "scripts": 0,
+        "identities": 0
+      },
+      "exportedAt": "2026-07-30T02:33:19.464Z"
+    },
+    {
+      "id": "AI-Workshop-Step2",
+      "url": "/scenarios/AI-Workshop-Step2.json",
+      "name": "AI Workshop Step2",
+      "description": "2 workspaces, 3 connections",
+      "counts": {
+        "workspaces": 2,
+        "bookmarks": 3,
+        "scripts": 0,
+        "identities": 0
+      },
+      "exportedAt": "2026-07-29T01:56:48.295Z"
+    }
+  ]
+}

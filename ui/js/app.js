@@ -6105,21 +6105,45 @@ async function importFromRepositoryFlow() {
   // snapshot 選択 + "Scenarios only" チェックボックスを 1 ダイアログにまとめる。
   // チェック ON → scenarios のみ merge / OFF → everything 置換。
   // これで scope を聞く 2 つ目のダイアログ (chooseImportScope) を省略でき、 クリック数が減る。
+  //
+  // ただし index.json の counts.scripts が 0 のスナップショット (workspace と
+  // connection だけのもの) は "Scenarios only" では取り込めない。 どの item にも
+  // scenario が無いならチェックボックス自体を出さず、 「これは workspace を読む
+  // 操作だ」とダイアログに正直に書く。
+  const hasScenarios = (it) => !it.counts || it.counts.scripts > 0;
+  const anyScenarios = items.some(hasScenarios);
   const result = await modalChoice({
     title:   "Import from repository",
-    message: "Pick a snapshot to import.",
+    message: anyScenarios
+      ? "Pick a snapshot to import."
+      : "Pick a snapshot to import. These replace your current connections and workspaces.",
     choices: items.map(it => ({
       id:          it.url,
       label:       it.name || it.id || it.url,
       description: it.description || it.url
     })),
-    extras: [
-      { id: "scriptsOnly", label: "Scenarios only", description: "Merge scenarios only — keep current connections, no reload", defaultChecked: true }
-    ]
+    extras: anyScenarios
+      ? [{ id: "scriptsOnly", label: "Scenarios only", description: "Merge scenarios only — keep current connections, no reload", defaultChecked: true }]
+      : []
   });
   const pick = result?.id;
   if (!pick) return;
-  const scope = result?.extras?.scriptsOnly ? "scripts" : "all";
+  let scope = result?.extras?.scriptsOnly ? "scripts" : "all";
+  // 混在インデックスで「Scenarios only」を選んだのに、 選ばれた item に scenario が
+  // 無いケース。 黙って "all" に格上げすると現在の接続を消してしまうので確認する。
+  if (scope === "scripts") {
+    const picked = items.find(it => it.url === pick);
+    if (picked && !hasScenarios(picked)) {
+      const proceed = await modalConfirm({
+        title:        "No scenarios in this snapshot",
+        message:      `"${picked.name || picked.id}" contains no scenarios. Importing it replaces your current connections and workspaces.\n\nContinue?`,
+        confirmLabel: "Replace everything",
+        danger:       true
+      });
+      if (!proceed) return;
+      scope = "all";
+    }
+  }
   try {
     const fetchUrl = resolveScenarioUrl(pick, repoBase);
     const res = await fetch(fetchUrl, { headers: { Accept: "application/json" }, cache: "no-store" });

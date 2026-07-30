@@ -1,0 +1,136 @@
+{
+  "app": "atelier",
+  "exportedAt": "2026-07-30T02:33:19.464Z",
+  "includesSecrets": false,
+  "state": {
+    "v": 1,
+    "zoom": 1,
+    "sidebarCollapsed": false,
+    "sidePanelW": 382,
+    "theme": "light",
+    "activeSideCat": "connections",
+    "identities": [],
+    "catalogs": [],
+    "scripts": [],
+    "selectedScriptId": null,
+    "scriptPinned": false,
+    "bookmarks": [
+      {
+        "key": "rest::https://apparel-products-api-ogvvk5.m7ad1b.jpn-e1.cloudhub.io/api/products",
+        "protoId": "rest",
+        "url": "https://apparel-products-api-ogvvk5.m7ad1b.jpn-e1.cloudhub.io/api/products",
+        "name": "Handson 1"
+      },
+      {
+        "key": "rest::https://step1-gw-ogvvk5.m7ad1b.jpn-e1.cloudhub.io/dsol00/products",
+        "protoId": "rest",
+        "url": "https://step1-gw-ogvvk5.m7ad1b.jpn-e1.cloudhub.io/dsol00/products",
+        "name": "Handson 2"
+      },
+      {
+        "key": "mcp::https://step1-gw-ogvvk5.m7ad1b.jpn-e1.cloudhub.io/ws00-mcp/mcp",
+        "protoId": "mcp",
+        "url": "https://step1-gw-ogvvk5.m7ad1b.jpn-e1.cloudhub.io/ws00-mcp/mcp",
+        "name": "Handson 3"
+      },
+      {
+        "key": "a2a::https://theorems-relay-23fgzd.pnwfdv.jpn-e1.cloudhub.io/gemini-agent",
+        "protoId": "a2a",
+        "url": "https://theorems-relay-23fgzd.pnwfdv.jpn-e1.cloudhub.io/gemini-agent",
+        "name": "Handson 4"
+      }
+    ],
+    "closedWindows": [],
+    "activeWsIdx": 3,
+    "workspaces": [
+      {
+        "name": "Handson1",
+        "windows": [
+          {
+            "protoId": "rest",
+            "config": {
+              "url": "https://apparel-products-api-ogvvk5.m7ad1b.jpn-e1.cloudhub.io/api/products",
+              "name": "DIRECT",
+              "auth": ""
+            },
+            "pos": {
+              "left": "16px",
+              "top": "16px",
+              "width": "1448px",
+              "height": "731px",
+              "zIndex": "166"
+            },
+            "activeTab": "settings",
+            "pinned": false
+          }
+        ]
+      },
+      {
+        "name": "Hanson2",
+        "windows": [
+          {
+            "protoId": "rest",
+            "config": {
+              "url": "https://step1-gw-ogvvk5.m7ad1b.jpn-e1.cloudhub.io/dsol00/products",
+              "name": "via GW",
+              "auth": ""
+            },
+            "pos": {
+              "left": "16px",
+              "top": "16px",
+              "width": "1600px",
+              "height": "787px",
+              "zIndex": "295"
+            },
+            "activeTab": "settings",
+            "pinned": false
+          }
+        ]
+      },
+      {
+        "name": "handson3",
+        "windows": [
+          {
+            "protoId": "mcp",
+            "config": {
+              "url": "https://step1-gw-ogvvk5.m7ad1b.jpn-e1.cloudhub.io/ws00-mcp/mcp",
+              "name": "Handson3",
+              "auth": ""
+            },
+            "pos": {
+              "left": "16px",
+              "top": "16px",
+              "width": "710px",
+              "height": "786px",
+              "zIndex": "263"
+            },
+            "activeTab": "settings",
+            "pinned": false
+          }
+        ]
+      },
+      {
+        "name": "handson4",
+        "windows": [
+          {
+            "protoId": "a2a",
+            "config": {
+              "url": "https://theorems-relay-23fgzd.pnwfdv.jpn-e1.cloudhub.io/gemini-agent",
+              "name": "Handson 4",
+              "auth": ""
+            },
+            "pos": {
+              "left": "16px",
+              "top": "16px",
+              "width": "1068px",
+              "height": "776px",
+              "zIndex": "306"
+            },
+            "activeTab": "chat",
+            "pinned": false
+          }
+        ]
+      }
+    ]
+  }
+}
