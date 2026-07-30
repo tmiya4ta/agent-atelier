@@ -1311,6 +1311,15 @@ clear
 
         <!-- AGENT CARD PANE -->
         <section class="pane pane-card" data-pane="card">
+          <!-- card-scroll の外に置く。 中は _renderCard が innerHTML で作り直すので、
+               中に入れるとイベントごと消える。 -->
+          <button class="card-reload" type="button" title="Re-fetch the agent card" aria-label="reload agent card">
+            <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
+              <path d="M10 6a4 4 0 1 1-1.2-2.85"/><path d="M10.2 1.4v2.5H7.7"/>
+            </svg>
+            <span>reload</span>
+          </button>
+          <div class="card-reload-err" hidden></div>
           <div class="card-scroll"></div>
         </section>
 

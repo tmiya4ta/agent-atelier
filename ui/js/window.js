@@ -224,6 +224,13 @@ export class AgentWindow {
       e.stopPropagation();   // overlay 外クリック扱いで閉じられないように
       this._reloadAgentCard();
     });
+    // reloadCard を実装しない adapter (MCP は同じペインを "server info" に流用する)
+    // では押しても何もできないので出さない。
+    const cardReload = node.querySelector(".card-reload");
+    if (cardReload) {
+      if (typeof this.adapter?.reloadCard !== "function") cardReload.hidden = true;
+      else cardReload.addEventListener("click", () => this._reloadAgentCard());
+    }
     capsClose.addEventListener("click", () => this._closeCapsOverlay());
     // MCP 追加は A2A window でだけ意味がある (adapter に addServer がある場合)。
     // Settings を開かずに、 会話しながら道具を足せるようにする。
@@ -742,13 +749,17 @@ export class AgentWindow {
   //               「有る物だけ並べる」より on/off を明示した方が情報量が多い)
   //   skills    … 名前 + 説明 + tag
   //   wiring    … この window に登録済みの MCP サーバと tool 数
-  // capabilities の reload ボタン。 相手の AgentCard を編集したときに、 ウインドウを
-  // 閉じて繋ぎ直さなくても反映できるようにする。 描画は adapter の "card" イベント側。
+  // AgentCard の再取得。 capabilities と agent card タブの両方から呼ぶ。
+  // 相手のカードを編集したときに、 ウインドウを閉じて繋ぎ直さなくても反映できる。
+  // 成功時の描画は adapter の "card" イベント側。
   async _reloadAgentCard() {
-    const btn = this.el.querySelector(".caps-overlay-reload");
-    if (!btn || typeof this.adapter?.reloadCard !== "function") return;
-    if (btn.classList.contains("is-busy")) return;   // 連打で多重 fetch しない
-    btn.classList.add("is-busy");
+    if (typeof this.adapter?.reloadCard !== "function") return;
+    // 入口が 2 つあるので、 どちらから押しても両方 busy にする
+    // (別タブに切り替えたときに片方だけ回り続けて見えないように)。
+    const btns = [...this.el.querySelectorAll(".caps-overlay-reload, .card-reload")];
+    if (!btns.length) return;
+    if (btns.some(b => b.classList.contains("is-busy"))) return;   // 連打で多重 fetch しない
+    btns.forEach(b => b.classList.add("is-busy"));
     this._capsReloadError = null;
     try {
       await this.adapter.reloadCard();
@@ -756,11 +767,21 @@ export class AgentWindow {
       // 黙って失敗すると「押したのに何も変わらない」と区別が付かないので理由を出す
       this._capsReloadError = err?.message || String(err);
     } finally {
-      btn.classList.remove("is-busy");
+      btns.forEach(b => b.classList.remove("is-busy"));
       if (this.el.querySelector(".caps-overlay")?.classList.contains("is-visible")) {
         this._renderCapsOverlay();
       }
+      this._syncCardReloadError();
     }
+  }
+
+  // agent card タブ側のエラー表示。 card-scroll は _renderCard が innerHTML で
+  // 作り直すので、 その外側の専用要素に出す (成功したら消える)。
+  _syncCardReloadError() {
+    const el = this.el.querySelector(".card-reload-err");
+    if (!el) return;
+    el.textContent = this._capsReloadError ? `reload failed · ${this._capsReloadError}` : "";
+    el.hidden = !this._capsReloadError;
   }
 
   _renderCapsOverlay() {

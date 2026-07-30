@@ -3927,6 +3927,41 @@ body.is-dark .compose-caps[aria-expanded="true"] {
   overflow-y: auto;
   padding: 24px 24px 30px;
 }
+/* agent card 再取得。 pane は position:absolute なので、 スクロールに乗らない
+   右上へ重ねる。 card-scroll の外なので再描画で消えない。 */
+.card-reload {
+  position: absolute; top: 14px; right: 16px; z-index: 2;
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid var(--line); border-radius: 5px;
+  background: var(--panel);
+  color: var(--ink-3);
+  font-family: var(--f-mono);
+  font-size: calc(10px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.card-reload[hidden] { display: none; }
+.card-reload:hover { background: var(--line-2); color: var(--ink); border-color: var(--ink-4); }
+.card-reload:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.card-reload.is-busy { color: var(--accent); border-color: var(--accent); cursor: default; }
+.card-reload.is-busy svg { animation: caps-reload-spin 0.7s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .card-reload.is-busy svg { animation: none; }
+}
+/* エラーは重ねずに流し込む。 絶対配置で右上に浮かせると card の説明文に
+   かぶって読めなくなる (実際にかぶった)。 右余白は reload ボタンの逃げ。 */
+.card-reload-err {
+  margin: 14px 108px 0 24px;
+  padding: 5px 8px;
+  border: 1px solid var(--warn); border-radius: 4px;
+  background: var(--warn-soft);
+  font-family: var(--f-mono);
+  font-size: calc(10px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--warn); word-break: break-word;
+}
+.card-reload-err[hidden] { display: none; }
 .card-hero {
   display: grid;
   grid-template-columns: auto 1fr;
