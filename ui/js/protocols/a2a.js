@@ -186,7 +186,7 @@ export class A2AAdapter extends ProtocolAdapter {
     return out;
   }
 
-  async _fetchCard({ emitOpen = false } = {}) {
+  async _fetchCard({ emitOpen = false, throwOnFail = false } = {}) {
     const candidates = candidateCardUrls(this.endpoint);
     let card = null, cardUrl = null, lastErr = null, cardResHeaders = null;
     for (const cu of candidates) {
@@ -218,7 +218,10 @@ export class A2AAdapter extends ProtocolAdapter {
         this._emit("error", err);
         throw err;
       }
-      // revalidate 失敗 → open のままで握り潰す
+      // 裏の revalidate は open のままで握り潰す。 ただし reload ボタンのように
+      // ユーザーが明示的に押したものは、 結果を返さないと「押しても何も起きない」
+      // としか見えないので投げる。
+      if (throwOnFail) throw lastErr || new Error(`AgentCard not found at ${candidates.join(", ")}`);
       return;
     }
 
@@ -235,11 +238,24 @@ export class A2AAdapter extends ProtocolAdapter {
       this._setState("open");
       this.startedAt = Date.now();
       this._emit("open", { card });
+    } else {
+      // 接続済みのまま card だけ取り直した場合 (裏の revalidate / reload ボタン)。
+      // 以前はここで state.agentCard を差し替えるだけだったので、 相手のカードを
+      // 更新しても画面 (capabilities · agent card タブ · ゴースト) は古いままだった。
+      this._emit("card", { card });
     }
   }
 
   async _revalidateCard() {
     return this._fetchCard({ emitOpen: false });
+  }
+
+  // capabilities の reload ボタンから呼ぶ。 相手のカードを編集して差し替えたときに、
+  // ウインドウを繋ぎ直さずに反映させるための入口。 _revalidateCard と違って
+  // 失敗を握り潰さない (押した本人には結果を返す必要がある)。
+  async reloadCard() {
+    await this._fetchCard({ emitOpen: false, throwOnFail: true });
+    return this.agentCard;
   }
 
   // legacy (A2A 0.3 系, kind 判別子) / proto (A2A 1.0 正規スキーマ) いずれかの

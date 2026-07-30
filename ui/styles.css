@@ -3744,6 +3744,36 @@ body.is-dark .agent-tag { color: #5BB8E8; }
 .caps-overlay-close:hover { background: var(--line-2); color: var(--ink); }
 .caps-overlay-close:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 
+/* agent card 再取得。 close と同じ見た目で、 2 つを右端にまとめる
+   (head は space-between なので margin-left:auto で寄せる)。 */
+.caps-overlay-reload {
+  width: 20px; height: 20px;
+  margin-left: auto; margin-right: 2px;
+  display: grid; place-items: center;
+  border-radius: 3px;
+  color: var(--ink-3);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.caps-overlay-reload[hidden] { display: none; }
+.caps-overlay-reload:hover { background: var(--line-2); color: var(--ink); }
+.caps-overlay-reload:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+/* 取得中。 押した手応えを出す。 reduced-motion では色だけで示す。 */
+.caps-overlay-reload.is-busy { color: var(--accent); cursor: default; }
+.caps-overlay-reload.is-busy svg { animation: caps-reload-spin 0.7s linear infinite; }
+@keyframes caps-reload-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .caps-overlay-reload.is-busy svg { animation: none; }
+}
+
+.caps-reload-err {
+  margin-bottom: 10px; padding: 6px 8px;
+  border: 1px solid var(--warn); border-radius: 4px; background: var(--warn-soft);
+  font-size: calc(10px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--warn); word-break: break-word;
+}
+
 .caps-overlay-body {
   flex: 1; overflow-y: auto;
   padding: 14px 14px 20px;

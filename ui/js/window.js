@@ -220,6 +220,10 @@ export class AgentWindow {
     const capsOverlay = node.querySelector(".caps-overlay");
     const capsClose = node.querySelector(".caps-overlay-close");
     capsBtn.addEventListener("click", () => this._toggleCapsOverlay());
+    node.querySelector(".caps-overlay-reload")?.addEventListener("click", (e) => {
+      e.stopPropagation();   // overlay 外クリック扱いで閉じられないように
+      this._reloadAgentCard();
+    });
     capsClose.addEventListener("click", () => this._closeCapsOverlay());
     // MCP 追加は A2A window でだけ意味がある (adapter に addServer がある場合)。
     // Settings を開かずに、 会話しながら道具を足せるようにする。
@@ -394,6 +398,16 @@ export class AgentWindow {
     // 認証セッション切れ (Authorization Code 等で対話的再認証が必要) → クールな再認証バナーを出す
     this.adapter.addEventListener("auth-required", (e) => {
       this._showReauthBanner(e.detail || {});
+    });
+
+    // 接続したままカードだけ取り直したとき (裏の revalidate / reload ボタン)。
+    // open と違って「Connected」は出さない。 見えているものだけ作り直す。
+    this.adapter.addEventListener("card", (e) => {
+      this._renderCard(e.detail.card);
+      this._renderSettings();
+      if (this.el.querySelector(".caps-overlay")?.classList.contains("is-visible")) {
+        this._renderCapsOverlay();
+      }
     });
 
     // Agent / A2A: MCP サーバの add/remove/接続状態変化 → Settings の一覧を再描画
@@ -728,9 +742,33 @@ export class AgentWindow {
   //               「有る物だけ並べる」より on/off を明示した方が情報量が多い)
   //   skills    … 名前 + 説明 + tag
   //   wiring    … この window に登録済みの MCP サーバと tool 数
+  // capabilities の reload ボタン。 相手の AgentCard を編集したときに、 ウインドウを
+  // 閉じて繋ぎ直さなくても反映できるようにする。 描画は adapter の "card" イベント側。
+  async _reloadAgentCard() {
+    const btn = this.el.querySelector(".caps-overlay-reload");
+    if (!btn || typeof this.adapter?.reloadCard !== "function") return;
+    if (btn.classList.contains("is-busy")) return;   // 連打で多重 fetch しない
+    btn.classList.add("is-busy");
+    this._capsReloadError = null;
+    try {
+      await this.adapter.reloadCard();
+    } catch (err) {
+      // 黙って失敗すると「押したのに何も変わらない」と区別が付かないので理由を出す
+      this._capsReloadError = err?.message || String(err);
+    } finally {
+      btn.classList.remove("is-busy");
+      if (this.el.querySelector(".caps-overlay")?.classList.contains("is-visible")) {
+        this._renderCapsOverlay();
+      }
+    }
+  }
+
   _renderCapsOverlay() {
     const body = this.el.querySelector(".caps-overlay-body");
     if (!body) return;
+    // reloadCard を実装しない adapter (MCP など) では押せてもすることが無いので隠す
+    const rbtn = this.el.querySelector(".caps-overlay-reload");
+    if (rbtn) rbtn.hidden = typeof this.adapter?.reloadCard !== "function";
     const card = this.adapter.agentCard;
     if (!card) {
       body.innerHTML = `<div class="caps-empty">agent card not loaded yet</div>`;
@@ -738,6 +776,11 @@ export class AgentWindow {
     }
     const esc = escapeHtml;
     const out = [];
+
+    // reload に失敗したときだけ理由を出す。 成功時は消える (押すたびにクリア)。
+    if (this._capsReloadError) {
+      out.push(`<div class="caps-reload-err">reload failed · ${esc(this._capsReloadError)}</div>`);
+    }
 
     // ── identity ──
     const meta = [card.version && `v${card.version}`, card.protocolVersion && `A2A ${card.protocolVersion}`]
