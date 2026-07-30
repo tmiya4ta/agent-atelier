@@ -4,28 +4,30 @@
     {
       "id": "AI-Workshop-Step1",
       "url": "/scenarios/AI-Workshop-Step1.json",
-      "name": "AI Workshop Step1",
-      "description": "4 workspaces, 4 connections",
+      "name": "AI Workshop — Step 1",
+      "description": "REST / MCP / A2A のハンズオン接続一式 (4 workspace)",
       "counts": {
         "workspaces": 4,
         "bookmarks": 4,
         "scripts": 0,
         "identities": 0
       },
-      "exportedAt": "2026-07-30T02:33:19.464Z"
+      "exportedAt": "2026-07-30T02:33:19.464Z",
+      "order": 10
     },
     {
       "id": "AI-Workshop-Step2",
       "url": "/scenarios/AI-Workshop-Step2.json",
-      "name": "AI Workshop Step2",
-      "description": "2 workspaces, 3 connections",
+      "name": "AI Workshop — Step 2",
+      "description": "IT プロビジョニング / オフィスコンシェルジュ / 社員 MCP サーバー",
       "counts": {
         "workspaces": 2,
         "bookmarks": 3,
         "scripts": 0,
         "identities": 0
       },
-      "exportedAt": "2026-07-29T01:56:48.295Z"
+      "exportedAt": "2026-07-29T01:56:48.295Z",
+      "order": 20
     }
   ]
 }
