@@ -1,11 +1,11 @@
 {
   "meta": {
     "name": "AI Workshop — Step 2",
-    "description": "IT プロビジョニング / オフィスコンシェルジュ / 社員 MCP サーバー",
+    "description": "IT プロビジョニング / オフィスコンシェルジュ / 社員 MCP サーバー / Onboarding Broker",
     "order": 20
   },
   "app": "atelier",
-  "exportedAt": "2026-07-29T01:56:48.295Z",
+  "exportedAt": "2026-07-30T15:24:50.910Z",
   "includesSecrets": false,
   "state": {
     "v": 1,
@@ -13,7 +13,7 @@
     "sidebarCollapsed": false,
     "sidePanelW": 419,
     "theme": "light",
-    "activeSideCat": "connections",
+    "activeSideCat": "catalogs",
     "identities": [],
     "catalogs": [],
     "scripts": [],
@@ -37,6 +37,12 @@
         "protoId": "mcp",
         "url": "https://fgw-for-non-broker-app-apacj-egl8ul.zm3ejw.usa-e2.cloudhub.io/maf-my-employee-db-mcp/mcp",
         "name": "社員MCPサーバー"
+      },
+      {
+        "key": "a2a::https://step2-v1-ingress-gw-cwix24.m7ad1b.jpn-e1.cloudhub.io/onboarding-broker-dsol90/.well-known/agent-card.json",
+        "protoId": "a2a",
+        "url": "https://step2-v1-ingress-gw-cwix24.m7ad1b.jpn-e1.cloudhub.io/onboarding-broker-dsol90/.well-known/agent-card.json",
+        "name": "Employee Onboarding Broker dsol90"
       }
     ],
     "closedWindows": [],
@@ -53,11 +59,11 @@
               "auth": ""
             },
             "pos": {
-              "left": "972px",
+              "left": "1396px",
               "top": "16px",
-              "width": "465px",
-              "height": "787px",
-              "zIndex": "13"
+              "width": "681px",
+              "height": "1310px",
+              "zIndex": "55"
             },
             "activeTab": "chat",
             "pinned": false
@@ -70,11 +76,11 @@
               "auth": ""
             },
             "pos": {
-              "left": "494px",
+              "left": "706px",
               "top": "16px",
-              "width": "462px",
-              "height": "787px",
-              "zIndex": "38"
+              "width": "674px",
+              "height": "1310px",
+              "zIndex": "54"
             },
             "activeTab": "chat",
             "pinned": false
@@ -89,9 +95,9 @@
             "pos": {
               "left": "16px",
               "top": "16px",
-              "width": "462px",
-              "height": "787px",
-              "zIndex": "28"
+              "width": "674px",
+              "height": "1310px",
+              "zIndex": "43"
             },
             "activeTab": "tools",
             "pinned": false
@@ -100,7 +106,25 @@
       },
       {
         "name": "Step2-Brokerあり",
-        "windows": []
+        "windows": [
+          {
+            "protoId": "a2a",
+            "config": {
+              "url": "https://step2-v1-ingress-gw-cwix24.m7ad1b.jpn-e1.cloudhub.io/onboarding-broker-dsol90/.well-known/agent-card.json",
+              "name": "Employee Onboarding Broker dsol90",
+              "auth": ""
+            },
+            "pos": {
+              "left": "16px",
+              "top": "16px",
+              "width": "2061px",
+              "height": "1310px",
+              "zIndex": "62"
+            },
+            "activeTab": "chat",
+            "pinned": false
+          }
+        ]
       }
     ]
   }
