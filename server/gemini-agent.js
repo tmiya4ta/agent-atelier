@@ -282,6 +282,14 @@ const SYSTEM_PREFACE = [
   "・目的の絞り込み条件を持つツールが無い → 条件を付けずに全件取得し、 自分で絞り込む",
   "・引数の候補が分からない → 候補を返すツール (カテゴリ一覧など) を先に呼んで確認する",
   "答えに必要な情報が揃うまで、 何度でもツールを呼んで構いません。",
+  // 実例: 「Tシャツの一覧」に対し get_products({category:"Tシャツ"}) を呼び、 0 件
+  // だったので「見つかりませんでした」と答えた。 実データの category は "T-Shirt"。
+  // 引数の値は「データの中にある文字列」であって、 ユーザーの言葉の訳ではない。
+  "【重要】絞り込みの値 (カテゴリ名・区分など) を、 ユーザーの言葉から訳したり推測したりして",
+  "作ってはいけません。 実データに入っている値をそのまま使ってください。",
+  "どんな値があるか分からないときは、 先に絞り込みなしで呼ぶか、 候補一覧のツールを呼んで確かめます。",
+  "【重要】絞り込んで 0 件だったときは、 それを『存在しない』と結論してはいけません。",
+  "値が違っていただけの可能性が高いので、 絞り込みなしで呼び直して実際の値を確認してください。",
   "回答は日本語で、 生の JSON を貼らずに文章に整形してください。",
   // 利用者は技術者とは限らない。 内部の仕組み (MCP/ツール/API) の話は回答に出さず、
   // 「調べた結果」だけを伝える。 上の手順の説明は思考用であって回答文の指示ではない。
@@ -336,6 +344,30 @@ function trimContents(contents) {
   return contents.slice(cut);
 }
 
+// 絞り込み引数が実際に付いていたか。 空オブジェクトや空文字だけの引数は「絞り込みなし」。
+function hasArgs(args) {
+  if (!args || typeof args !== "object") return false;
+  return Object.values(args).some(v => v !== undefined && v !== null && v !== "");
+}
+
+// ツール結果が実質 0 件か。 MCP 実装によって [] だったり {items:[]} だったり
+// content が空文字だったりするので、 よくある形を広めに拾う。
+function isEmptyResult(parsed) {
+  if (parsed == null) return true;
+  if (Array.isArray(parsed)) return parsed.length === 0;
+  if (typeof parsed === "string") return parsed.trim() === "" || parsed.trim() === "[]";
+  if (typeof parsed === "object") {
+    if (typeof parsed.text === "string") {
+      const t = parsed.text.trim();
+      return t === "" || t === "[]" || t === "{}";
+    }
+    const arrays = Object.values(parsed).filter(Array.isArray);
+    if (arrays.length) return arrays.every(a => a.length === 0);
+    return Object.keys(parsed).length === 0;
+  }
+  return false;
+}
+
 // ユーザー発話 + MCP サーバ群 → 最終回答テキスト
 async function respond(userText, mcpServers, contextId) {
   const session = getSession(contextId);
@@ -381,6 +413,22 @@ async function runTurn(session, userText, toolsBySrv, contextId) {
           let parsed;
           try { parsed = JSON.parse(out.content); } catch { parsed = { text: out.content }; }
           payload = out.isError ? { error: out.content } : { result: parsed };
+          // 絞り込み付きで呼んで 0 件だったときは、 そこで「見つかりませんでした」と
+          // 結論させない。 実際に category:"Tシャツ" で 0 件 → 即断念する事例が出た
+          // (実データの category は "T-Shirt")。 モデルは引数の値をユーザーの言葉から
+          // 訳して作ってしまうので、 空だった事実と次の一手を結果に添えて返す。
+          // プロンプトだけでは守られなかったため、 ここで機械的に注入する。
+          if (!out.isError && hasArgs(call.args) && isEmptyResult(parsed)) {
+            payload.hint = [
+              `${call.name} を ${JSON.stringify(call.args)} で呼びましたが 0 件でした。`,
+              "指定した絞り込みの値が実データと一致していない可能性があります",
+              "(日本語で指定したが実データは英語、 表記ゆれ、 単数形/複数形の違いなど)。",
+              "ここで『見つかりませんでした』と結論せず、 次のどちらかを行ってください:",
+              "(1) 同じツールを絞り込みなし (引数なし) で呼び、 実際に存在する値を確かめる。",
+              "(2) 候補の一覧を返すツールがあれば先にそれを呼ぶ。",
+              "そのうえで、 実データに存在する値で呼び直してください。"
+            ].join(" ");
+          }
         } catch (e) {
           payload = { error: e.message };
         }
