@@ -6126,7 +6126,9 @@ async function importFromRepositoryFlow() {
       ? [{ id: "scriptsOnly", label: "Scenarios only", description: "Merge scenarios only — keep current connections, no reload", defaultChecked: true }]
       : []
   });
-  const pick = result?.id;
+  // modalChoice は extras を渡したときだけ {id, extras} を返し、 無ければ id 文字列を
+  // 返す。 チェックボックスを出さない分岐を足したのでどちらも受けられるようにする。
+  const pick = typeof result === "string" ? result : result?.id;
   if (!pick) return;
   let scope = result?.extras?.scriptsOnly ? "scripts" : "all";
   // 混在インデックスで「Scenarios only」を選んだのに、 選ばれた item に scenario が
