@@ -1,4 +1,9 @@
 {
+  "meta": {
+    "name": "AI Workshop — Step 2",
+    "description": "IT プロビジョニング / オフィスコンシェルジュ / 社員 MCP サーバー",
+    "order": 20
+  },
   "app": "atelier",
   "exportedAt": "2026-07-29T01:56:48.295Z",
   "includesSecrets": false,

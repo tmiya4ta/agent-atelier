@@ -1,4 +1,9 @@
 {
+  "meta": {
+    "name": "AI Workshop — Step 1",
+    "description": "REST / MCP / A2A のハンズオン接続一式 (4 workspace)",
+    "order": 10
+  },
   "app": "atelier",
   "exportedAt": "2026-07-30T02:33:19.464Z",
   "includesSecrets": false,
