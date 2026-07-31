@@ -200,7 +200,7 @@ export class A2AAdapter extends ProtocolAdapter {
           this._emit("rpc", { dir: "err", method: "404 not found", raw: cu });
           continue;
         }
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) throw await this._httpError(res, `GET ${shortPath(cu)}`);
         card = await res.json();
         cardUrl = cu;
         cardResHeaders = headersToObj(res.headers);
@@ -374,7 +374,7 @@ export class A2AAdapter extends ProtocolAdapter {
         const res2 = await fetch(proxify(slashed), { method: "POST", headers, body: JSON.stringify(body), signal: ac.signal });
         if (res2.ok) { this.rpcUrl = slashed; res = res2; }
       }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw await this._httpError(res, method);
 
       // ── streaming (SSE) 経路 ───────────────────────────────
       // server が text/event-stream を返したら 1 イベントずつ読み、
@@ -405,7 +405,7 @@ export class A2AAdapter extends ProtocolAdapter {
           dir: "out", method: `${method} (auto-retry: proto schema)`, headers, payload: body, raw: JSON.stringify(body, null, 2)
         });
         res = await fetch(proxify(this.rpcUrl), { method: "POST", headers, body: JSON.stringify(body), signal: ac.signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) throw await this._httpError(res, method);
         data = await res.json();
         this._emit("rpc", {
           dir: "in", method: `200 OK · ${method}`,
@@ -450,6 +450,31 @@ export class A2AAdapter extends ProtocolAdapter {
     } finally {
       if (this._inflight === ac) this._inflight = null;
     }
+  }
+
+
+  // HTTP エラー応答を Error にする。 本文を読んで debug フレームに残すのが目的。
+  // 以前は `HTTP 403` としか出さず本文を捨てていたので、 なぜ弾かれたのか
+  // (gateway のポリシー違反なのか、 token 切れなのか) が画面から分からなかった。
+  // 本文は JSON なら整形、 それ以外はテキストのまま。 長すぎるものは頭だけ残す。
+  async _httpError(res, method) {
+    let bodyText = "";
+    try { bodyText = await res.text(); } catch { /* 読めないこともある */ }
+    let payload;
+    try { payload = JSON.parse(bodyText); } catch { payload = undefined; }
+    const pretty = payload !== undefined ? JSON.stringify(payload, null, 2) : bodyText;
+    const clipped = pretty.length > 4000 ? pretty.slice(0, 4000) + "\n… (truncated)" : pretty;
+    this._emit("rpc", {
+      dir: "err",
+      method: `HTTP ${res.status} · ${method}`,
+      headers: headersToObj(res.headers),
+      payload,
+      raw: clipped || "(empty body)"
+    });
+    // chat 側にも 1 行で分かるだけの手掛かりを出す (詳細は debug タブ)。
+    const oneLine = (payload?.message || payload?.error?.message || bodyText || "")
+      .toString().replace(/\s+/g, " ").trim().slice(0, 200);
+    return new Error(`HTTP ${res.status}${oneLine ? ` · ${oneLine}` : ""}`);
   }
 
   // ─── SSE (text/event-stream) を 1 イベントずつ消費する ───────────
