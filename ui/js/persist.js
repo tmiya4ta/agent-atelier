@@ -354,6 +354,12 @@ export function importJson(str, opts = {}) {
   // 自分の reload では通らない経路なので、 通常の「タブを覚えている」挙動は変わらない。
   (state.workspaces || []).forEach(ws => (ws.windows || []).forEach(w => { delete w.activeTab; }));
 
+  // 同じ理由でサイドバーの選択カテゴリも引き継がない。 export した人が Catalogs を
+  // 開いていると、 取り込んだ側も Catalogs から始まって「接続がどこに行ったか
+  // 分からない」状態になる (実際に発生)。 取り込み直後は Connections に戻す。
+  state.activeSideCat = "connections";
+  delete state.sidebarCollapsed;
+
   // localStorage には常に strip 版を書く (secret はディスクに残さない)。 keepSecrets の時は
   // 上で sessionStorage に逃がしてあるので、 reload 後 hydrateSecrets で復元される。
   if (Array.isArray(state.catalogs))   state.catalogs   = state.catalogs.map(stripSecrets);
