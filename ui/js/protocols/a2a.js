@@ -444,7 +444,10 @@ export class A2AAdapter extends ProtocolAdapter {
         err.name = "AbortError";
         throw err;
       }
-      this._emit("rpc", { dir: "err", method: `error: ${method}`, raw: String(e) });
+      // _httpError 由来なら本文付きのフレームが既に出ているので重ねない。
+      if (!e?.rpcLogged) {
+        this._emit("rpc", { dir: "err", method: `error: ${method}`, raw: String(e) });
+      }
       this._emit("error", e);
       throw e;
     } finally {
@@ -474,7 +477,11 @@ export class A2AAdapter extends ProtocolAdapter {
     // chat 側にも 1 行で分かるだけの手掛かりを出す (詳細は debug タブ)。
     const oneLine = (payload?.message || payload?.error?.message || bodyText || "")
       .toString().replace(/\s+/g, " ").trim().slice(0, 200);
-    return new Error(`HTTP ${res.status}${oneLine ? ` · ${oneLine}` : ""}`);
+    const err = new Error(`HTTP ${res.status}${oneLine ? ` · ${oneLine}` : ""}`);
+    // このエラーは既に上で 1 フレーム出している。 catch 側の汎用フレームまで出すと
+    // debug に同じ失敗が 2 行並び、 しかも後者は本文を持たないので紛らわしい。
+    err.rpcLogged = true;
+    return err;
   }
 
   // ─── SSE (text/event-stream) を 1 イベントずつ消費する ───────────
