@@ -326,7 +326,10 @@ export class AgentWindow {
         if (wm) wm.textContent = cardName + this.instanceSuffix;
         this.onChange?.();
       }
-      if (this.restore?.activeTab && this.restore.activeTab !== "chat") {
+      // 既定タブは protocol ごとに違う (chat / raw / tools)。 "chat" 決め打ちだと
+      // REST や MCP のウインドウで誤ったタブに切り替わる。
+      const primaryTab = this.adapter?.constructor?.primaryTab || "chat";
+      if (this.restore?.activeTab && this.restore.activeTab !== primaryTab) {
         this.switchTab(this.restore.activeTab);
         this.restore = null;
       }
@@ -354,7 +357,10 @@ export class AgentWindow {
         this.onChange?.();
       }
       // 復元タブを反映 (open後にカード/設定が描画されてからの方が安全)
-      if (this.restore?.activeTab && this.restore.activeTab !== "chat") {
+      // 既定タブは protocol ごとに違う (chat / raw / tools)。 "chat" 決め打ちだと
+      // REST や MCP のウインドウで誤ったタブに切り替わる。
+      const primaryTab = this.adapter?.constructor?.primaryTab || "chat";
+      if (this.restore?.activeTab && this.restore.activeTab !== primaryTab) {
         this.switchTab(this.restore.activeTab);
         this.restore = null;
       }

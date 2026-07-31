@@ -6123,7 +6123,9 @@ async function importFromRepositoryFlow() {
       description: it.description || it.url
     })),
     extras: anyScenarios
-      ? [{ id: "scriptsOnly", label: "Scenarios only", description: "Merge scenarios only — keep current connections, no reload", defaultChecked: true }]
+      // 既定は OFF (= everything)。 配布シナリオは接続とワークスペースごと再現するのが
+      // 通常の使い方で、 ON のままだと会話 DSL だけ入って「何も起きない」ように見える。
+      ? [{ id: "scriptsOnly", label: "Scenarios only", description: "Merge scenarios only — keep current connections, no reload", defaultChecked: false }]
       : []
   });
   // modalChoice は extras を渡したときだけ {id, extras} を返し、 無ければ id 文字列を

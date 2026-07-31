@@ -348,6 +348,12 @@ export function importJson(str, opts = {}) {
       const s = w.config ? extractSecrets(w.config, k) : null; if (s) setSecretEntry("windows", k, s.secrets);
     }));
   }
+  // 取り込んだ snapshot の activeTab は捨てる。 export した人が settings を開いた状態で
+  // 書き出すと、 取り込んだ側の全ウインドウが settings で開いてしまう (実際に起きた)。
+  // 落としておけば復元時に adapter の primaryTab (chat / raw / tools) が使われる。
+  // 自分の reload では通らない経路なので、 通常の「タブを覚えている」挙動は変わらない。
+  (state.workspaces || []).forEach(ws => (ws.windows || []).forEach(w => { delete w.activeTab; }));
+
   // localStorage には常に strip 版を書く (secret はディスクに残さない)。 keepSecrets の時は
   // 上で sessionStorage に逃がしてあるので、 reload 後 hydrateSecrets で復元される。
   if (Array.isArray(state.catalogs))   state.catalogs   = state.catalogs.map(stripSecrets);
