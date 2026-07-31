@@ -414,9 +414,14 @@ function wireSideResize() {
 // applySidePanelW() は CSS 変数を書き換えるだけなので、 レイアウトが実際に
 // 反映されてから測りたい。 rAF 2 回で style 適用 → reflow を待ってから fit する。
 // ウインドウが 0 個 / 全部ピン留めのときは tileWindows 側が no-op になる。
-function snapAfterSideResize() {
+function snapAfterSideResize() { snapSoon("sidebar resize"); }
+
+// レイアウトが確定してから fit で並べ直す。 CSS 変数の書き換えや .is-active の
+// 付け替えは即座に反映されないので、 rAF 2 回で style 適用 → reflow を待つ。
+// ウインドウが 0 個 / 全部ピン留めのときは tileWindows 側が no-op。
+function snapSoon(why) {
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    try { tileWindows("fit"); } catch (e) { console.warn("auto-snap after sidebar resize failed:", e); }
+    try { tileWindows("fit"); } catch (e) { console.warn(`auto-snap after ${why} failed:`, e); }
   }));
 }
 
@@ -771,7 +776,7 @@ function restoreFromSaved(saved) {
   });
   // アクティブWSを最後にスイッチ
   const idx = Math.min(Math.max(saved.activeWsIdx ?? 0, 0), state.workspaces.length - 1);
-  if (state.workspaces[idx]) switchWorkspace(state.workspaces[idx].id);
+  if (state.workspaces[idx]) switchWorkspace(state.workspaces[idx].id, { snap: false });
 }
 
 // ═══════════════════════════════════════════════════════
@@ -789,13 +794,16 @@ function createWorkspace(name, opts = {}) {
   const ws = { id, name: name || `workspace ${wsCounter}`, windows: [], events: 0, layer };
   state.workspaces.push(ws);
 
-  if (opts.focus !== false) switchWorkspace(id);
+  // 作りたてのワークスペースは窓が 0 なので snap するものが無い。 それどころか
+  // restore は「createWorkspace → 窓を connect」の順なので、 ここで snap を予約すると
+  // rAF が回る頃には窓が出来ていて、 保存された配置を上書きしてしまう。
+  if (opts.focus !== false) switchWorkspace(id, { snap: false });
   if (!opts.silent) { renderTabs(); updateStatusLine(); updateEmptyState(); }
   dirty();
   return ws;
 }
 
-function switchWorkspace(id) {
+function switchWorkspace(id, opts = {}) {
   const ws = state.workspaces.find(w => w.id === id);
   if (!ws) return;
   state.activeWs = id;
@@ -805,6 +813,10 @@ function switchWorkspace(id) {
   updateStatusLine();
   updateEmptyState();
   dirty();
+  // ワークスペースを切り替えるたびに fit で並べ直す。 窓ごとにサイズがまちまちだと
+  // 切り替えのたびに snap を押すことになるため。 復元時 (opts.snap === false) は
+  // 保存された配置をそのまま使いたいので走らせない。
+  if (opts.snap !== false) snapSoon("workspace switch");
 }
 
 async function removeWorkspace(id) {
