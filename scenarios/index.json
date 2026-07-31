@@ -28,6 +28,34 @@
       },
       "exportedAt": "2026-07-30T15:24:50.910Z",
       "order": 20
+    },
+    {
+      "id": "insurance-claims",
+      "url": "/scenarios/insurance-claims.json",
+      "name": "保険 — 自動車保険金請求 (対物+対人の出会い頭事故)",
+      "description": "自動車保険の保険金請求を 6 部門が縦割りで処理する実務ベースのデモ。 部門=事故受付(FNOL)/契約確認/物損査定(技術アジャスター)/対人医療/示談交渉(過失割合)/支払・等級 + 保険オーケストレーター(Broker)。 すべて mock A2A 接続 (実エンドポイント不要)。 FA1=Broker なし (人間が 6 部門を 3 往復ずつたらい回し、協定・症状固定・過失割合交渉の待ちが連鎖)、 FB1=Broker あり (1 文で横断オーケストレーション)。 WS1 部門別 6 窓、 WS2 Broker。 SCRS とは独立。",
+      "counts": {
+        "workspaces": 2,
+        "bookmarks": 7,
+        "scripts": 2,
+        "identities": 0
+      },
+      "exportedAt": "2026-06-10T00:00:00.000Z",
+      "order": 30
+    },
+    {
+      "id": "scrs-a",
+      "url": "/scenarios/scrs-a.json",
+      "name": "SCRS — シナリオ A/B (品質トラブル横断対応)",
+      "description": "サプライヤー品質トラブルの横断対応デモ。 A1-A3=Broker なし (人間が 5 窓口を持ち回るハブ)、 B1-B3=Broker あり (StepB の MAF Agent Network に 1 文で自律ディスパッチ)。 A1/B1 九州製作所 ターボ分子ポンプ、 A2/B2 関西部品 コアスチール、 A3/B3 東京精密 電子部品。 WS1 個別 agent、 WS2 Broker。 5 agent + MDM MCP は StepA (d7gr5m)、 broker は StepB (n6coif)。",
+      "counts": {
+        "workspaces": 2,
+        "bookmarks": 9,
+        "scripts": 8,
+        "identities": 0
+      },
+      "exportedAt": "2026-05-30T06:30:00.000Z",
+      "order": 40
     }
   ]
 }
