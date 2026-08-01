@@ -9,7 +9,7 @@
 
 - **ビルドレス**: フレームワーク・npm・バンドラなし。ブラウザネイティブの ES Modules と 1 枚の
   `index.html` だけで動く。`<script type="module" src="js/app.js">` がエントリポイント。
-- **adapter で抽象化**: プロトコル差分（A2A / MCP / Slack）はすべて `ProtocolAdapter` のサブクラスに閉じ込め、
+- **adapter で抽象化**: プロトコル差分（REST / A2A / MCP / DB / Mock）はすべて `ProtocolAdapter` のサブクラスに閉じ込め、
   UI 層（`AgentWindow`）は共通イベント（`open` / `message` / `rpc` / `error` / `close`）だけを見る。
 - **イベント駆動**: adapter は `EventTarget` を継承し、`CustomEvent` を dispatch する。UI はそれを購読して描画。
   プロトコルの中身を知らずにチャット・デバッグ・カードを描ける。
@@ -35,7 +35,7 @@
                                     │ fetch (CORS bypass)
                             ┌───────▼───────────────────────┐
                             │ dev-server /proxy?url=...      │
-                            │ → 実エージェント (A2A/MCP/Slack)│
+                            │ → 実エージェント (REST/A2A/MCP) │
                             └────────────────────────────────┘
 ```
 
@@ -45,7 +45,7 @@
 
 | ファイル | 役割 |
 |---|---|
-| `js/app.js` | 中核。グローバル `state`、ワークスペース、3 つの sidebar（Connections / Catalogs / Scripts）、接続ダイアログ、Script Panel、`connect()`、Anypoint Exchange 連携、キーバインド |
+| `ui/js/app.js` | 中核。グローバル `state`、ワークスペース、sidebar（Connections / Catalogs / Scenarios / Authentication / Platform / Tools）、接続ダイアログ、Script Panel、`connect()`、Anypoint Exchange 連携、キーバインド |
 | `js/window.js` | `AgentWindow` クラス。フローティングウィンドウの DOM 構築・drag/resize・タブ切替・チャット typewriter・デバッグペイン・Agent Card 描画・MCP tools フォーム |
 | `js/script.js` | 会話 DSL のパーサ（`parseScript` / `parseMocks`）と `ScriptRunner`（async 実行エンジン） |
 | `js/persist.js` | `localStorage`（state）/ `sessionStorage`（secrets）の保存・読込、import/export |
@@ -53,7 +53,7 @@
 | `js/i18n.js` | `STRINGS = { en, ja }`、`t(key)`、`setLang()` |
 | `js/modal.js` | Promise ベースの `modalConfirm` / `modalAlert` / `modalPrompt` |
 | `js/protocols/base.js` | `ProtocolAdapter` 基底クラス + `headersToObj` ヘルパ |
-| `js/protocols/{a2a,mcp,slack,mock}.js` | 各プロトコル実装 |
+| `ui/js/protocols/{rest,a2a,mcp,db,mock}.js` | 各プロトコル実装 |
 | `js/protocols/index.js` | `PROTOCOLS` レジストリと `getProtocol(id)` |
 
 ---
@@ -102,15 +102,18 @@ adapter は以下の `CustomEvent` を dispatch し、`AgentWindow` が購読す
 - **mcp.js** — Streamable HTTP。`initialize` → `notifications/initialized` → `tools/list`。
   `Mcp-Session-Id` ヘッダを以降のリクエストに付与。レスポンスは JSON / SSE 両対応。
   会話 protocol ではないため、UI は chat ではなく **tools タブ + 動的フォーム**（`callTool`）を使う。
-- **slack.js** — `auth.test` で接続確認 → 仮想 AgentCard を合成。`chat.postMessage` で送信、
-  同期 reply（mock サーバ想定）があれば agent message として emit。
-- **mock.js** — オフラインデモ用。`PERSONAS` 定義からローカルで AgentCard・応答を合成（実通信なし）。
+- **rest.js** — 汎用 HTTP クライアント。メソッド / パス / ヘッダ / ボディを組み立てて送る raw リクエスト。
+  会話 protocol ではないため primaryTab は **raw**。まず直接 fetch し、CORS で落ちたら `/proxy` へ退避。
+- **db.js** — clouderby（JDBC over HTTP）。`connect` = セッション確立、`query` で SQL 実行。
+  専用の `DbWindow`（スキーマツリー + SQL エディタ + 結果グリッド）が対になる。
+- **mock.js** — オフラインデモ用。ローカルで AgentCard・応答を合成（実通信なし）。
 
 ### 3.4 新規プロトコルの追加手順
 
-1. `js/protocols/<id>.js` に `ProtocolAdapter` を継承したクラスを実装（`connect` / `send` / イベント emit）。
-2. `js/protocols/index.js` の `PROTOCOLS` 配列に 1 エントリ追加（`id` / `label` / `AdapterClass` / `status`）。
-3. これだけで接続ダイアログ・sidebar に自動反映される（UI 側は登録を意識しない）。
+1. `ui/js/protocols/<id>.js` に `ProtocolAdapter` を継承したクラスを実装（`connect` / `send` / イベント emit）。
+2. `ui/js/protocols/index.js` の `PROTOCOLS` 配列に 1 エントリ追加（`id` / `label` / `AdapterClass` / `status`）。
+3. chat 以外を主タブにするなら `static get primaryTab()` を宣言する（REST=`raw` / MCP=`tools`）。
+4. これだけで接続ダイアログ・sidebar に自動反映される（UI 側は登録を意識しない）。
 
 ---
 
@@ -118,10 +121,11 @@ adapter は以下の `CustomEvent` を dispatch し、`AgentWindow` が購読す
 
 `js/window.js`。1 接続 = 1 インスタンス。`index.html` の `<template id="tplWindow">` を clone して DOM 構築。
 
-- **4 タブ**: Chat / Agent Card / Debug / Settings（MCP モードでは Chat を隠し **Tools** タブを露出）。
+- **タブ**: Chat / Agent Card / Debug / Settings（MCP は Chat を隠し **Tools**、REST は **Raw** を露出）。
+  どのタブで開くかは adapter の `static primaryTab`。
 - **ウィンドウ操作**: drag（ヘッダ）、8 方向 resize、最大化（ダブルクリック / ボタン）、ピン留め（位置・サイズ固定）。
-- **Chat**: ChatGPT 風 typewriter。user/agent 双方を 1〜数文字ずつ append。A2A/Slack は完了後に
-  Markdown / mrkdwn を `marked` + DOMPurify で HTML 化。応答時間（レイテンシ）を吹き出しに刻む。
+- **Chat**: ChatGPT 風 typewriter。user/agent 双方を 1〜数文字ずつ append。完了後に
+  Markdown を `marked` + DOMPurify で HTML 化。応答時間（レイテンシ）を吹き出しに刻む。
 - **Debug**: `rpc` フレームを append-only 描画。各行クリックで展開 → payload / headers サブタブ。
   矢印は受信 `→ in` / 送信 `← out`。`pause` / `clear` ツールバー付き。
 - **送信ボタン**: 通常は送信、応答待ち中は停止ボタン（`adapter.abort()`）に変化。
