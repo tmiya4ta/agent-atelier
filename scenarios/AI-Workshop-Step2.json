@@ -5,15 +5,13 @@
     "order": 20
   },
   "app": "atelier",
-  "exportedAt": "2026-07-30T15:24:50.910Z",
+  "exportedAt": "2026-08-01T11:06:49.217Z",
   "includesSecrets": false,
   "state": {
     "v": 1,
     "zoom": 1,
-    "sidebarCollapsed": false,
     "sidePanelW": 419,
     "theme": "light",
-    "activeSideCat": "catalogs",
     "identities": [],
     "catalogs": [],
     "scripts": [],
@@ -21,32 +19,32 @@
     "scriptPinned": false,
     "bookmarks": [
       {
-        "key": "a2a::https://fgw-for-non-broker-app-apacj-egl8ul.zm3ejw.usa-e2.cloudhub.io/maf-my-it-provisioning-agent",
+        "key": "a2a::https://agent-it-provisioning-app-s19337.s14hij.jpn-e1.cloudhub.io/",
         "protoId": "a2a",
-        "url": "https://fgw-for-non-broker-app-apacj-egl8ul.zm3ejw.usa-e2.cloudhub.io/maf-my-it-provisioning-agent",
+        "url": "https://agent-it-provisioning-app-s19337.s14hij.jpn-e1.cloudhub.io/",
         "name": "ITプロビジョニング"
       },
       {
-        "key": "a2a::https://fgw-for-non-broker-app-apacj-egl8ul.zm3ejw.usa-e2.cloudhub.io/maf-my-office-concierge-agent/",
+        "key": "a2a::https://agent-office-concierge-app-s19337.s14hij.jpn-e1.cloudhub.io/",
         "protoId": "a2a",
-        "url": "https://fgw-for-non-broker-app-apacj-egl8ul.zm3ejw.usa-e2.cloudhub.io/maf-my-office-concierge-agent/",
+        "url": "https://agent-office-concierge-app-s19337.s14hij.jpn-e1.cloudhub.io/",
         "name": "オフィスコンシェルジュ"
       },
       {
-        "key": "mcp::https://fgw-for-non-broker-app-apacj-egl8ul.zm3ejw.usa-e2.cloudhub.io/maf-my-employee-db-mcp/mcp",
+        "key": "mcp::https://mcp-employee-db-app-s19337.s14hij.jpn-e1.cloudhub.io/mcp",
         "protoId": "mcp",
-        "url": "https://fgw-for-non-broker-app-apacj-egl8ul.zm3ejw.usa-e2.cloudhub.io/maf-my-employee-db-mcp/mcp",
+        "url": "https://mcp-employee-db-app-s19337.s14hij.jpn-e1.cloudhub.io/mcp",
         "name": "社員MCPサーバー"
       },
       {
-        "key": "a2a::https://step2-v1-ingress-gw-cwix24.m7ad1b.jpn-e1.cloudhub.io/onboarding-broker-dsol90/.well-known/agent-card.json",
+        "key": "a2a::https://step2-v1-ingress-gw-cwix24.m7ad1b.jpn-e1.cloudhub.io/onboarding-broker-dsol90/",
         "protoId": "a2a",
-        "url": "https://step2-v1-ingress-gw-cwix24.m7ad1b.jpn-e1.cloudhub.io/onboarding-broker-dsol90/.well-known/agent-card.json",
+        "url": "https://step2-v1-ingress-gw-cwix24.m7ad1b.jpn-e1.cloudhub.io/onboarding-broker-dsol90/",
         "name": "Employee Onboarding Broker dsol90"
       }
     ],
     "closedWindows": [],
-    "activeWsIdx": 1,
+    "activeWsIdx": 0,
     "workspaces": [
       {
         "name": "Step2-Brokerなし",
@@ -54,52 +52,28 @@
           {
             "protoId": "a2a",
             "config": {
-              "url": "https://fgw-for-non-broker-app-apacj-egl8ul.zm3ejw.usa-e2.cloudhub.io/maf-my-it-provisioning-agent",
+              "url": "https://agent-it-provisioning-app-s19337.s14hij.jpn-e1.cloudhub.io/",
               "name": "ITプロビジョニング",
               "auth": ""
             },
-            "pos": {
-              "left": "1396px",
-              "top": "16px",
-              "width": "681px",
-              "height": "1310px",
-              "zIndex": "55"
-            },
-            "activeTab": "chat",
             "pinned": false
           },
           {
             "protoId": "a2a",
             "config": {
-              "url": "https://fgw-for-non-broker-app-apacj-egl8ul.zm3ejw.usa-e2.cloudhub.io/maf-my-office-concierge-agent/",
+              "url": "https://agent-office-concierge-app-s19337.s14hij.jpn-e1.cloudhub.io/",
               "name": "オフィスコンシェルジュ",
               "auth": ""
             },
-            "pos": {
-              "left": "706px",
-              "top": "16px",
-              "width": "674px",
-              "height": "1310px",
-              "zIndex": "54"
-            },
-            "activeTab": "chat",
             "pinned": false
           },
           {
             "protoId": "mcp",
             "config": {
-              "url": "https://fgw-for-non-broker-app-apacj-egl8ul.zm3ejw.usa-e2.cloudhub.io/maf-my-employee-db-mcp/mcp",
+              "url": "https://mcp-employee-db-app-s19337.s14hij.jpn-e1.cloudhub.io/mcp",
               "name": "社員MCPサーバー",
               "auth": ""
             },
-            "pos": {
-              "left": "16px",
-              "top": "16px",
-              "width": "674px",
-              "height": "1310px",
-              "zIndex": "43"
-            },
-            "activeTab": "tools",
             "pinned": false
           }
         ]
@@ -110,18 +84,10 @@
           {
             "protoId": "a2a",
             "config": {
-              "url": "https://step2-v1-ingress-gw-cwix24.m7ad1b.jpn-e1.cloudhub.io/onboarding-broker-dsol90/.well-known/agent-card.json",
+              "url": "https://step2-v1-ingress-gw-cwix24.m7ad1b.jpn-e1.cloudhub.io/onboarding-broker-dsol90/",
               "name": "Employee Onboarding Broker dsol90",
               "auth": ""
             },
-            "pos": {
-              "left": "16px",
-              "top": "16px",
-              "width": "2061px",
-              "height": "1310px",
-              "zIndex": "62"
-            },
-            "activeTab": "chat",
             "pinned": false
           }
         ]
