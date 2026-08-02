@@ -1,0 +1,117 @@
+{
+  "meta": {
+    "name": "External Agents & MCP Bridge",
+    "description": "k0 上の Node.js エージェント 2 本と、REST API を Anypoint の MCP Bridge で MCP 化したものを、Broker なし / あり で見比べる。",
+    "order": 60
+  },
+  "app": "atelier",
+  "exportedAt": "2026-08-02T00:00:00.000Z",
+  "includesSecrets": false,
+  "state": {
+    "v": 1,
+    "zoom": 1,
+    "sidePanelW": 400,
+    "theme": "light",
+    "identities": [],
+    "catalogs": [],
+    "scripts": [],
+    "selectedScriptId": null,
+    "scriptPinned": false,
+    "closedWindows": [],
+    "activeWsIdx": 0,
+    "bookmarks": [
+      {
+        "key": "a2a::https://theorems-relay-23fgzd.pnwfdv.jpn-e1.cloudhub.io/it-provisioning",
+        "protoId": "a2a",
+        "url": "https://theorems-relay-23fgzd.pnwfdv.jpn-e1.cloudhub.io/it-provisioning",
+        "name": "ITプロビジョニング (Node.js)"
+      },
+      {
+        "key": "a2a::https://theorems-relay-23fgzd.pnwfdv.jpn-e1.cloudhub.io/office-concierge",
+        "protoId": "a2a",
+        "url": "https://theorems-relay-23fgzd.pnwfdv.jpn-e1.cloudhub.io/office-concierge",
+        "name": "オフィスコンシェルジュ (Node.js)"
+      },
+      {
+        "key": "mcp::https://agent-network-ingress-gw-qeiwa4.s14hij.jpn-e1.cloudhub.io/mcp-employee-db-bridge/mcp",
+        "protoId": "mcp",
+        "url": "https://agent-network-ingress-gw-qeiwa4.s14hij.jpn-e1.cloudhub.io/mcp-employee-db-bridge/mcp",
+        "name": "社員DB (MCP Bridge)"
+      },
+      {
+        "key": "rest::https://agent-network-ingress-gw-qeiwa4.s14hij.jpn-e1.cloudhub.io/employee-db",
+        "protoId": "rest",
+        "url": "https://agent-network-ingress-gw-qeiwa4.s14hij.jpn-e1.cloudhub.io/employee-db",
+        "name": "社員DB (素の REST)"
+      },
+      {
+        "key": "a2a::https://agent-network-ingress-gw-qeiwa4.s14hij.jpn-e1.cloudhub.io/onboarding_broker_ext/",
+        "protoId": "a2a",
+        "url": "https://agent-network-ingress-gw-qeiwa4.s14hij.jpn-e1.cloudhub.io/onboarding_broker_ext/",
+        "name": "Onboarding Broker (A2A 1.0)"
+      }
+    ],
+    "workspaces": [
+      {
+        "name": "Broker なし",
+        "windows": [
+          {
+            "protoId": "a2a",
+            "config": {
+              "url": "https://theorems-relay-23fgzd.pnwfdv.jpn-e1.cloudhub.io/it-provisioning",
+              "name": "ITプロビジョニング (Node.js)",
+              "auth": ""
+            },
+            "pinned": false
+          },
+          {
+            "protoId": "a2a",
+            "config": {
+              "url": "https://theorems-relay-23fgzd.pnwfdv.jpn-e1.cloudhub.io/office-concierge",
+              "name": "オフィスコンシェルジュ (Node.js)",
+              "auth": ""
+            },
+            "pinned": false
+          },
+          {
+            "protoId": "mcp",
+            "config": {
+              "url": "https://agent-network-ingress-gw-qeiwa4.s14hij.jpn-e1.cloudhub.io/mcp-employee-db-bridge/mcp",
+              "name": "社員DB (MCP Bridge)",
+              "auth": ""
+            },
+            "pinned": false
+          }
+        ]
+      },
+      {
+        "name": "Broker あり",
+        "windows": [
+          {
+            "protoId": "a2a",
+            "config": {
+              "url": "https://agent-network-ingress-gw-qeiwa4.s14hij.jpn-e1.cloudhub.io/onboarding_broker_ext/",
+              "name": "Onboarding Broker (A2A 1.0)",
+              "auth": ""
+            },
+            "pinned": false
+          }
+        ]
+      },
+      {
+        "name": "REST と MCP の対比",
+        "windows": [
+          {
+            "protoId": "rest",
+            "config": {
+              "url": "https://agent-network-ingress-gw-qeiwa4.s14hij.jpn-e1.cloudhub.io/employee-db",
+              "name": "社員DB (素の REST)",
+              "auth": ""
+            },
+            "pinned": false
+          }
+        ]
+      }
+    ]
+  }
+}

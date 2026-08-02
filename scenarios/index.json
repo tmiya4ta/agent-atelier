@@ -56,6 +56,20 @@
       },
       "exportedAt": "2026-05-30T06:30:00.000Z",
       "order": 40
+    },
+    {
+      "id": "External-Agents-MCP-Bridge",
+      "url": "/scenarios/External-Agents-MCP-Bridge.json",
+      "name": "External Agents & MCP Bridge",
+      "description": "k0 上の Node.js エージェント 2 本と、REST API を Anypoint の MCP Bridge で MCP 化したものを、Broker なし / あり で見比べる。",
+      "counts": {
+        "workspaces": 3,
+        "bookmarks": 5,
+        "scripts": 0,
+        "identities": 0
+      },
+      "exportedAt": "2026-08-02T00:00:00.000Z",
+      "order": 60
     }
   ]
 }
