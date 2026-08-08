@@ -4349,6 +4349,7 @@ function applyProtoSpecificFields() {
   const isMock  = proto === "mock";
   const isDb    = proto === "db";
   const isRest  = proto === "rest";
+  const isSoap  = proto === "soap";
   // DB 専用フィールド (type / discover / database / user / password) の表示制御
   const dbFields = $("#dlgDbFields");
   if (dbFields) dbFields.hidden = !isDb;
@@ -4408,19 +4409,52 @@ function applyProtoSpecificFields() {
   const authField  = $("#dlgAuthRef")?.closest(".field");
   const testBtn    = $("#dlgTest");
   const advanced   = document.querySelector("#connectDialog .advanced");
-  if (urlLabel)  urlLabel.textContent  = isMock ? "agent name" : isRest ? "base url" : "discovery url";
-  if (urlHint)   urlHint.textContent   = isMock ? "The name alone conveys the role (e.g. Credit Review / Fraud Detection / Incident)"
-                                                : isRest ? "任意。 raw タブの初期値に入るだけで、 叩く先は raw タブで都度指定します"
-                                                : "A2A: base URL → AgentCard resolution / MCP: /mcp endpoint";
+  // protocol ごとの url 欄の見出し / 説明 / 例。 三項演算子を足していくと
+  // 新しい protocol を入れたとき (SOAP がそうだった) 説明が A2A のまま残る。
+  const URL_FIELD = {
+    mock: { label: "agent name",
+            hint:  "The name alone conveys the role (e.g. Credit Review / Fraud Detection / Incident)",
+            ph:    "e.g. Assessment Agent",
+            title: "This name conveys its role. No real communication — it replays the Script Editor script / tool calls." },
+    rest: { label: "base url",
+            hint:  "任意。 raw タブの初期値に入るだけで、 叩く先は raw タブで都度指定します",
+            ph:    "https://api.example.com",
+            title: "raw タブの URL 欄の初期値になるだけ。 空でも構いません。" },
+    soap: { label: "wsdl url",
+            hint:  "WSDL の URL。 operation 一覧と Envelope の雛形を作ります",
+            ph:    "https://example.com/service?wsdl",
+            title: "WSDL を取得して operation を並べます。 選ぶと endpoint / SOAPAction / Envelope 雛形が raw タブに入ります。" },
+    db:   { label: "server url",
+            hint:  "clouderby (JDBC over HTTP) base URL",
+            ph:    "https://mule-clouderby-xxxx.cloudhub.io   (clouderby base URL)",
+            title: "Base URL of the clouderby (JDBC over HTTP) server. The endpoint that provides /sessions /queries /metadata." },
+    a2a:  { label: "discovery url",
+            hint:  "base URL を入れると /.well-known/agent-card.json を取得します",
+            ph:    "https://api.example.com",
+            title: "Base URL is fine — Atelier appends /.well-known/agent-card.json automatically (falls back to /.well-known/agent.json for the legacy spec)." },
+    mcp:  { label: "discovery url",
+            hint:  "POST /mcp を直接受ける URL",
+            ph:    "https://example.com/mcp   (MCP JSON-RPC endpoint)",
+            title: "Point at the MCP server's JSON-RPC endpoint." },
+  };
+  const uf = URL_FIELD[proto] || URL_FIELD.a2a;
+  if (urlLabel)  urlLabel.textContent = uf.label;
+  if (urlHint)   urlHint.textContent  = uf.hint;
+  // 見出しも protocol に合わせる。 SOAP / REST / DB を選んでいるのに
+  // "Connect to an agent" のままだと相手を取り違える。 編集モードの見出しは触らない。
+  const dlgTitleEl = $("#dlgTitle");
+  if (dlgTitleEl && !state._editingBookmarkKey) {
+    const noun = { soap: "SOAP service", rest: "REST API", db: "database",
+                   mcp: "MCP server", mock: "mock agent" }[proto] || "agent";
+    dlgTitleEl.innerHTML = `Connect to ${/^([aeiou]|MCP)/i.test(noun) ? "an" : "a"} <em>${escapeHtml(noun)}</em>`;
+  }
   if (urlPrefix) urlPrefix.textContent = isMock ? "name" : "url";
   // mock では display name 行・auth 行・test ボタン・advanced を畳む。
   // ただし編集モードでは url(=mock:// key) が readonly なので、rename 用に name 行は残す。
   const isEditing = !!state._editingBookmarkKey;
   if (urlLabel && isMock && isEditing) urlLabel.textContent = "agent id";
   if (urlHint  && isMock && isEditing) urlHint.textContent  = "mock connection key (readonly)";
-  // DB: url 欄は clouderby サーバの base URL。auth(identity)/channel/test/advanced は不要。
-  if (urlLabel && isDb) urlLabel.textContent = "server url";
-  if (urlHint  && isDb) urlHint.textContent  = "clouderby (JDBC over HTTP) base URL";
+  // DB: auth(identity)/channel/test/advanced は不要 (label/hint は上の表で設定済み)。
   if (urlPrefix && isDb) urlPrefix.textContent = "url";
   if (nameField) nameField.hidden = isMock && !isEditing;
   // AUTH(identity): Slack は bot token をコネクションに紐付ける。A2A/MCP は
@@ -4436,28 +4470,13 @@ function applyProtoSpecificFields() {
   if (testBtn)   testBtn.hidden   = isMock;            // DB は接続(session)テスト可
   if (advanced)  advanced.hidden  = isMock || isDb;
 
-  // placeholder の切替
-  const urlInput  = $("#dlgUrl");
+  // placeholder / tooltip は上の URL_FIELD 表から引く。 以前は if/else を足していく形で、
+  // SOAP を入れたときに A2A の文言が出たままだった。
+  const urlInput = $("#dlgUrl");
   if (urlInput) {
-    if (isMock) {
-      const mcpKind = (state.mockEmulate || "a2a") === "mcp";
-      urlInput.placeholder = mcpKind
-        ? "e.g. Contract Data Store"
-        : "e.g. Assessment Agent";
-      urlInput.title = "This name conveys its role. No real communication — it replays the Script Editor script / tool calls.";
-    } else if (isSlack) {
-      urlInput.placeholder = "https://slack.com";
-      urlInput.title = "";
-    } else if (isMcp) {
-      urlInput.placeholder = "https://example.com/mcp   (MCP JSON-RPC endpoint)";
-      urlInput.title = "Point at the MCP server's JSON-RPC endpoint (e.g., https://atelier-mcp-mdm-znutqp.pnwfdv.jpn-e1.cloudhub.io/mcp).";
-    } else if (isDb) {
-      urlInput.placeholder = "https://mule-clouderby-xxxx.cloudhub.io   (clouderby base URL)";
-      urlInput.title = "Base URL of the clouderby (JDBC over HTTP) server. The endpoint that provides /sessions /queries /metadata.";
-    } else {
-      urlInput.placeholder = "https://api.example.com";
-      urlInput.title = "Base URL is fine — Atelier appends /.well-known/agent-card.json automatically (falls back to /.well-known/agent.json for the legacy spec).";
-    }
+    urlInput.placeholder = (isMock && (state.mockEmulate || "a2a") === "mcp")
+      ? "e.g. Contract Data Store" : uf.ph;
+    urlInput.title = uf.title || "";
   }
 
   // 全 proto で本体高さを一定にし、 中央寄せ時の再センタリングをなくす。
