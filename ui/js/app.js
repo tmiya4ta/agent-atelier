@@ -6798,6 +6798,14 @@ async function testDialog() {
           `<span class='dts-dot'></span> ${result.status} · via <code>proxy</code> · ${ms}ms` +
           `<br/><span class='dts-warn'>⚠ Blocked by Atelier's own allowlist — the request never reached the server.` +
           ` Add this host to <code>proxy.allowHosts</code> in the deployment.</span>`);
+      } else if (!result.ok) {
+        // HTTP 自体が失敗しているときに解析結果を主役にしない。 502 なのに
+        // "not a readable WSDL" と出ると、 URL の問題だと誤解する (実際に出た)。
+        setDialogTestStatus("err",
+          `<span class='dts-dot'></span> ${result.status} ${escapeHtml(result.statusText || "")}` +
+          ` · via <code>${escapeHtml(result.via)}</code> · ${ms}ms` +
+          `<br/><span class='dts-warn'>The server did not return a successful response.` +
+          ` A 5xx here usually means the SOAP service or the gateway in front of it is down.</span>`);
       } else if (result.parseError) {
         setDialogTestStatus("warn",
           `<span class='dts-dot'></span> ${result.status} ${escapeHtml(result.statusText || "")}` +
