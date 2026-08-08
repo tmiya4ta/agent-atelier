@@ -2418,17 +2418,15 @@ export class AgentWindow {
     const toolsTab = node.querySelector('.aw-tab[data-tab="tools"]');
     const rawTab   = node.querySelector('.aw-tab[data-tab="raw"]');
     if (chatTab)  { chatTab.hidden = true; chatTab.classList.remove("is-active"); }
-    if (rawTab)   rawTab.hidden = false;
+    // raw タブは出さない。 operation ごとに endpoint / headers / envelope を
+    // その場で編集できるので、 別に素のリクエスト欄を持つ意味がなくなった。
+    if (rawTab)   { rawTab.hidden = true; rawTab.classList.remove("is-active"); }
+    node.querySelector(".pane-raw")?.classList.remove("is-active");
     if (toolsTab) { toolsTab.hidden = false; toolsTab.classList.add("is-active"); }
     node.querySelector(".pane-chat")?.classList.remove("is-active");
     node.querySelector(".pane-tools")?.classList.add("is-active");
     const cardTab = node.querySelector('.aw-tab[data-tab="card"] span:last-child');
     if (cardTab) cardTab.textContent = "info";
-
-    // raw タブは手書き用。 operation セレクタは tools 側に移したので出さない。
-    const methodEl = node.querySelector(".raw-method");
-    if (methodEl) { methodEl.value = "POST"; methodEl.disabled = true; }
-    this._wireRawPane(node);
 
     const list = node.querySelector(".pane-tools .tools-list");
     list.addEventListener("click", (ev) => {
@@ -2509,6 +2507,19 @@ export class AgentWindow {
     urlRow.appendChild(urlIn);
     fields.appendChild(urlRow);
 
+    // HTTP ヘッダ。 普段は Content-Type と SOAPAction が入っていれば足りるので畳んでおく。
+    // WS-Security や独自ヘッダを足したいときだけ開く。
+    const hdrWrap = document.createElement("details");
+    hdrWrap.className = "soap-headers";
+    const hdrText = Object.entries(req.headers).map(([k, v]) => `${k}: ${v}`).join("\n");
+    hdrWrap.innerHTML = `<summary>headers <em>${Object.keys(req.headers).length}</em>` +
+                        `<span class="soap-headers-hint">one per line · Name: value</span></summary>`;
+    const hdrIn = document.createElement("textarea");
+    hdrIn.className = "tool-field-input soap-headers-input";
+    hdrIn.rows = 3; hdrIn.spellcheck = false; hdrIn.value = hdrText;
+    hdrWrap.appendChild(hdrIn);
+    fields.appendChild(hdrWrap);
+
     const bodyRow = document.createElement("label");
     bodyRow.className = "tool-field";
     bodyRow.innerHTML = `<span class="tool-field-label">envelope</span>` +
@@ -2573,8 +2584,14 @@ export class AgentWindow {
       status.textContent = attached ? `sending ${attached.name}…` : "sending…";
       result.hidden = true; result.textContent = "";
       try {
+        const headers = {};
+        for (const line of hdrIn.value.split("\n")) {
+          const i = line.indexOf(":");
+          if (i <= 0) continue;
+          headers[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+        }
         const out = await this.adapter.rawRequest({
-          method: "POST", url, headers: req.headers, body: attached || bodyIn.value
+          method: "POST", url, headers, body: attached || bodyIn.value
         });
         status.textContent = `${out.status} ${out.statusText || ""}  ·  ${out.ms}ms  ·  ${out.via}`;
         status.className = "raw-status" + (out.ok ? " is-ok" : " is-error");

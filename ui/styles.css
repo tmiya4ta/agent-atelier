@@ -6916,3 +6916,27 @@ body.is-dark .auth-gate-btn2 { background: var(--panel); color: var(--ink-2); }
 .soap-file-clear:hover { color: var(--warn); }
 /* envelope は既定で広めに。 手で高さも変えられる。 */
 .tool-field-input.soap-envelope { min-height: 220px; resize: vertical; font-family: var(--f-mono); }
+
+/* ── SOAP: HTTP ヘッダ欄 (既定は畳む) ───────────────────────────── */
+.soap-headers { margin: 2px 0 6px; }
+.soap-headers > summary {
+  display: flex; align-items: center; gap: 8px;
+  cursor: pointer; list-style: none;
+  font-family: var(--f-mono);
+  font-size: calc(10px * var(--fs-mul, 1.1) * var(--fs, 1));
+  letter-spacing: 0.08em; color: var(--ink-4);
+  padding: 3px 0;
+}
+.soap-headers > summary::-webkit-details-marker { display: none; }
+.soap-headers > summary::before { content: "▸"; font-size: 9px; color: var(--ink-4); }
+.soap-headers[open] > summary::before { content: "▾"; }
+.soap-headers > summary:hover { color: var(--ink); }
+.soap-headers > summary em { font-style: normal; color: var(--ink-3); }
+.soap-headers-hint { margin-left: auto; color: var(--ink-4); opacity: .8; }
+/* details は tool-field の grid に乗らないので幅を自分で持たせる。
+   持たせないと Content-Type が数文字ずつ折り返して読めない。 */
+.soap-headers { display: block; width: 100%; }
+.tool-field-input.soap-headers-input {
+  display: block; width: 100%; box-sizing: border-box;
+  margin-top: 4px; resize: vertical; font-family: var(--f-mono);
+}
