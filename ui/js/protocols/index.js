@@ -6,6 +6,7 @@ import { MCPAdapter }   from "./mcp.js";
 import { MockAdapter }  from "./mock.js";
 import { DbAdapter }    from "./db.js";
 import { RestAdapter }  from "./rest.js";
+import { SoapAdapter }  from "./soap.js";
 
 // 表示順 = この配列の順 (connect ダイアログの grid は 4 列)。
 export const PROTOCOLS = [
@@ -15,6 +16,14 @@ export const PROTOCOLS = [
     sub: "openapi · http",
     description: "REST client · OpenAPI/Swagger (JSON·YAML) からエンドポイント一覧 + raw リクエスト",
     AdapterClass: RestAdapter,
+    status: "ready"
+  },
+  {
+    id: "soap",
+    label: "SOAP",
+    sub: "wsdl · xml",
+    description: "SOAP client · WSDL から operation 一覧 + Envelope 雛形を生成",
+    AdapterClass: SoapAdapter,
     status: "ready"
   },
   {

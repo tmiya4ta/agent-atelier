@@ -309,6 +309,7 @@ export class AgentWindow {
     if (this.protoMode === "mcp")  this._setupMcpMode(node);
     // REST モード: endpoints + raw タブを露出し、 chat は使わない。
     if (this.protoMode === "rest") this._setupRestMode(node);
+    if (this.protoMode === "soap") this._setupSoapMode(node);
 
     // 既に open 済み adapter を渡された場合は、 open event 相当の初期描画を即時実行
     if (this.adapter.state === "open" && this.adapter.agentCard) {
@@ -2410,6 +2411,47 @@ export class AgentWindow {
   // 現在は raw タブのみ。 OpenAPI 由来の endpoints タブは実装済みだが非表示
   // (rest.js の connect() が spec を取りにいかないため中身が空になる)。
   // 復活させるときは endpoints タブを show に戻し、 _restApplyOpen を購読する。
+  // SOAP は REST と同じ raw ペインを使う。 違いは operation セレクタが出ることだけ。
+  _setupSoapMode(node) {
+    const chatTab = node.querySelector('.aw-tab[data-tab="chat"]');
+    if (chatTab) { chatTab.hidden = true; chatTab.classList.remove("is-active"); }
+    node.querySelector(".pane-chat")?.classList.remove("is-active");
+    const rawTab = node.querySelector('.aw-tab[data-tab="raw"]');
+    if (rawTab) { rawTab.hidden = false; rawTab.classList.add("is-active"); }
+    node.querySelector(".pane-raw")?.classList.add("is-active");
+    const cardTab = node.querySelector('.aw-tab[data-tab="card"] span:last-child');
+    if (cardTab) cardTab.textContent = "info";
+
+    // method は SOAP では常に POST。 触らせない。
+    const methodEl = node.querySelector(".raw-method");
+    if (methodEl) { methodEl.value = "POST"; methodEl.disabled = true; }
+
+    this._wireRawPane(node);
+
+    const line = node.querySelector(".raw-op-line");
+    const sel  = node.querySelector(".raw-op");
+    if (line) line.hidden = false;
+
+    const fill = () => {
+      const req = this.adapter.requestFor?.(sel.value);
+      if (!req) return;
+      node.querySelector(".raw-url").value = req.url || "";
+      node.querySelector(".raw-headers").value =
+        Object.entries(req.headers).map(([k, v]) => `${k}: ${v}`).join("\n");
+      node.querySelector(".raw-body").value = req.body || "";
+    };
+    const populate = () => {
+      const ops = this.adapter.operations || [];
+      sel.innerHTML = ops.map(o =>
+        `<option value="${escapeHtml(o.key)}">${escapeHtml(o.label || o.name)}</option>`).join("");
+      if (ops.length) fill();
+    };
+    sel?.addEventListener("change", fill);
+    this.adapter.addEventListener("open", populate);
+    if (this.adapter.state === "open") populate();
+  }
+
+
   _setupRestMode(node) {
     const chatTab = node.querySelector('.aw-tab[data-tab="chat"]');
     if (chatTab) { chatTab.hidden = true; chatTab.classList.remove("is-active"); }
@@ -2672,8 +2714,12 @@ export class AgentWindow {
         });
         statusEl.textContent = `${out.status} ${out.statusText || ""}  ·  ${out.ms}ms  ·  ${out.via}`;
         statusEl.className = "raw-status" + (out.ok ? " is-ok" : " is-error");
+        // JSON なら色付け、 XML/SOAP なら字下げして色付け、 どちらでもなければ素のまま
         try { resEl.innerHTML = syntaxJson(JSON.parse(out.body)); }
-        catch { resEl.textContent = out.body; }
+        catch {
+          if (/^\s*<[?a-zA-Z]/.test(out.body)) resEl.innerHTML = syntaxXml(out.body);
+          else resEl.textContent = out.body;
+        }
       } catch (e) {
         statusEl.textContent = String(e?.message || e);
         statusEl.className = "raw-status is-error";
@@ -2869,6 +2915,44 @@ function mrkdwnToHtml(text) {
 
 // JSON syntax highlighter (keys / strings / numbers / booleans-null)
 // 配列内の値も含めて色をつける。
+// XML を字下げして色付けする。 SOAP の応答は 1 行で返ってくることが多く、
+// そのまま出すと読めない。 syntaxJson と同じクラス (k=タグ名 / s=属性値 / n=テキスト) を
+// 使うので配色は共通。
+function syntaxXml(text) {
+  const pretty = indentXml(String(text || ""));
+  return escapeHtml(pretty)
+    // タグ: &lt;/?name ... &gt;
+    .replace(/(&lt;\/?)([\w.:-]+)([^&]*?)(\/?&gt;)/g, (m, open, name, attrs, close) => {
+      const a = attrs.replace(/([\w.:-]+)=(&quot;[^&]*?&quot;)/g,
+        (_, k, v) => `<span class="b">${k}</span>=<span class="s">${v}</span>`);
+      return `${open}<span class="k">${name}</span>${a}${close}`;
+    });
+}
+
+// 属性値やテキスト中の "<" は既に escape 済みなので、 タグ境界だけ見て改行を入れる。
+function indentXml(xml) {
+  const compact = xml.replace(/>\s+</g, "><").trim();
+  const out = [];
+  let depth = 0;
+  for (const tok of compact.split(/(<[^>]+>)/).filter(t => t !== "")) {
+    if (!tok.startsWith("<")) { if (tok.trim()) out.push("  ".repeat(depth) + tok.trim()); continue; }
+    const isClose = tok.startsWith("</");
+    const isSelf  = tok.endsWith("/>") || tok.startsWith("<?") || tok.startsWith("<!");
+    if (isClose) depth = Math.max(0, depth - 1);
+    out.push("  ".repeat(depth) + tok);
+    if (!isClose && !isSelf) depth++;
+  }
+  // <a>text</a> のように 1 要素で閉じるものは 1 行に畳み直す (縦に伸びすぎるため)
+  const joined = [];
+  for (let i = 0; i < out.length; i++) {
+    const a = out[i], b = out[i + 1], c = out[i + 2];
+    if (b !== undefined && c !== undefined && !b.trim().startsWith("<") && c.trim().startsWith("</")) {
+      joined.push(a + b.trim() + c.trim()); i += 2;
+    } else joined.push(a);
+  }
+  return joined.join("\n");
+}
+
 function syntaxJson(obj) {
   const raw = escapeHtml(JSON.stringify(obj, null, 2));
   return raw.replace(

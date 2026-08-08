@@ -1292,6 +1292,11 @@ clear
         <!-- REST RAW PANE (spec が無い / spec に載っていない endpoint を素で叩く) -->
         <section class="pane pane-raw" data-pane="raw">
           <div class="raw-form">
+            <!-- SOAP のときだけ出す。 選ぶと endpoint / SOAPAction / Envelope 雛形が入る -->
+            <div class="raw-op-line" hidden>
+              <label class="raw-label" for="rawOp">operation</label>
+              <select class="raw-op" id="rawOp" aria-label="SOAP operation"></select>
+            </div>
             <div class="raw-line">
               <select class="raw-method" aria-label="HTTP method">
                 <option>GET</option><option>POST</option><option>PUT</option>
