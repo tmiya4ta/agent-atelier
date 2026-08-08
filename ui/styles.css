@@ -6889,3 +6889,30 @@ body.is-dark .auth-gate-btn2 { background: var(--panel); color: var(--ink-2); }
 /* Export ダイアログで、 名前欄の代わりに出す導入文
    (保存先ダイアログが名前も扱うので、 ここでは何が起きるかだけ伝える)。 */
 .modal-hint-lead { margin: 0 0 4px; }
+
+/* ── SOAP: operation アコーディオン内のファイル添付 ─────────────────
+   3MB 級の XML は textarea に載せると重いので File のまま送る。
+   添付中は envelope 欄を伏せ、 chip で名前とサイズだけ見せる。 */
+.soap-file-row { display: flex; align-items: center; gap: 8px; margin: 6px 0 2px; flex-wrap: wrap; }
+.soap-file-btn {
+  display: inline-flex; align-items: center;
+  padding: 3px 9px; border: 1px solid var(--line); border-radius: 5px;
+  background: var(--panel); color: var(--ink-3);
+  font-family: var(--f-mono); font-size: calc(10px * var(--fs-mul, 1.1) * var(--fs, 1));
+  cursor: pointer; transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.soap-file-btn:hover { background: var(--line-2); color: var(--ink); border-color: var(--ink-4); }
+.soap-file-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 6px 3px 9px; border: 1px solid var(--accent); border-radius: 5px;
+  font-family: var(--f-mono); font-size: calc(10px * var(--fs-mul, 1.1) * var(--fs, 1));
+  color: var(--ink);
+}
+.soap-file-chip[hidden] { display: none; }
+.soap-file-clear {
+  border: 0; background: transparent; cursor: pointer;
+  color: var(--ink-4); font-size: 13px; line-height: 1; padding: 0 2px;
+}
+.soap-file-clear:hover { color: var(--warn); }
+/* envelope は既定で広めに。 手で高さも変えられる。 */
+.tool-field-input.soap-envelope { min-height: 220px; resize: vertical; font-family: var(--f-mono); }

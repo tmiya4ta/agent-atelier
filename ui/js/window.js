@@ -2411,161 +2411,141 @@ export class AgentWindow {
   // 現在は raw タブのみ。 OpenAPI 由来の endpoints タブは実装済みだが非表示
   // (rest.js の connect() が spec を取りにいかないため中身が空になる)。
   // 復活させるときは endpoints タブを show に戻し、 _restApplyOpen を購読する。
-  // SOAP は REST と同じ raw ペインを使う。 違いは operation セレクタが出ることだけ。
+  // SOAP は MCP と同じ tools 一覧を主役にする。 operation ごとにアコーディオンを開くと
+  // endpoint / Envelope / Send / 結果がその場に出る。 raw タブは手書き用に残す。
   _setupSoapMode(node) {
-    const chatTab = node.querySelector('.aw-tab[data-tab="chat"]');
-    if (chatTab) { chatTab.hidden = true; chatTab.classList.remove("is-active"); }
+    const chatTab  = node.querySelector('.aw-tab[data-tab="chat"]');
+    const toolsTab = node.querySelector('.aw-tab[data-tab="tools"]');
+    const rawTab   = node.querySelector('.aw-tab[data-tab="raw"]');
+    if (chatTab)  { chatTab.hidden = true; chatTab.classList.remove("is-active"); }
+    if (rawTab)   rawTab.hidden = false;
+    if (toolsTab) { toolsTab.hidden = false; toolsTab.classList.add("is-active"); }
     node.querySelector(".pane-chat")?.classList.remove("is-active");
-    const rawTab = node.querySelector('.aw-tab[data-tab="raw"]');
-    if (rawTab) { rawTab.hidden = false; rawTab.classList.add("is-active"); }
-    node.querySelector(".pane-raw")?.classList.add("is-active");
+    node.querySelector(".pane-tools")?.classList.add("is-active");
     const cardTab = node.querySelector('.aw-tab[data-tab="card"] span:last-child');
     if (cardTab) cardTab.textContent = "info";
 
-    // method は SOAP では常に POST。 触らせない。
+    // raw タブは手書き用。 operation セレクタは tools 側に移したので出さない。
     const methodEl = node.querySelector(".raw-method");
     if (methodEl) { methodEl.value = "POST"; methodEl.disabled = true; }
-
     this._wireRawPane(node);
 
-    const line = node.querySelector(".raw-op-line");
-    const sel  = node.querySelector(".raw-op");
-    if (line) line.hidden = false;
+    const list = node.querySelector(".pane-tools .tools-list");
+    list.addEventListener("click", (ev) => {
+      const head = ev.target.closest(".tool-item");
+      if (!head) return;
+      const acc = head.closest(".tool-acc");
+      if (!acc) return;
+      const op = (this.adapter.operations || []).find(o => o.key === acc.dataset.op);
+      if (!op) return;
+      const willOpen = !acc.classList.contains("is-open");
+      list.querySelectorAll(".tool-acc.is-open").forEach(a => { if (a !== acc) a.classList.remove("is-open"); });
+      if (willOpen && !acc.dataset.built) { this._buildSoapOpBody(acc, op); acc.dataset.built = "1"; }
+      acc.classList.toggle("is-open", willOpen);
+    });
+    this._soapDom = { list };
 
-    const fill = () => {
-      const req = this.adapter.requestFor?.(sel.value);
-      if (!req) return;
-      node.querySelector(".raw-url").value = req.url || "";
-      node.querySelector(".raw-headers").value =
-        Object.entries(req.headers).map(([k, v]) => `${k}: ${v}`).join("\n");
-      node.querySelector(".raw-body").value = req.body || "";
-    };
-    const populate = () => {
-      const ops = this.adapter.operations || [];
-      sel.innerHTML = ops.map(o =>
-        `<option value="${escapeHtml(o.key)}">${escapeHtml(o.label || o.name)}</option>`).join("");
-      if (ops.length) fill();
-    };
-    sel?.addEventListener("change", fill);
-    this.adapter.addEventListener("open", populate);
-    if (this.adapter.state === "open") populate();
+    const render = () => this._renderSoapOps();
+    this.adapter.addEventListener("open", render);
+    if (this.adapter.state === "open") render();
   }
 
-
-  _setupRestMode(node) {
-    const chatTab = node.querySelector('.aw-tab[data-tab="chat"]');
-    if (chatTab) { chatTab.hidden = true; chatTab.classList.remove("is-active"); }
-    node.querySelector(".pane-chat")?.classList.remove("is-active");
-    const rawTab = node.querySelector('.aw-tab[data-tab="raw"]');
-    if (rawTab) { rawTab.hidden = false; rawTab.classList.add("is-active"); }
-    node.querySelector(".pane-raw")?.classList.add("is-active");
-    // agent card タブは REST では接続情報しか出せないので "info" にする
-    const cardTab = node.querySelector('.aw-tab[data-tab="card"] span:last-child');
-    if (cardTab) cardTab.textContent = "info";
-
-    this._wireRawPane(node);
-    this._renderRestSpecInfo();
-  }
-
-  _restApplyOpen(detail, node) {
-    this._restOps = Array.isArray(detail?.operations) ? detail.operations : [];
-    const root = node || this.el;
-    const cnt = root.querySelector('.aw-tab[data-tab="rest"] .tab-count');
-    if (cnt) cnt.textContent = String(this._restOps.length);
-    const base = root.querySelector(".rest-base");
-    if (base) base.textContent = this.adapter.baseUrl || "";
-    const note = root.querySelector(".rest-note");
-    if (note) {
-      const err = detail?.specError || this.adapter.specError;
-      note.hidden = !err;
-      // spec が読めなくても raw タブは使えるので、 行き止まりにせず誘導する
-      if (err) note.textContent = `Could not load the spec: ${err} — you can still send from the raw tab.`;
-    }
-    this._renderRestList();
-    this._renderRestSpecInfo();
-  }
-
-  _renderRestList() {
-    if (!this._restDom) return;
-    const { list } = this._restDom;
+  _renderSoapOps() {
+    const list = this._soapDom?.list;
+    if (!list) return;
+    const ops = this.adapter.operations || [];
+    const cnt = this.el.querySelector('.aw-tab[data-tab="tools"] .tab-count');
+    if (cnt) cnt.textContent = String(ops.length);
     list.innerHTML = "";
-    const ops = this._restOps || [];
     if (!ops.length) {
-      list.innerHTML = '<div class="tools-empty">no endpoints</div>';
+      const p = document.createElement("p");
+      p.className = "tool-form-empty";
+      p.textContent = this.adapter.wsdlError
+        ? `Could not read the WSDL: ${this.adapter.wsdlError} — use the raw tab to send by hand.`
+        : "No operations found in the WSDL.";
+      list.appendChild(p);
       return;
     }
     for (const op of ops) {
-      const argc = op.params.length + (op.body ? 1 : 0);
       const acc = document.createElement("div");
-      acc.className = "tool-acc rest-op";
-      acc.dataset.op = op.id;
-      acc.dataset.search = `${op.method} ${op.path} ${op.summary} ${op.id}`.toLowerCase();
+      acc.className = "tool-acc soap-op";
+      acc.dataset.op = op.key;
       acc.innerHTML = `
         <button type="button" class="tool-item">
-          <span class="rest-verb" data-m="${escapeHtml(op.method)}">${escapeHtml(op.method)}</span>
+          <span class="rest-verb" data-m="POST">SOAP</span>
           <span class="tool-item-main">
-            <span class="tool-item-name">${escapeHtml(op.path)}</span>
-            <span class="tool-item-desc">${escapeHtml(op.summary || op.description || "")}</span>
+            <span class="tool-item-name">${escapeHtml(op.name)}</span>
+            <span class="tool-item-desc">${escapeHtml(op.soapAction || "(no soapAction)")}</span>
           </span>
-          <span class="tool-item-tags">
-            ${argc ? `<span class="tool-tag">${argc} arg${argc === 1 ? "" : "s"}</span>`
-                   : `<span class="tool-tag is-noargs">no args</span>`}
-          </span>
+          <span class="tool-item-tags"><span class="tool-tag">${escapeHtml(op.soapVersion)}</span></span>
           <span class="tool-go" aria-hidden="true">▾</span>
         </button>
-        <div class="tool-acc-body"><div class="tool-acc-inner"></div></div>
-      `;
+        <div class="tool-acc-body"><div class="tool-acc-inner"></div></div>`;
       list.appendChild(acc);
     }
   }
 
-  // アコーディオン body: 説明 + パラメータ (path/query/header) + body + Send + 結果
-  _buildRestOpBody(acc, op) {
+  // アコーディオン body: endpoint + Envelope (手書き or ファイル) + Send + 結果
+  _buildSoapOpBody(acc, op) {
     const inner = acc.querySelector(".tool-acc-inner");
     inner.innerHTML = "";
-    if (op.description || op.summary) {
-      const d = document.createElement("p");
-      d.className = "tool-form-desc";
-      d.textContent = op.description || op.summary;
-      inner.appendChild(d);
-    }
+    const req = this.adapter.requestFor(op.key) || { url: "", headers: {}, body: "" };
+
     const fields = document.createElement("form");
     fields.className = "tool-form-fields";
     fields.addEventListener("submit", e => e.preventDefault());
 
-    for (const p of op.params) {
-      // in:body (Swagger 2) は body テキストエリアで扱うのでフォーム項目にはしない
-      if (p.in === "body") continue;
-      fields.appendChild(this._buildRestField(p));
-    }
-    if (op.body) {
-      const row = document.createElement("label");
-      row.className = "tool-field";
-      row.innerHTML = `<span class="tool-field-label">body${op.bodyRequired ? " *" : ""}</span>` +
-                      `<span class="tool-field-desc">${escapeHtml(op.bodyContentType || "application/json")}</span>`;
-      const ta = document.createElement("textarea");
-      ta.className = "tool-field-input rest-body-input";
-      ta.rows = 5;
-      ta.spellcheck = false;
-      ta.value = op.bodySample || "";
-      row.appendChild(ta);
-      fields.appendChild(row);
-    }
-    if (!fields.children.length) {
-      const note = document.createElement("p");
-      note.className = "tool-form-empty";
-      note.textContent = "(no parameters — Send directly)";
-      fields.appendChild(note);
-    }
+    const urlRow = document.createElement("label");
+    urlRow.className = "tool-field";
+    urlRow.innerHTML = `<span class="tool-field-label">endpoint</span>` +
+                       `<span class="tool-field-desc">where the envelope is POSTed</span>`;
+    const urlIn = document.createElement("input");
+    urlIn.className = "tool-field-input"; urlIn.type = "text"; urlIn.spellcheck = false;
+    urlIn.value = req.url || "";
+    urlRow.appendChild(urlIn);
+    fields.appendChild(urlRow);
+
+    const bodyRow = document.createElement("label");
+    bodyRow.className = "tool-field";
+    bodyRow.innerHTML = `<span class="tool-field-label">envelope</span>` +
+                        `<span class="tool-field-desc">${escapeHtml(req.headers["Content-Type"] || "text/xml")}</span>`;
+    const bodyIn = document.createElement("textarea");
+    bodyIn.className = "tool-field-input soap-envelope";
+    bodyIn.rows = 14; bodyIn.spellcheck = false;
+    bodyIn.value = req.body || "";
+    bodyRow.appendChild(bodyIn);
+    fields.appendChild(bodyRow);
     inner.appendChild(fields);
 
-    // 実際に送る URL のプレビュー (入力に追随)
-    const preview = document.createElement("div");
-    preview.className = "rest-preview";
-    inner.appendChild(preview);
-    const refresh = () => { preview.textContent = `${op.method} ${this._restUrlFor(op, fields)}`; };
-    fields.addEventListener("input", refresh);
-    refresh();
+    // 大きい XML はテキストエリアに載せると重いので、 File のまま送る。
+    // 添付中は本文欄を伏せ、 chip で件名とサイズだけ見せる。
+    const fileRow = document.createElement("div");
+    fileRow.className = "soap-file-row";
+    fileRow.innerHTML = `
+      <label class="soap-file-btn">load from file…
+        <input type="file" accept=".xml,text/xml,application/xml,application/soap+xml" hidden />
+      </label>
+      <span class="soap-file-chip" hidden></span>`;
+    inner.appendChild(fileRow);
+    const fileIn = fileRow.querySelector("input[type=file]");
+    const chip   = fileRow.querySelector(".soap-file-chip");
+    let attached = null;
+    const showAttached = () => {
+      const on = !!attached;
+      chip.hidden = !on;
+      bodyRow.hidden = on;
+      if (on) chip.innerHTML =
+        `<b>${escapeHtml(attached.name)}</b> · ${(attached.size / 1024 / 1024).toFixed(2)} MB` +
+        ` <button type="button" class="soap-file-clear" title="Use the editor instead">×</button>`;
+    };
+    fileIn.addEventListener("change", () => {
+      attached = fileIn.files?.[0] || null;
+      showAttached();
+    });
+    chip.addEventListener("click", (e) => {
+      if (!e.target.closest(".soap-file-clear")) return;
+      attached = null; fileIn.value = ""; showAttached();
+    });
 
     const actions = document.createElement("div");
     actions.className = "tool-acc-actions";
@@ -2574,97 +2554,34 @@ export class AgentWindow {
     actions.appendChild(run);
     inner.appendChild(actions);
 
+    const status = document.createElement("div");
+    status.className = "raw-status"; status.hidden = true;
+    inner.appendChild(status);
     const result = document.createElement("pre");
-    result.className = "tool-result";
-    result.hidden = true;
+    result.className = "tool-result raw-result"; result.hidden = true;
     inner.appendChild(result);
 
-    run.addEventListener("click", () => this._runRestOp(op, fields, result));
-  }
-
-  _buildRestField(p) {
-    const row = document.createElement("label");
-    row.className = "tool-field";
-    const label = document.createElement("span");
-    label.className = "tool-field-label";
-    label.textContent = `${p.name}${p.required ? " *" : ""}`;
-    const desc = document.createElement("span");
-    desc.className = "tool-field-desc";
-    desc.textContent = [p.in, p.description].filter(Boolean).join(" · ");
-
-    let input;
-    if (Array.isArray(p.enum) && p.enum.length) {
-      input = document.createElement("select");
-      // 任意項目は空選択を許す (未入力なら送らない)
-      if (!p.required) input.appendChild(new Option("", ""));
-      for (const v of p.enum) input.appendChild(new Option(String(v), String(v)));
-    } else if (p.type === "integer" || p.type === "number") {
-      input = document.createElement("input");
-      input.type = "number";
-      if (p.type === "integer") input.step = "1";
-    } else if (p.type === "boolean") {
-      input = document.createElement("select");
-      input.appendChild(new Option("", ""));
-      input.appendChild(new Option("true", "true"));
-      input.appendChild(new Option("false", "false"));
-    } else {
-      input = document.createElement("input");
-      input.type = "text";
-    }
-    input.className = "tool-field-input";
-    input.dataset.name = p.name;
-    input.dataset.in   = p.in;
-    if (p.default !== "" && p.default != null) input.value = String(p.default);
-
-    row.appendChild(label);
-    row.appendChild(desc);
-    row.appendChild(input);
-    return row;
-  }
-
-  // フォームから { path, query, header, body } を集める
-  _restValues(fields) {
-    const v = { path: {}, query: {}, header: {}, body: undefined };
-    for (const el of fields.querySelectorAll(".tool-field-input")) {
-      if (el.classList.contains("rest-body-input")) { v.body = el.value; continue; }
-      const raw = el.value;
-      if (raw === "" || raw == null) continue;
-      const where = el.dataset.in;
-      if (where === "path" || where === "query" || where === "header") v[where][el.dataset.name] = raw;
-      else v.query[el.dataset.name] = raw;   // 未知の in は query 扱い
-    }
-    return v;
-  }
-
-  _restUrlFor(op, fields) {
-    try { return buildRestUrl(this.adapter.baseUrl, op, this._restValues(fields)); }
-    catch { return op.path; }
-  }
-
-  async _runRestOp(op, fields, result) {
-    result.hidden = false;
-    result.classList.remove("is-error");
-    result.textContent = "sending…";
-    try {
-      const out = await this.adapter.callOperation(op, this._restValues(fields));
-      this._showRestResult(result, out);
-    } catch (e) {
-      result.classList.add("is-error");
-      result.textContent = String(e?.message || e);
-    }
-  }
-
-  // status 行 + body。 JSON は syntaxJson で色付けし、 それ以外は生テキスト。
-  _showRestResult(pre, out) {
-    pre.classList.toggle("is-error", !out.ok);
-    const head = `${out.status} ${out.statusText || ""}  ·  ${out.ms}ms  ·  ${out.via}\n\n`;
-    let bodyHtml = "";
-    try {
-      bodyHtml = syntaxJson(JSON.parse(out.body));
-      pre.innerHTML = `<span class="rest-status-line">${escapeHtml(head)}</span>` + bodyHtml;
-      return;
-    } catch { /* not JSON */ }
-    pre.textContent = head + out.body;
+    run.addEventListener("click", async () => {
+      const url = urlIn.value.trim();
+      if (!url) return;
+      run.disabled = true;
+      status.hidden = false; status.className = "raw-status";
+      status.textContent = attached ? `sending ${attached.name}…` : "sending…";
+      result.hidden = true; result.textContent = "";
+      try {
+        const out = await this.adapter.rawRequest({
+          method: "POST", url, headers: req.headers, body: attached || bodyIn.value
+        });
+        status.textContent = `${out.status} ${out.statusText || ""}  ·  ${out.ms}ms  ·  ${out.via}`;
+        status.className = "raw-status" + (out.ok ? " is-ok" : " is-error");
+        result.hidden = false;
+        if (/^\s*<[?a-zA-Z]/.test(out.body)) result.innerHTML = syntaxXml(out.body);
+        else result.textContent = out.body;
+      } catch (e) {
+        status.textContent = String(e?.message || e);
+        status.className = "raw-status is-error";
+      } finally { run.disabled = false; }
+    });
   }
 
   _renderRestSpecInfo() {

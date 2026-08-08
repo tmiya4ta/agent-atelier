@@ -27,8 +27,9 @@ const NS = {
 export class SoapAdapter extends ProtocolAdapter {
   static get id()    { return "soap"; }
   static get label() { return "SOAP"; }
-  // 会話 protocol ではないので chat は使わない。 REST と同じ raw ペインが主役。
-  static get primaryTab() { return "raw"; }
+  // 会話 protocol ではないので chat は使わない。 MCP と同じ tools 一覧が主役で、
+  // raw タブは手書きしたいとき用に残してある。
+  static get primaryTab() { return "tools"; }
 
   constructor(config) {
     super(config);
