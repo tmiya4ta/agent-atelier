@@ -4,6 +4,7 @@
 
 import { PROTOCOLS, getProtocol }           from "./protocols/index.js";
 import { mockUrl }                          from "./protocols/mock.js";
+import { parseWsdl }                        from "./protocols/soap.js";
 import { AgentWindow, decodeJwt, formatJwt } from "./window.js";
 import { DbWindow }                         from "./dbwindow.js";
 import { ClouderbyClient }                  from "./protocols/db/clouderby.js";
@@ -6787,6 +6788,27 @@ async function testDialog() {
         ` · via <code>${escapeHtml(result.via)}</code>` +
         (result.contentType ? ` · <code>${escapeHtml(result.contentType.split(";")[0])}</code>` : "") +
         ` · ${ms}ms` + note);
+    } else if (protoId === "soap") {
+      // WSDL を取れるか + 解析できるかまで見る。 到達しただけでは、 その URL が
+      // 本当に WSDL かどうか分からない (HTML のエラーページでも 200 が返る)。
+      const result = await testSoap(url, auth, authHeaders);
+      const ms = Math.round(performance.now() - t0);
+      if (result.proxyDenied) {
+        setDialogTestStatus("err",
+          `<span class='dts-dot'></span> ${result.status} · via <code>proxy</code> · ${ms}ms` +
+          `<br/><span class='dts-warn'>⚠ このホストは Atelier の allowlist 外のため拒否しました。 相手には届いていません。` +
+          ` deployment の <code>proxy.allowHosts</code> に追加してください。</span>`);
+      } else if (result.parseError) {
+        setDialogTestStatus("warn",
+          `<span class='dts-dot'></span> ${result.status} ${escapeHtml(result.statusText || "")}` +
+          ` · via <code>${escapeHtml(result.via)}</code> · ${ms}ms` +
+          `<br/><span class='dts-warn'>到達はしましたが WSDL として読めません: ${escapeHtml(result.parseError)}</span>`);
+      } else {
+        setDialogTestStatus("ok",
+          `<span class='dts-dot'></span> ${escapeHtml(result.serviceName || "(no service name)")}` +
+          ` · ${result.opCount} operation${result.opCount === 1 ? "" : "s"}` +
+          ` · via <code>${escapeHtml(result.via)}</code> · ${ms}ms`);
+      }
     } else {
       setDialogTestStatus("info", `Test for protocol <code>${escapeHtml(protoId)}</code> is not supported yet.`);
     }
@@ -6814,6 +6836,33 @@ function proxifyForTest(target) {
 
 // REST の接続テスト。 rest.js の _fetchText と同じ「直 fetch → だめなら /proxy」順序。
 // ここで adapter を作らないのは他プロトコルの test と揃えるため (接続は張らない)。
+// SOAP: WSDL を取得して解析まで通す。 operation 数が出れば「本当に使える」と言える。
+async function testSoap(url, auth, authHeaders) {
+  const headers = { Accept: "text/xml, application/xml, */*" };
+  if (auth) headers["Authorization"] = `Bearer ${auth}`;
+  if (authHeaders) Object.assign(headers, authHeaders);
+  const read = async (res, via) => {
+    const out = { ok: res.ok, status: res.status, statusText: res.statusText, via, proxyDenied: false };
+    const body = await res.text().catch(() => "");
+    if (via === "proxy" && res.status === 403 && body.includes("proxy denied")) { out.proxyDenied = true; return out; }
+    try {
+      const p = parseWsdl(body);
+      out.serviceName = p.serviceName;
+      out.opCount = p.operations.length;
+    } catch (e) { out.parseError = e?.message || String(e); }
+    return out;
+  };
+  let sameOrigin = false;
+  try { sameOrigin = new URL(url, location.href).origin === location.origin; } catch { /* noop */ }
+  if (!sameOrigin) {
+    // 直接 fetch は CORS が無いと弾かれるが、 ヘアピン NAT のように「応答も拒否も
+    // 返らない」相手だと延々待つ。 数秒で見切って /proxy へ倒す。
+    try { return await read(await fetch(url, { headers, signal: AbortSignal.timeout(4000) }), "direct"); }
+    catch { /* CORS / timeout → /proxy へ */ }
+  }
+  return await read(await fetch(proxifyForTest(url), { headers }), sameOrigin ? "same-origin" : "proxy");
+}
+
 async function testRest(url, auth, authHeaders) {
   const headers = { Accept: "application/json, */*" };
   if (auth) headers["Authorization"] = `Bearer ${auth}`;

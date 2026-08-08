@@ -71,7 +71,10 @@ export class SoapAdapter extends ProtocolAdapter {
   async _fetchText(url) {
     this._emit("rpc", { dir: "out", method: `GET ${url}`, raw: `GET ${url}` });
     try {
-      const r = await fetch(url, { headers: { Accept: "text/xml, application/xml, */*" } });
+      // CORS が無い相手は例外で即返るが、 ヘアピン NAT のように応答も拒否も
+      // 返らない相手だと延々待つ (LAN 内から *.theorems.io がこれ)。 数秒で見切る。
+      const r = await fetch(url, { headers: { Accept: "text/xml, application/xml, */*" },
+                                   signal: AbortSignal.timeout(4000) });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return { text: await r.text(), via: "direct" };
     } catch (direct) {
@@ -87,8 +90,9 @@ export class SoapAdapter extends ProtocolAdapter {
   // window.js の raw ペインがそのまま呼ぶ。 RestAdapter と同一シグネチャ。
   async rawRequest({ method = "POST", url, headers = {}, body = "" } = {}) {
     const started = Date.now();
-    const send = async (target, via) => {
-      const res = await fetch(target, { method, headers, body: body || undefined });
+    const send = async (target, via, timeoutMs) => {
+      const res = await fetch(target, { method, headers, body: body || undefined,
+                                        ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}) });
       const text = await res.text();
       return {
         ok: res.ok, status: res.status, statusText: res.statusText,
@@ -99,9 +103,9 @@ export class SoapAdapter extends ProtocolAdapter {
     this._emit("rpc", { dir: "out", method: `${method} ${url}`, headers, raw: body || "" });
     let out;
     try {
-      out = await send(url, "direct");
+      out = await send(url, "direct", 4000);   // 直接は数秒で見切る (上と同じ理由)
     } catch {
-      out = await send(proxied(url), "/proxy");
+      out = await send(proxied(url), "/proxy");  // /proxy 側は待つ
     }
     this._emit("rpc", {
       dir: out.ok ? "in" : "err",
