@@ -273,8 +273,8 @@ export class AgentWindow {
       this.debugPaused = !this.debugPaused;
       pauseBtn.textContent = this.debugPaused ? "resume" : "pause";
       pauseBtn.title = this.debugPaused
-        ? "取り込みを再開 (一時停止中は新しいフレームが表示されない)"
-        : "新しいフレームの取り込みを一時停止 (中身を見ている間に流れ込まないように)。 もう一度で再開";
+        ? "Resume capturing (while paused, new frames are not shown)"
+        : "Pause capturing new frames (so nothing scrolls in while you read). Click again to resume";
     });
     // Debug: 右クリックで「JWT Decode」コンテキストメニュー
     // (カーソル位置 or 選択範囲の文字列から JWT を取り出して decode し popover 表示)
@@ -523,7 +523,7 @@ export class AgentWindow {
     }
     const txt = ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${ms} ms`;
     badge.textContent = txt;
-    badge.title = `応答時間 ${ms} ms`;
+    badge.title = `response time ${ms} ms`;
   }
 
   // ───────────────────────────────────────────
@@ -697,14 +697,14 @@ export class AgentWindow {
     if (!list) return;
     const servers = this.adapter.serverSummaries?.() || [];
     if (!servers.length) {
-      list.innerHTML = `<div class="mcp-pop-empty">まだ登録がありません。 + から追加できます。</div>`;
+      list.innerHTML = `<div class="mcp-pop-empty">No MCP servers yet — add one with +.</div>`;
       return;
     }
     list.innerHTML = servers.map(sv => `
       <div class="mcp-pop-row${sv.state === "open" ? " is-on" : ""}">
         <i aria-hidden="true"></i>
         <span class="mcp-pop-name" title="${escapeHtml(sv.url)}">${escapeHtml(sv.name)}</span>
-        ${sv.hasAuth ? `<u class="mcp-pop-creds" title="このサーバの認証情報をエージェントへ渡しています">creds</u>` : ""}
+        ${sv.hasAuth ? `<u class="mcp-pop-creds" title="Credentials for this server are passed to the agent">creds</u>` : ""}
         <b class="mcp-pop-meta">${sv.state === "open" ? `${sv.toolCount} tools` : escapeHtml(sv.state)}</b>
         <button type="button" class="mcp-pop-del" data-srv="${escapeHtml(sv.id)}"
                 title="Remove" aria-label="remove ${escapeHtml(sv.name)}">×</button>
@@ -825,7 +825,7 @@ export class AgentWindow {
     if (endpoint || style !== undefined) {
       const wire = style === "proto" ? "SendMessage · A2A 1.0 schema"
                  : style === "legacy" ? "message/send · 0.3 schema"
-                 : "未判定 (最初の送信で確定)";
+                 : "undetermined (settled on first send)";
       out.push(`<section class="caps-sec">
           <h5 class="caps-sec-h">transport</h5>
           <div class="caps-kv"><span>wire</span><b>${esc(wire)}</b></div>
@@ -874,7 +874,7 @@ export class AgentWindow {
             ${(sk.tags || []).length ? `<div class="caps-tags">${sk.tags.map(t =>
                `<span class="caps-tag">${esc(t)}</span>`).join("")}</div>` : ""}
           </li>`).join("")}</ul>`
-          : `<div class="caps-none">宣言されていません</div>`}
+          : `<div class="caps-none">not declared</div>`}
       </section>`);
 
     // ── wiring ── A2A window に登録した MCP サーバ (この相手が使える道具)
@@ -886,7 +886,7 @@ export class AgentWindow {
             <div class="caps-wire${sv.state === "open" ? " is-on" : ""}">
               <i aria-hidden="true"></i>
               <span title="${esc(sv.url)}">${esc(sv.name)}</span>
-              ${sv.hasAuth ? `<u class="caps-creds" title="このサーバの認証情報をエージェントへ渡しています">creds</u>` : ""}
+              ${sv.hasAuth ? `<u class="caps-creds" title="Credentials for this server are passed to the agent">creds</u>` : ""}
               <b>${sv.state === "open" ? `${sv.toolCount} tools` : esc(sv.state)}</b>
             </div>`).join("")}</div>
         </section>`);
@@ -1304,7 +1304,7 @@ export class AgentWindow {
     if (!btn) return;
     if (on) {
       btn.classList.add("is-stop");
-      btn.title = "停止";
+      btn.title = "stop";
       btn.innerHTML = `<svg viewBox="0 0 16 16" width="12" height="12"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5" fill="currentColor"/></svg>`;
     } else {
       btn.classList.remove("is-stop");
@@ -1326,7 +1326,7 @@ export class AgentWindow {
     document.dispatchEvent(new CustomEvent("atelier:stop-scenario"));
     this._showTyping(false);
     this._setBusy(false);
-    this._addSystemMessage("⏹ 停止しました");
+    this._addSystemMessage("⏹ stopped");
   }
 
   _showTyping(on) {
@@ -1449,7 +1449,7 @@ export class AgentWindow {
       if (this._ghostExample && !tabHint) {
         const span = document.createElement("span");
         span.className = "cm-tab-hint";
-        span.innerHTML = ` &nbsp;<kbd>Tab</kbd> 例を入れる`;
+        span.innerHTML = ` &nbsp;<kbd>Tab</kbd> insert example`;
         hint.appendChild(span);
       } else if (!this._ghostExample && tabHint) {
         tabHint.remove();
@@ -1488,11 +1488,11 @@ export class AgentWindow {
         </div>
       </div>
 
-      <div class="card-url-row" title="AgentCard が宣言する URL。 メッセージ送信はこの URL に対して行われます。">
+      <div class="card-url-row" title="The URL declared by the AgentCard. Messages are sent here.">
         <span class="card-url-label">endpoint url</span>
         <code class="card-url-val${showUrlMismatch ? " is-warn" : ""}">${escapeHtml(cardUrl || "—")}</code>
       </div>
-      ${showUrlMismatch ? `<div class="card-url-warn">⚠ Discovery URL (<code>${escapeHtml(discoveryUrl)}</code>) と異なります。 メッセージは上の endpoint url に送信されます。</div>` : ""}
+      ${showUrlMismatch ? `<div class="card-url-warn">⚠ Differs from the Discovery URL (<code>${escapeHtml(discoveryUrl)}</code>). Messages go to the endpoint url above.</div>` : ""}
 
       <div class="card-grid">
         ${capsRow("version", escapeHtml(card.version || "—"))}
@@ -1516,8 +1516,8 @@ export class AgentWindow {
           <span class="crt-meta">${JSON.stringify(card).length} bytes</span>
         </button>
         <span class="card-raw-actions">
-          <button class="card-copy" type="button" title="AgentCard JSON をコピー">copy</button>
-          <button class="card-download" type="button" title="AgentCard JSON をダウンロード">download</button>
+          <button class="card-copy" type="button" title="Copy the AgentCard JSON">copy</button>
+          <button class="card-download" type="button" title="Download the AgentCard JSON">download</button>
         </span>
       </div>
       <pre class="card-raw" hidden>${syntaxJson(card)}</pre>
@@ -1795,7 +1795,7 @@ export class AgentWindow {
         <button type="button" class="jwt-pop-copy" title="Copy token">copy</button>
         <button type="button" class="jwt-pop-close" aria-label="close">×</button>
       </div>
-      <div class="jwt-pop-body">${dec ? `<pre class="jwt-pop-pre">${formatJwt(dec)}</pre>` : `<span class="jwt-pop-err">JWT としてデコードできません</span>`}</div>
+      <div class="jwt-pop-body">${dec ? `<pre class="jwt-pop-pre">${formatJwt(dec)}</pre>` : `<span class="jwt-pop-err">Not a decodable JWT</span>`}</div>
     `;
     document.body.appendChild(pop);
     // 位置: クリック付近だが少し上めに出す (クリック位置が popover の下寄りに来る)。
@@ -1852,11 +1852,11 @@ export class AgentWindow {
         <div class="set-row set-mcp-head">
           <div class="set-row-text">
             <div class="set-row-title">MCP servers</div>
-            <div class="set-row-sub">LLM に渡すツールの供給元。複数登録できます。</div>
+            <div class="set-row-sub">Sources of the tools handed to the LLM. You can register more than one.</div>
           </div>
           <button type="button" class="set-mcp-add">+ add</button>
         </div>
-        <div class="set-mcp-list">${rows || `<div class="set-row-sub set-mcp-empty" style="padding:6px 2px;opacity:.7;">(なし — 「+ add」で MCP endpoint を登録してください)</div>`}</div>`;
+        <div class="set-mcp-list">${rows || `<div class="set-row-sub set-mcp-empty" style="padding:6px 2px;opacity:.7;">(none — register an MCP endpoint with “+ add”)</div>`}</div>`;
   }
 
   _renderSettings() {
@@ -1871,8 +1871,8 @@ export class AgentWindow {
     const cardLoaded     = !!card;
     const urlMismatch   = effectiveUrl && configuredUrl && !effectiveUrl.startsWith(stripTrailingSlash(configuredUrl)) && !configuredUrl.startsWith(stripTrailingSlash(effectiveUrl));
     const cardTip = this.protoMode === "mcp"
-      ? "MCP では agent card は提供されないため、 接続先はそのまま Discovery URL です。"
-      : "AgentCard の url フィールド。 メッセージはこの URL に POST されます (Discovery URL ではなく)。 Discovery URL と異なる場合があるので注意してください。";
+      ? "MCP has no agent card, so the target is the Discovery URL itself."
+      : "The url field of the AgentCard. Messages are POSTed here — not to the Discovery URL. Note that the two can differ.";
 
     // Authorization: identity から選べる場合は select、 そうでなければ readonly のマスク表示。
     const cfg = this.adapter.config;
@@ -1902,7 +1902,7 @@ export class AgentWindow {
         <div class="set-row">
           <div class="set-row-text">
             <div class="set-row-title">Display name</div>
-            <div class="set-row-sub">ウインドウのタイトルに表示</div>
+            <div class="set-row-sub">Shown in the window title</div>
           </div>
           <input class="set-input set-input-name" value="${escapeHtml(this.name || "")}" placeholder="Untitled" />
         </div>
@@ -1911,18 +1911,18 @@ export class AgentWindow {
       <div class="set-section">
         <h4>Connection</h4>
         ${this.protoMode === "rest" ? `
-        <div class="set-row" title="Connect ダイアログで入力した base URL (任意)。 raw タブの URL 欄に初期値として入るだけで、 実際の送信先は raw タブで都度指定します。">
+        <div class="set-row" title="The base URL you entered in the connect dialog (optional). It only seeds the URL field on the raw tab; you set the actual target there.">
           <div class="set-row-text">
             <div class="set-row-title">Base URL</div>
-            <div class="set-row-sub">任意。 raw タブの初期値になるだけで、 送信先はその都度指定します。</div>
+            <div class="set-row-sub">Optional — only seeds the raw tab; you set the target there each time.</div>
           </div>
-          ${copyFieldHtml(this.adapter.baseUrl || "", { placeholder: "(未設定)" })}
+          ${copyFieldHtml(this.adapter.baseUrl || "", { placeholder: "(not set)" })}
         </div>
         ` : `
-        <div class="set-row" title="Connect ダイアログで入力した Discovery URL。 ${this.protoMode === "mcp" ? "MCP server (POST /mcp) を直接叩きます。" : "Atelier はこの URL の /.well-known/agent-card.json を取得して AgentCard を解釈します。 実際のチャット送信先は AgentCard 側の url フィールドです。"}">
+        <div class="set-row" title="The Discovery URL you entered in the connect dialog. ${this.protoMode === "mcp" ? "Calls the MCP server (POST /mcp) directly." : "Atelier fetches /.well-known/agent-card.json from this URL. Chat messages actually go to the url field inside the AgentCard."}">
           <div class="set-row-text">
             <div class="set-row-title">Discovery URL <span class="set-row-help" aria-hidden="true">?</span></div>
-            <div class="set-row-sub">${this.protoMode === "mcp" ? "POST /mcp に直接送信します。" : "AgentCard を取得する起点 URL。 メッセージ送信先ではない。"}</div>
+            <div class="set-row-sub">${this.protoMode === "mcp" ? "Sent directly to POST /mcp." : "Starting point for fetching the AgentCard — not where messages are sent."}</div>
           </div>
           ${copyFieldHtml(configuredUrl)}
         </div>
@@ -1930,28 +1930,28 @@ export class AgentWindow {
         <div class="set-row" title="${cardTip}">
           <div class="set-row-text">
             <div class="set-row-title">Effective endpoint <span class="set-row-help" aria-hidden="true">?</span></div>
-            <div class="set-row-sub">${cardLoaded ? (card?.url ? "AgentCard の url。 メッセージはここに POST されます。" : "AgentCard に url フィールドが無いため Discovery URL にフォールバック。 メッセージはここに POST されます。") : "AgentCard 未取得 — 接続中…"}</div>
+            <div class="set-row-sub">${cardLoaded ? (card?.url ? "The AgentCard url. Messages are POSTed here." : "The AgentCard has no url field, so this falls back to the Discovery URL. Messages are POSTed here.") : "AgentCard not fetched yet — connecting…"}</div>
           </div>
           ${copyFieldHtml(effectiveUrl, { cls: urlMismatch ? "is-warn" : "", placeholder: "(loading…)", title: cardTip })}
         </div>
-        ${urlMismatch ? `<div class="set-warn">⚠ 参考: Discovery URL と Effective endpoint が異なります。 AgentCard の url フィールドに従い、 メッセージは Effective endpoint に送信されます (gateway/proxy 経由などで意図的に異なる場合もあります)。 意図しない場合はサーバ側で agent-card の url を見直してください。</div>` : ""}
+        ${urlMismatch ? `<div class="set-warn">⚠ Note: the Discovery URL and the Effective endpoint differ. Following the AgentCard's url field, messages are sent to the Effective endpoint (they may differ on purpose, e.g. behind a gateway or proxy). If that is not intended, review the agent-card url on the server.</div>` : ""}
         ` : ""}
         `}
         ${this.protoMode === "a2a" ? `
-        <div class="set-mcp-note">登録した MCP のツール一覧を、送信のたびに相手エージェントへ渡します。 実際の呼び出しはエージェント側が行います。</div>
+        <div class="set-mcp-note">The tool list from the registered MCP servers is handed to the agent on every send. The agent itself makes the calls.</div>
         ${this._mcpServersSectionHtml()}
         ` : ""}
-        <div class="set-row" title="HTTP Authorization ヘッダに付ける bearer token。 connect ダイアログで指定したものが保存されています。">
+        <div class="set-row" title="Bearer token sent in the HTTP Authorization header. Saved from what you entered in the connect dialog.">
           <div class="set-row-text">
             <div class="set-row-title">Authorization <span class="set-row-help" aria-hidden="true">?</span></div>
-            <div class="set-row-sub">Auth (identity) を選択 / Bearer &lt;token&gt; ヘッダ</div>
+            <div class="set-row-sub">Pick an Auth identity, or send a Bearer &lt;token&gt; header</div>
           </div>
           ${authControl}
         </div>
-        <div class="set-row" title="${tokenReadonly ? "現在送信中の Bearer token (identity 由来・表示専用)。 decode / copy できます。" : "identity を使わず Bearer token を直接貼り付けます。 入力すると identity 選択より優先され、 そのまま Authorization: Bearer に使われます (自動更新なし)。"}">
+        <div class="set-row" title="${tokenReadonly ? "The Bearer token currently being sent (from the identity, read-only). You can decode or copy it." : "Paste a Bearer token directly instead of using an identity. It takes precedence over the identity and is used as-is for Authorization: Bearer (never refreshed)."}">
           <div class="set-row-text">
             <div class="set-row-title">Bearer token <span class="set-row-help" aria-hidden="true">?</span></div>
-            <div class="set-row-sub">${tokenReadonly ? "現在送信中の token (identity 由来・表示専用)" : "Bearer token を直接貼り付け (identity より優先)"}</div>
+            <div class="set-row-sub">${tokenReadonly ? "token currently being sent (from the identity, read-only)" : "paste a Bearer token directly (takes precedence over the identity)"}</div>
           </div>
           <div class="set-rawtoken-col">
             <div class="set-rawtoken-field">
@@ -1975,17 +1975,17 @@ export class AgentWindow {
 
       <div class="set-section">
         <h4>About</h4>
-        <div class="set-row" title="このウインドウのセッション ID。 ページ reload で変わります。">
+        <div class="set-row" title="Session id of this window. It changes on page reload.">
           <div class="set-row-text">
             <div class="set-row-title">Window ID</div>
-            <div class="set-row-sub">セッション固有</div>
+            <div class="set-row-sub">unique per session</div>
           </div>
           <input class="set-input" value="${this.id}" readonly />
         </div>
-        <div class="set-row" title="このウインドウが使用するプロトコル adapter (a2a / mcp / slack 等)。">
+        <div class="set-row" title="The protocol adapter this window uses (a2a, mcp, rest, …).">
           <div class="set-row-text">
             <div class="set-row-title">Protocol</div>
-            <div class="set-row-sub">通信プロトコル</div>
+            <div class="set-row-sub">transport protocol</div>
           </div>
           <input class="set-input" value="${escapeHtml(this.protoMode || "")}" readonly />
         </div>
@@ -2118,7 +2118,7 @@ export class AgentWindow {
         if (!decodedWrap.hidden) { decodedWrap.hidden = true; return; }   // toggle off
         const dec = decodeJwt(tokenNow());
         if (dec) decodedPre.innerHTML = formatJwt(dec);          // 色付き HTML
-        else     decodedPre.textContent = "(JWT としてデコードできません)";
+        else     decodedPre.textContent = "(not a decodable JWT)";
         decodedWrap.hidden = false;
       });
       if (copyBtn) {
@@ -2479,7 +2479,7 @@ export class AgentWindow {
       const err = detail?.specError || this.adapter.specError;
       note.hidden = !err;
       // spec が読めなくても raw タブは使えるので、 行き止まりにせず誘導する
-      if (err) note.textContent = `spec を読み込めませんでした: ${err} — raw タブから直接リクエストできます。`;
+      if (err) note.textContent = `Could not load the spec: ${err} — you can still send from the raw tab.`;
     }
     this._renderRestList();
     this._renderRestSpecInfo();
@@ -2672,11 +2672,11 @@ export class AgentWindow {
     if (!scroll) return;
     const rows = [
       `<dt>mode</dt><dd>raw HTTP</dd>`,
-      `<dt>base URL</dt><dd>${escapeHtml(this.adapter.baseUrl || "(未設定 — raw タブで完全な URL を入力)")}</dd>`
+      `<dt>base URL</dt><dd>${escapeHtml(this.adapter.baseUrl || "(not set — enter the full URL on the raw tab)")}</dd>`
     ];
     scroll.innerHTML = `<dl class="card-dl">${rows.join("")}</dl>` +
-      `<p class="card-desc">メソッド / URL / ヘッダ / ボディを直接指定して送信します。` +
-      ` CORS を許可しているホストへは直接、 それ以外は /proxy 経由 (allowlist 内のみ) で送られます。</p>`;
+      `<p class="card-desc">Send a request with the method, URL, headers and body you specify.` +
+      ` Hosts that allow CORS are called directly; the rest go through /proxy (allowlisted hosts only).</p>`;
   }
 
   // raw タブ: メソッド + URL + ヘッダ + ボディを素で送る

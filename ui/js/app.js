@@ -4418,23 +4418,23 @@ function applyProtoSpecificFields() {
             ph:    "e.g. Assessment Agent",
             title: "This name conveys its role. No real communication — it replays the Script Editor script / tool calls." },
     rest: { label: "base url",
-            hint:  "任意。 raw タブの初期値に入るだけで、 叩く先は raw タブで都度指定します",
+            hint:  "optional — only seeds the raw tab; you set the actual URL there",
             ph:    "https://api.example.com",
-            title: "raw タブの URL 欄の初期値になるだけ。 空でも構いません。" },
+            title: "Only seeds the URL field on the raw tab. Leaving it empty is fine." },
     soap: { label: "wsdl url",
-            hint:  "WSDL の URL。 operation 一覧と Envelope の雛形を作ります",
+            hint:  "WSDL URL — lists the operations and builds envelope skeletons",
             ph:    "https://example.com/service?wsdl",
-            title: "WSDL を取得して operation を並べます。 選ぶと endpoint / SOAPAction / Envelope 雛形が raw タブに入ります。" },
+            title: "Fetches the WSDL and lists its operations. Picking one fills endpoint, SOAPAction and an envelope skeleton into the raw tab." },
     db:   { label: "server url",
             hint:  "clouderby (JDBC over HTTP) base URL",
             ph:    "https://mule-clouderby-xxxx.cloudhub.io   (clouderby base URL)",
             title: "Base URL of the clouderby (JDBC over HTTP) server. The endpoint that provides /sessions /queries /metadata." },
     a2a:  { label: "discovery url",
-            hint:  "base URL を入れると /.well-known/agent-card.json を取得します",
+            hint:  "base URL — Atelier fetches /.well-known/agent-card.json",
             ph:    "https://api.example.com",
             title: "Base URL is fine — Atelier appends /.well-known/agent-card.json automatically (falls back to /.well-known/agent.json for the legacy spec)." },
     mcp:  { label: "discovery url",
-            hint:  "POST /mcp を直接受ける URL",
+            hint:  "the URL that accepts POST /mcp directly",
             ph:    "https://example.com/mcp   (MCP JSON-RPC endpoint)",
             title: "Point at the MCP server's JSON-RPC endpoint." },
   };
@@ -6780,9 +6780,9 @@ async function testDialog() {
       // proxyDenied = Atelier 自身の /proxy が allowlist で弾いた = 相手に届いていない。
       // それ以外の非 2xx は「相手までは届いた」ので意味が違う。
       const note = result.proxyDenied
-        ? `<br/><span class='dts-warn'>⚠ CORS が無いホストなので /proxy 経由になりましたが、 このホストは allowlist 外のため Atelier が拒否しました。 相手には届いていません。</span>`
+        ? `<br/><span class='dts-warn'>⚠ The host sends no CORS headers, so this went through /proxy — but the host is not in the allowlist, so Atelier blocked it. The request never reached the server.</span>`
         : result.ok ? ""
-        : `<br/><span class='dts-warn'>相手までは届いています (base URL は任意なので、 実際のパスは raw タブで指定します)。</span>`;
+        : `<br/><span class='dts-warn'>The server was reached (the base URL is optional — set the actual path on the raw tab).</span>`;
       setDialogTestStatus(result.ok ? "ok" : result.proxyDenied ? "err" : "warn",
         `<span class='dts-dot'></span> ${result.status} ${escapeHtml(result.statusText || "")}` +
         ` · via <code>${escapeHtml(result.via)}</code>` +
@@ -6796,13 +6796,13 @@ async function testDialog() {
       if (result.proxyDenied) {
         setDialogTestStatus("err",
           `<span class='dts-dot'></span> ${result.status} · via <code>proxy</code> · ${ms}ms` +
-          `<br/><span class='dts-warn'>⚠ このホストは Atelier の allowlist 外のため拒否しました。 相手には届いていません。` +
-          ` deployment の <code>proxy.allowHosts</code> に追加してください。</span>`);
+          `<br/><span class='dts-warn'>⚠ Blocked by Atelier's own allowlist — the request never reached the server.` +
+          ` Add this host to <code>proxy.allowHosts</code> in the deployment.</span>`);
       } else if (result.parseError) {
         setDialogTestStatus("warn",
           `<span class='dts-dot'></span> ${result.status} ${escapeHtml(result.statusText || "")}` +
           ` · via <code>${escapeHtml(result.via)}</code> · ${ms}ms` +
-          `<br/><span class='dts-warn'>到達はしましたが WSDL として読めません: ${escapeHtml(result.parseError)}</span>`);
+          `<br/><span class='dts-warn'>Reached the server, but this is not a readable WSDL: ${escapeHtml(result.parseError)}</span>`);
       } else {
         setDialogTestStatus("ok",
           `<span class='dts-dot'></span> ${escapeHtml(result.serviceName || "(no service name)")}` +

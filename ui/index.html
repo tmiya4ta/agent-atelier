@@ -236,7 +236,7 @@
         <section class="side-sec">
           <h4 class="side-title">
             <span>SCENARIOS</span>
-            <button class="side-add side-mock" id="scriptMockPanel" title="Mock mode — 全シナリオをローカル応答で実行 (実通信なし)。ON の間は ▶ が MOCK で走る" aria-pressed="false">MOCK</button>
+            <button class="side-add side-mock" id="scriptMockPanel" title="Mock mode — replay every scenario from local replies (no real traffic). While on, ▶ runs in MOCK" aria-pressed="false">MOCK</button>
             <button class="side-add" id="scriptClearAll" title="Clear all scenarios" aria-label="clear all scenarios" hidden>
               <svg viewBox="0 0 14 14" width="10" height="10"><path d="M2.5 3.5 h9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M5 3.5 V2.5 h4 V3.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M3.7 3.5 l.5 8 h5.6 l.5 -8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
             </button>
@@ -282,7 +282,7 @@
   "sub": "1234567890",
   "name": "John Doe"
 }</textarea>
-            <label class="tool-jwt-label" for="toolEncSecret">secret (HS* のみ)</label>
+            <label class="tool-jwt-label" for="toolEncSecret">secret (HS* only)</label>
             <input id="toolEncSecret" class="tool-jwt-input" type="text" autocomplete="off" placeholder="your-256-bit-secret" value="secret" />
             <button type="button" class="side-cta tool-enc-btn" id="toolEncBtn"><span class="side-cta-label">encode →</span></button>
             <div class="tool-jwt-status" id="toolEncStatus"></div>
@@ -320,7 +320,7 @@
       </div>
     </section>
     <!-- 右端ドラッグで CONNECTIONS パネル幅を可変 (ダブルクリックで既定幅) -->
-    <div class="side-resize" id="sideResize" title="ドラッグで幅変更 / ダブルクリックでリセット" role="separator" aria-orientation="vertical" aria-label="resize sidebar"></div>
+    <div class="side-resize" id="sideResize" title="Drag to resize · double-click to reset" role="separator" aria-orientation="vertical" aria-label="resize sidebar"></div>
   </aside>
 
   <!-- ───────────────  WORKSPACE TABS  ─────────────── -->
@@ -514,24 +514,24 @@
         </div>
 
         <div class="field">
-          <label class="field-label" for="dlgUrl" title="接続先の URL。 protocol によって意味が変わります (下の説明を参照)。">
+          <label class="field-label" for="dlgUrl" title="URL of the target. Its meaning depends on the selected protocol (see the hint below).">
             <span>discovery url</span>
-            <span class="field-hint">protocol を選ぶと説明が変わります</span>
+            <span class="field-hint">pick a protocol to see what goes here</span>
           </label>
           <div class="input-wrap">
             <span class="input-prefix">url</span>
-            <input id="dlgUrl" type="text" placeholder="https://api.example.com" autocomplete="off" title="A2A の場合: base URL を入れると Atelier が /.well-known/agent-card.json を取得し、 AgentCard 側の url に対してメッセージを送ります (Discovery URL とは別のホストになることがあります)。 MCP の場合: POST /mcp の URL を直接入れます。" />
+            <input id="dlgUrl" type="text" placeholder="https://api.example.com" autocomplete="off" title="A2A: give a base URL — Atelier fetches /.well-known/agent-card.json and sends messages to the url in the card (which may be a different host). MCP: give the URL that accepts POST /mcp." />
           </div>
         </div>
 
         <div class="field" id="dlgMockKindField" hidden>
           <label class="field-label">
             <span>kind</span>
-            <span class="field-hint">どのプロトコルとして振る舞うか</span>
+            <span class="field-hint">which protocol it pretends to be</span>
           </label>
           <div class="seg-toggle" id="dlgMockKind" role="radiogroup" aria-label="mock kind">
-            <button type="button" class="seg-opt is-active" data-emulate="a2a" role="radio" aria-checked="true">A2A <span class="seg-sub">会話エージェント</span></button>
-            <button type="button" class="seg-opt" data-emulate="mcp" role="radio" aria-checked="false">MCP <span class="seg-sub">ツールサーバ</span></button>
+            <button type="button" class="seg-opt is-active" data-emulate="a2a" role="radio" aria-checked="true">A2A <span class="seg-sub">conversational agent</span></button>
+            <button type="button" class="seg-opt" data-emulate="mcp" role="radio" aria-checked="false">MCP <span class="seg-sub">tool server</span></button>
           </div>
         </div>
 
@@ -653,7 +653,7 @@
         </span>
         <div class="dialog-foot-actions">
           <button class="ghost-btn" id="dlgCancel">cancel</button>
-          <button class="ghost-btn" id="dlgTest" title="A2A: AgentCard を取得できるか確認 / MCP: initialize を投げて応答できるか確認 (実際には接続しない)">test</button>
+          <button class="ghost-btn" id="dlgTest" title="A2A: check the AgentCard can be fetched · MCP: send initialize and check for a reply (does not actually connect)">test</button>
           <button class="primary-btn" id="dlgSubmit">
             <span>connect</span>
             <span class="arrow">→</span>
@@ -689,7 +689,7 @@
           <div class="field">
             <label class="field-label" for="catAuthRef">
               <span>authentication</span>
-              <span class="field-hint">AUTHENTICATION の identity を選択</span>
+              <span class="field-hint">pick an identity from AUTHENTICATION</span>
             </label>
             <select id="catAuthRef" class="dlg-authref">
               <option value="">— select identity —</option>
@@ -748,14 +748,14 @@
               <input type="checkbox" id="bgScanRtm" />
               <span class="cat-check-body">
                 <span class="cat-check-label">Scan Runtime Manager apps</span>
-                <span class="cat-check-hint">この BG のデプロイ済みアプリも一覧に含める</span>
+                <span class="cat-check-hint">also list deployed apps in this business group</span>
               </span>
             </label>
           </div>
           <div class="field" id="bgEnvField" hidden>
             <label class="field-label">
               <span>environments</span>
-              <span class="field-hint" id="bgEnvStatus">scan する環境を選択</span>
+              <span class="field-hint" id="bgEnvStatus">pick the environment to scan</span>
             </label>
             <div class="cat-env-list" id="bgEnvList"></div>
           </div>
@@ -814,7 +814,7 @@
           <div class="field" id="idnTenantField" style="display:none">
             <label class="field-label" for="idnTenant">
               <span>tenant id</span>
-              <span class="field-hint">Entra: Directory (tenant) ID — GUID / ドメイン / "organizations"</span>
+              <span class="field-hint">Entra: Directory (tenant) ID — GUID / domain / "organizations"</span>
             </label>
             <input id="idnTenant" type="text" placeholder="00000000-0000-0000-0000-000000000000" autocomplete="off" />
           </div>
@@ -1015,11 +1015,11 @@
             </div>
 
             <div class="field" data-only="oauth2_authcode">
-              <label class="field-label" for="idnPrompt"><span>login prompt</span><span class="field-hint">SSO 引き継ぎを防ぐ — 別 ID でログインする用</span></label>
+              <label class="field-label" for="idnPrompt"><span>login prompt</span><span class="field-hint">prevent SSO carry-over — for signing in as a different identity</span></label>
               <select id="idnPrompt">
-                <option value="select_account">select_account（毎回アカウント選択・既定）</option>
-                <option value="login">login（毎回 再認証を強制）</option>
-                <option value="none">none（SSO 再利用・従来どおり）</option>
+                <option value="select_account">select_account (always pick an account · default)</option>
+                <option value="login">login (always force re-authentication)</option>
+                <option value="none">none (reuse SSO · previous behaviour)</option>
               </select>
             </div>
 
@@ -1041,7 +1041,7 @@
         </span>
         <div class="dialog-foot-actions">
           <button class="ghost-btn" id="idnCancel">cancel</button>
-          <button class="ghost-btn" id="idnTest" title="入力値でトークン取得を試す (保存せず)">test</button>
+          <button class="ghost-btn" id="idnTest" title="Try fetching a token with these values (without saving)">test</button>
           <button class="primary-btn" id="idnSubmit">
             <span>Save</span>
             <span class="arrow">→</span>
@@ -1062,7 +1062,7 @@
       <div class="script-tabbar-spacer"></div>
       <span class="script-saved" id="scriptSavedAt">—</span>
       <span class="script-status" id="scriptStatus" hidden></span>
-      <button class="script-tool script-tool-icon script-tabbar-pin" id="scriptPin" title="Pin panel: run しても閉じない" aria-pressed="false" aria-label="pin panel">
+      <button class="script-tool script-tool-icon script-tabbar-pin" id="scriptPin" title="Pin panel: stays open when you run" aria-pressed="false" aria-label="pin panel">
         <svg viewBox="0 0 16 16" width="12" height="12"><path d="M9.5 1.8 L14.2 6.5 L11.6 7.1 L9 9.7 L8.4 12.4 L3.6 7.6 L6.3 7 L8.9 4.4 Z M6 10 L2.5 13.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       <button class="script-tool script-tool-icon script-tabbar-collapse" id="scriptCollapse" title="Close panel (Ctrl+Shift+K)" aria-label="close panel">
@@ -1081,7 +1081,7 @@
     </div>
 
     <div class="script-actions">
-      <button class="script-tool script-tool-toggle" id="scriptMock" title="Mock mode: ローカル応答で実通信なし (オフラインデモ)" aria-pressed="false">
+      <button class="script-tool script-tool-toggle" id="scriptMock" title="Mock mode: local replies, no real traffic (offline demo)" aria-pressed="false">
         <svg viewBox="0 0 12 12" width="9" height="9"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M6 3.5 v3 l2 1.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
         <span>mock</span>
       </button>
@@ -1305,7 +1305,7 @@ clear
               <input class="raw-url" type="text" spellcheck="false" placeholder="https://api.example.com/v1/items" aria-label="request URL" />
               <button type="button" class="raw-send">Send</button>
             </div>
-            <label class="raw-label">headers <span class="raw-hint">1 行 1 個 · <code>Name: value</code></span></label>
+            <label class="raw-label">headers <span class="raw-hint">one per line · <code>Name: value</code></span></label>
             <textarea class="raw-headers" rows="3" spellcheck="false" placeholder="Accept: application/json"></textarea>
             <label class="raw-label">body</label>
             <textarea class="raw-body" rows="6" spellcheck="false" placeholder='{ "key": "value" }'></textarea>
@@ -1331,8 +1331,8 @@ clear
         <!-- DEBUG PANE -->
         <section class="pane pane-debug" data-pane="debug">
           <div class="debug-toolbar">
-            <button class="debug-tool" data-act="clear" title="表示中のフレームを全消去">clear</button>
-            <button class="debug-tool" data-act="pause" title="新しいフレームの取り込みを一時停止 (中身を見ている間に流れ込まないように)。 もう一度で再開">pause</button>
+            <button class="debug-tool" data-act="clear" title="Clear all frames shown">clear</button>
+            <button class="debug-tool" data-act="pause" title="Pause capturing new frames (so nothing scrolls in while you read). Click again to resume">pause</button>
             <span class="debug-spacer"></span>
             <span class="debug-meta">JSON-RPC · <span class="debug-meta-count">0</span> frames</span>
           </div>

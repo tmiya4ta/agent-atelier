@@ -284,7 +284,7 @@ export function modalNewWindow({ title, defaultName, authOptions = [], defaultAu
 // modalMcpAdd — A2A window に渡す MCP サーバを選ぶダイアログ。
 //   供給元は「登録済みの MCP コネクション」のみ。 その場で URL を打つ使い捨て登録は
 //   廃止した (同じサーバの URL / auth がサイドバーと二重管理になり、 どちらを直せば
-//   よいのか分からなくなるため)。 新規は "+ 新規作成…" から通常の connect ダイアログへ。
+//   よいのか分からなくなるため)。 新規は "+ create new…" から通常の connect ダイアログへ。
 //   servers:     [{ key, url, name }] 登録済み MCP コネクション
 //   authOptions: [{ value, label }]   先頭 manual="" + identity
 //   onCreate:    () => Promise<{key,url,name}|null>  新規作成 (呼び出し側が接続ダイアログを開く)
@@ -299,14 +299,14 @@ export function modalMcpAdd({ title, servers = [], authOptions = [], defaultAuth
     //   "__manual__" → token を直接貼る (下の欄が出る)
     //   <identity>   → identity から解決して自動付与
     const authHtml = [
-      `<option value=""${!defaultAuthRef ? " selected" : ""}>no auth (認証なし)</option>`,
-      `<option value="__manual__">manual — Bearer token を貼り付け</option>`,
+      `<option value=""${!defaultAuthRef ? " selected" : ""}>no auth</option>`,
+      `<option value="__manual__">manual — paste a Bearer token</option>`,
       ...authOptions.filter(o => o.value).map(o =>
         `<option value="${escapeHtml(o.value)}"${o.value === defaultAuthRef ? " selected" : ""}>${escapeHtml(o.label)}</option>`)
     ].join("");
     const srvHtml = (list) => list.map(sv =>
       `<option value="${escapeHtml(sv.url)}">${escapeHtml(sv.name)} — ${escapeHtml(sv.url)}</option>`).join("");
-    const emptyHtml = `<option value="" disabled selected>(登録済みの MCP コネクションがありません)</option>`;
+    const emptyHtml = `<option value="" disabled selected>(no MCP connections registered)</option>`;
     wrap.innerHTML = `
       <div class="modal" role="dialog" aria-modal="true">
         <header class="modal-head">
@@ -317,17 +317,17 @@ export function modalMcpAdd({ title, servers = [], authOptions = [], defaultAuth
           <label class="modal-label">MCP CONNECTION</label>
           <select class="modal-input modal-mcp-srv" aria-label="mcp connection">
             ${servers.length ? srvHtml(servers) : emptyHtml}
-            <option value="__new__">+ 新規作成…</option>
+            <option value="__new__">+ create new…</option>
           </select>
-          <span class="modal-hint">サイドバーに登録済みの MCP コネクションから選びます</span>
+          <span class="modal-hint">Pick from the MCP connections registered in the sidebar</span>
           <label class="modal-label">AUTH</label>
           <select class="modal-input modal-mcp-auth" aria-label="auth">${authHtml}</select>
-          <span class="modal-hint">identity を選ぶと Bearer token を自動付与・更新します</span>
+          <span class="modal-hint">Choosing an identity attaches and refreshes a Bearer token automatically</span>
           <div class="modal-mcp-token-wrap" hidden>
             <label class="modal-label">BEARER TOKEN</label>
             <textarea class="modal-input modal-mcp-token" rows="2" spellcheck="false"
                       autocomplete="off" placeholder="paste a Bearer token…"></textarea>
-            <span class="modal-hint">Authorization: Bearer &lt;token&gt; として送信します (自動更新なし)</span>
+            <span class="modal-hint">Sent as Authorization: Bearer &lt;token&gt; (never refreshed)</span>
           </div>
         </div>
         <footer class="modal-foot">
@@ -348,7 +348,7 @@ export function modalMcpAdd({ title, servers = [], authOptions = [], defaultAuth
       document.removeEventListener("keydown", onKey, true);
       resolve(result);
     };
-    // "+ 新規作成…" は接続ダイアログに委譲する。 その間このダイアログは隠しておき
+    // "+ create new…" は接続ダイアログに委譲する。 その間このダイアログは隠しておき
     // (2 枚重なると Esc がどちらに効くか分からなくなる)、 戻ってきたら選択肢に足す。
     srvEl.addEventListener("change", async () => {
       if (srvEl.value !== "__new__") return;
@@ -421,10 +421,10 @@ export function modalExport({ title, defaultValue, askName = true } = {}) {
         <div class="modal-body">
           ${askName ? `
           <label class="modal-label">file name (.json appended automatically)</label>
-          <span class="modal-hint">ブラウザの既定のダウンロード先に保存されます</span>
+          <span class="modal-hint">Saved to your browser's default download location</span>
           <input class="modal-input" id="expName" type="text" autocomplete="off" value="${escapeHtml(defaultValue || "")}" />
           ` : `
-          <p class="modal-hint modal-hint-lead">Export を押すと、 保存先とファイル名を選ぶダイアログが開きます。</p>
+          <p class="modal-hint modal-hint-lead">Pressing Export opens a dialog to choose the location and file name.</p>
           `}
           <label class="modal-check">
             <input type="checkbox" id="expSecrets" />

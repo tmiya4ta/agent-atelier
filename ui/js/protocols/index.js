@@ -22,7 +22,7 @@ export const PROTOCOLS = [
     id: "soap",
     label: "SOAP",
     sub: "wsdl · xml",
-    description: "SOAP client · WSDL から operation 一覧 + Envelope 雛形を生成",
+    description: "SOAP client · lists operations from a WSDL and builds envelope skeletons",
     AdapterClass: SoapAdapter,
     status: "ready"
   },

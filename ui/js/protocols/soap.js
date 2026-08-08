@@ -132,10 +132,10 @@ export class SoapAdapter extends ProtocolAdapter {
       // 汎用の card 描画がこの description をそのまま出す。 /proxy の allowlist は
       // 引っかかると 403 になるだけで理由が分からないので、 ここに書いておく。
       description: (this.wsdlError
-        ? `WSDL を読み込めませんでした: ${this.wsdlError} — raw タブから直接送信できます。`
-        : `${this.operations.length} operations · operation を選ぶと endpoint / SOAPAction / Envelope 雛形が入ります。`)
-        + " SOAP サーバは CORS を返さないことがほとんどなので通常は /proxy 経由になります。"
-        + " 自分のサービスへ繋ぐときは、そのホストを deployment の proxy.allowHosts に追加してください (未許可は 403)。",
+        ? `Could not load the WSDL: ${this.wsdlError} — you can still send from the raw tab.`
+        : `${this.operations.length} operations · pick one to fill in endpoint, SOAPAction and an envelope skeleton.`)
+        + " SOAP servers rarely send CORS headers, so requests normally go through /proxy."
+        + " To reach your own service, add its host to proxy.allowHosts in the deployment (otherwise you get 403).",
       url: this.baseUrl,
       skills: this.operations.map(o => ({
         id: o.key, name: o.label,
@@ -155,9 +155,9 @@ function hostOf(u) { try { return new URL(u, location.href).host; } catch { retu
 // rest.js の parseSpec/extractOperations と同じ形にしてある (兄弟として読めるように)。
 export function parseWsdl(text) {
   const doc = new DOMParser().parseFromString(text, "text/xml");
-  if (doc.querySelector("parsererror")) throw new Error("WSDL が XML として壊れています");
+  if (doc.querySelector("parsererror")) throw new Error("Not valid XML");
   const defs = doc.getElementsByTagNameNS(NS.wsdl, "definitions")[0];
-  if (!defs) throw new Error("wsdl:definitions が見つかりません");
+  if (!defs) throw new Error("No wsdl:definitions element");
   const tns = defs.getAttribute("targetNamespace") || "";
 
   const schemas = [...doc.getElementsByTagNameNS(NS.xsd, "schema")];
@@ -220,7 +220,7 @@ export function parseWsdl(text) {
       });
     }
   }
-  if (!operations.length) throw new Error("SOAP binding の operation が見つかりません");
+  if (!operations.length) throw new Error("No operations found in any SOAP binding");
   return { serviceName, targetNamespace: tns, operations };
 }
 
@@ -252,7 +252,7 @@ function buildBodyXml(op) {
     return renderElement(op._schemas, el.getAttribute("name"), type, 0);
   }
   // element が引けない (rpc/encoded で part が type 指定など) → 名前だけの殻を出す
-  return `<ns:${op.elementName}>\n  <!-- 引数をここに書く -->\n</ns:${op.elementName}>`;
+  return `<ns:${op.elementName}>\n  <!-- put arguments here -->\n</ns:${op.elementName}>`;
 }
 
 function findElement(schemas, name) {
