@@ -73,17 +73,32 @@ output application/java
 SsrfGuard::check(attributes.queryParams.url default "", (p('proxy.allowHosts') default "") splitBy ",")]]></ee:set-variable>
                         <ee:set-variable variableName="fwdHeaders"><![CDATA[%dw 2.0
 output application/java
+import lower from dw::core::Strings
 var h = attributes.headers default {}
+/*
+ * client のヘッダは原則そのまま転送する。 以前は allowlist 方式で、
+ * SOAPAction のような protocol 固有ヘッダや独自ヘッダが黙って落ちていた
+ * (SOAP で soapaction が上流に届かず、 ディスパッチに失敗した)。
+ *
+ * 落とすのは次の 3 種類だけ:
+ *   1. hop-by-hop / 転送すると壊れるもの (host, content-length, connection ...)
+ *      → Mule の HTTP requester が宛先に合わせて設定し直す
+ *   2. ブラウザが自オリジン向けに付けるもの (cookie, origin, referer, sec-*)
+ *      → 第三者へ送ると Atelier 自身の cookie が漏れる
+ *   3. accept
+ *      → 既定値を入れたいので下で明示的に足す (重複ヘッダにしない)
+ */
+var DENY = [
+    "host", "content-length", "connection", "transfer-encoding", "upgrade", "expect",
+    "keep-alive", "proxy-authorization", "proxy-connection", "te", "trailer",
+    "cookie", "origin", "referer", "accept-encoding", "accept",
+    "x-forwarded-for", "x-forwarded-proto", "x-forwarded-host", "x-forwarded-port", "x-real-ip",
+    "sec-fetch-mode", "sec-fetch-site", "sec-fetch-dest", "sec-fetch-user",
+    "sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform"
+]
 ---
-{
-    (if (h.authorization?) { "Authorization": h.authorization } else {}),
-    (if (h."content-type"?) { "Content-Type": h."content-type" } else {}),
-    (if (h."mcp-session-id"?) { "Mcp-Session-Id": h."mcp-session-id" } else {}),
-    (if (h."mcp-protocol-version"?) { "Mcp-Protocol-Version": h."mcp-protocol-version" } else {}),
-    (if (h."x-clouderby-session-id"?) { "X-Clouderby-Session-Id": h."x-clouderby-session-id" } else {}),
-    (if (h."a2a-version"?) { "A2A-Version": h."a2a-version" } else {}),
-    "Accept": h.accept default "*/*"
-}]]></ee:set-variable>
+(h filterObject ((v, k) -> not (DENY contains lower(k as String))))
+  ++ { "Accept": h.accept default "*/*" }]]></ee:set-variable>
                         <!-- client が SSE を要求しているか (Accept: text/event-stream) -->
                         <ee:set-variable variableName="wantsSse"><![CDATA[%dw 2.0
 output application/java

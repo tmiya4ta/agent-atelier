@@ -5,7 +5,7 @@
 import { PROTOCOLS, getProtocol }           from "./protocols/index.js";
 import { mockUrl }                          from "./protocols/mock.js";
 import { parseWsdl }                        from "./protocols/soap.js";
-import { normalizeToken }                   from "./token.js";
+import { normalizeToken, parseTokenInput }  from "./token.js";
 import { AgentWindow, decodeJwt, formatJwt } from "./window.js";
 import { DbWindow }                         from "./dbwindow.js";
 import { ClouderbyClient }                  from "./protocols/db/clouderby.js";
@@ -74,7 +74,7 @@ const CATALOG_FLOWS = [
 const state = {
   workspaces: [],     // [{ id, name, windows: [], events: 0, layer: <div> }]
   activeWs: null,
-  selectedProto: "a2a",
+  selectedProto: "rest",   // 接続ダイアログの既定。 一度選ぶとその選択が残る
   selectedCatalogFlow: "cc",
   selectedIdentityKind: "bearer",
   activeSideCat: "connections",   // サイドバー Activity Bar の選択カテゴリ
@@ -3407,8 +3407,11 @@ function submitIdentityDialog() {
   if (kind === "bearer") {
     const tokenInput = $("#idnToken").value;
     if (!tokenInput) { $("#idnToken").focus(); return; }
-    idn.token = isMask(tokenInput) ? secretSrc?.token : normalizeToken(tokenInput);
+    idn.token = isMask(tokenInput) ? secretSrc?.token : parseTokenInput(tokenInput).token;
     idn.scheme = $("#idnScheme").value || "Bearer";
+    // "Authorization: Basic ..." を貼られたのに Bearer のまま送ると壊れるので、
+    // 貼られた値に scheme が書いてあればそちらを優先する。
+    { const d = parseTokenInput(tokenInput).scheme; if (d && !isMask(tokenInput)) idn.scheme = d; }
     idn.headerName = $("#idnHeaderName").value.trim() || undefined;
   } else if (kind === "oauth2_cc") {
     const clientIdInput = $("#idnClientIdCc").value.trim();
@@ -3519,6 +3522,22 @@ function wireIdentityDialog() {
   // tenant 入力で token/auth url の {tenant} をライブ差し込み
   const tenantIn = $("#idnTenant");
   if (tenantIn) tenantIn.addEventListener("input", () => applyProviderPreset());
+
+  // TOKEN 欄は "Authorization: Bearer eyJ..." を丸ごと貼られることがある。
+  // 貼った直後にその場で整形して、 何が保存されるかを本人が見えるようにする
+  // (保存時にも同じ処理は通るが、 見えないと直ったのか分からない)。
+  const tokenIn = $("#idnToken");
+  if (tokenIn) {
+    const tidy = () => {
+      const v = tokenIn.value;
+      if (!v || /^•+$/.test(v)) return;            // 伏字は触らない
+      const { token, scheme } = parseTokenInput(v);
+      if (token !== v) tokenIn.value = token;
+      if (scheme) $("#idnScheme").value = scheme;
+    };
+    tokenIn.addEventListener("blur", tidy);
+    tokenIn.addEventListener("paste", () => setTimeout(tidy, 0));   // 貼り付け反映後に整形
+  }
 
   // toggle buttons for token/secret fields
   const togglePairs = [
@@ -6661,7 +6680,8 @@ function openDialog(opts = {}) {
     document.querySelectorAll("#dlgProtoGrid .proto-card").forEach(el => el.disabled = true);
   } else {
     if (eyebrow) eyebrow.textContent = "new connection";
-    if (title)   title.innerHTML = "Connect to an <em>agent</em>";
+    // 見出しは protocol に合わせて applyProtoUI が設定する。 ここで "agent" に
+    // 決め打ちすると、 REST/SOAP を選んでいても毎回 agent に戻ってしまう。
     if (submitLabel) submitLabel.textContent = "connect";
     $("#dlgUrl").readOnly = false;
     $("#dlgUrl").classList.remove("is-readonly");

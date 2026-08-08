@@ -2514,12 +2514,29 @@ export class AgentWindow {
     const hdrWrap = document.createElement("details");
     hdrWrap.className = "soap-headers";
     const hdrText = Object.entries(req.headers).map(([k, v]) => `${k}: ${v}`).join("\n");
-    hdrWrap.innerHTML = `<summary>headers <em>${Object.keys(req.headers).length}</em>` +
+    hdrWrap.innerHTML = `<summary>headers <em class="soap-headers-n"></em>` +
                         `<span class="soap-headers-hint">one per line · Name: value</span></summary>`;
     const hdrIn = document.createElement("textarea");
     hdrIn.className = "tool-field-input soap-headers-input";
     hdrIn.rows = 3; hdrIn.spellcheck = false; hdrIn.value = hdrText;
     hdrWrap.appendChild(hdrIn);
+    // 件数は入力に追随させる。 生成時の値で固定すると、 行を足しても数が変わらず
+    // 「足したヘッダが無視されている」ように見える (実際にそう報告された)。
+    const parseHeaders = () => {
+      const out = {};
+      for (const line of hdrIn.value.split("\n")) {
+        const i = line.indexOf(":");
+        if (i <= 0) continue;
+        const k = line.slice(0, i).trim();
+        if (k) out[k] = line.slice(i + 1).trim();
+      }
+      return out;
+    };
+    const syncCount = () => {
+      hdrWrap.querySelector(".soap-headers-n").textContent = String(Object.keys(parseHeaders()).length);
+    };
+    hdrIn.addEventListener("input", syncCount);
+    syncCount();
     fields.appendChild(hdrWrap);
 
     const bodyRow = document.createElement("label");
@@ -2586,14 +2603,8 @@ export class AgentWindow {
       status.textContent = attached ? `sending ${attached.name}…` : "sending…";
       result.hidden = true; result.textContent = "";
       try {
-        const headers = {};
-        for (const line of hdrIn.value.split("\n")) {
-          const i = line.indexOf(":");
-          if (i <= 0) continue;
-          headers[line.slice(0, i).trim()] = line.slice(i + 1).trim();
-        }
         const out = await this.adapter.rawRequest({
-          method: "POST", url, headers, body: attached || bodyIn.value
+          method: "POST", url, headers: parseHeaders(), body: attached || bodyIn.value
         });
         status.textContent = `${out.status} ${out.statusText || ""}  ·  ${out.ms}ms  ·  ${out.via}`;
         status.className = "raw-status" + (out.ok ? " is-ok" : " is-error");

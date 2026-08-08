@@ -16,3 +16,22 @@ export function normalizeToken(v) {
   const wrapped = /[\r\n]/.test(trimmed);
   return (isJwt || wrapped) ? stripped : trimmed;
 }
+
+// ヘッダ行ごと貼られることへの対応。
+//   "Authorization: Bearer eyJ..."  → { token: "eyJ...", scheme: "Bearer" }
+//   "Bearer eyJ..."                 → 同上
+//   "eyJ..."                        → { token: "eyJ...", scheme: null }
+// scheme を返すのは、 貼られたものが Basic だったときに Bearer のまま送って
+// 壊さないため。 呼び出し側で SCHEME の選択に反映する。
+const SCHEMES = ["Bearer", "ApiKey", "Basic", "Token", "JWT"];
+export function parseTokenInput(v) {
+  let s = String(v ?? "").trim();
+  s = s.replace(/^authorization\s*:\s*/i, "");     // ヘッダ名ごと貼られた場合
+  let scheme = null;
+  const m = s.match(new RegExp("^(" + SCHEMES.join("|") + ")\\s+", "i"));
+  if (m) {
+    scheme = SCHEMES.find(x => x.toLowerCase() === m[1].toLowerCase()) || null;
+    s = s.slice(m[0].length);
+  }
+  return { token: normalizeToken(s), scheme };
+}
