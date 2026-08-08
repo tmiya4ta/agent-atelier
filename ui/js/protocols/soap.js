@@ -43,15 +43,16 @@ export class SoapAdapter extends ProtocolAdapter {
   async connect() {
     this._setState("connecting");
     try {
-      const { text, via } = await this._fetchText(this.wsdlUrl);
+      const { text, via, usedUrl } = await this._fetchWsdl(this.wsdlUrl);
+      if (usedUrl !== this.wsdlUrl) this.wsdlUrl = usedUrl;   // ?wsdl を足して当たった
       this._emit("rpc", {
-        dir: "in", method: `200 OK · wsdl · ${via}`,
+        dir: "in", method: `200 OK · wsdl · ${via} · ${pathOf(usedUrl)}`,
         raw: text.length > 20000 ? text.slice(0, 20000) + "\n… (truncated)" : text
       });
       const parsed = parseWsdl(text);
       this.serviceName = parsed.serviceName;
-      this.operations  = parsed.operations;
-      this.baseUrl     = parsed.operations[0]?.endpoint || "";
+      this.operations  = rebaseEndpoints(parsed.operations, this.wsdlUrl);
+      this.baseUrl     = this.operations[0]?.endpoint || "";
     } catch (e) {
       // WSDL が読めなくても raw ペインからは送れる。 行き止まりにしない。
       this.wsdlError = e?.message || String(e);
@@ -68,27 +69,56 @@ export class SoapAdapter extends ProtocolAdapter {
     });
   }
 
-  // まず直接 fetch し、 CORS で落ちたら /proxy に退避する (REST と同じ方針)。
+  // エンドポイントの URL をそのまま入れられることが多い (?wsdl を付け忘れる)。
+  // その場合サーバは GET を SOAP 要求として解釈し、 500 の Fault を返して終わる。
+  // 素の URL で読めなかったら ?wsdl を足して 1 回試す。
+  async _fetchWsdl(url) {
+    const candidates = [url];
+    try {
+      const u = new URL(url, location.href);
+      if (!u.search) candidates.push(u.origin + u.pathname.replace(/\/$/, "") + "?wsdl");
+    } catch { /* 相対 URL 等はそのまま */ }
+    let firstErr = null;
+    for (const cu of candidates) {
+      try {
+        const got = await this._fetchText(cu);
+        parseWsdl(got.text);                 // 解析できて初めて採用
+        return { ...got, usedUrl: cu };
+      } catch (e) { firstErr = firstErr || e; }
+    }
+    throw firstErr || new Error("could not fetch the WSDL");
+  }
+
+  // SOAP サーバは CORS ヘッダをまず返さないので、 直接 fetch は基本失敗する。
+  // それを毎回先に試すと、 相手が無応答のとき (ヘアピン NAT 等) タイムアウト分
+  // まるごと待たされる。 実測で接続に 4 秒かかっていた。
+  // そこで同一オリジン以外は /proxy を先に使い、 /proxy が拒否したときだけ
+  // 直接を試す (CORS を返す珍しいサーバのため)。
   async _fetchText(url) {
     this._emit("rpc", { dir: "out", method: `GET ${url}`, raw: `GET ${url}` });
-    try {
-      // CORS が無い相手は例外で即返るが、 ヘアピン NAT のように応答も拒否も
-      // 返らない相手だと延々待つ (LAN 内から *.theorems.io がこれ)。 数秒で見切る。
-      const r = await fetch(url, { headers: { Accept: "text/xml, application/xml, */*" },
-                                   signal: AbortSignal.timeout(4000) });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return { text: await r.text(), via: "direct" };
-    } catch (direct) {
-      const r = await fetch(proxied(url), { headers: { Accept: "text/xml, application/xml, */*" } });
+    const headers = { Accept: "text/xml, application/xml, */*" };
+    const get = async (target, via, timeoutMs) => {
+      const r = await fetch(target, { headers, ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}) });
       if (!r.ok) {
         const body = await r.text().catch(() => "");
-        throw new Error(`HTTP ${r.status}${body ? ` · ${body.slice(0, 200)}` : ""}`);
+        const e = new Error(`HTTP ${r.status}${body ? ` · ${body.slice(0, 200)}` : ""}`);
+        e.status = r.status;
+        throw e;
       }
-      return { text: await r.text(), via: "/proxy" };
+      return { text: await r.text(), via };
+    };
+    if (sameOrigin(url)) return get(url, "same-origin");
+    try { return await get(proxied(url), "/proxy"); }
+    catch (viaProxy) {
+      // 保険の直接 fetch。 相手が無応答だと返ってこないので必ず短く切る
+      // (切らずに投げたら到達不能ホストで 134 秒かかった)。
+      try { return await get(url, "direct", 2000); }
+      catch { throw viaProxy; }   // 元の /proxy 側の理由を返す (そちらが本命)
     }
   }
 
   // window.js の raw ペインがそのまま呼ぶ。 RestAdapter と同一シグネチャ。
+  // 経路の選び方は _fetchText と同じ (/proxy 優先)。
   async rawRequest({ method = "POST", url, headers = {}, body = "" } = {}) {
     const started = Date.now();
     const send = async (target, via, timeoutMs) => {
@@ -101,12 +131,13 @@ export class SoapAdapter extends ProtocolAdapter {
         ms: Date.now() - started, via
       };
     };
-    this._emit("rpc", { dir: "out", method: `${method} ${url}`, headers, raw: body || "" });
+    this._emit("rpc", { dir: "out", method: `${method} ${url}`, headers,
+                        raw: typeof body === "string" ? body : `(file: ${body?.name || "blob"})` });
     let out;
-    try {
-      out = await send(url, "direct", 4000);   // 直接は数秒で見切る (上と同じ理由)
-    } catch {
-      out = await send(proxied(url), "/proxy");  // /proxy 側は待つ
+    if (sameOrigin(url)) out = await send(url, "same-origin");
+    else {
+      try { out = await send(proxied(url), "/proxy"); }
+      catch { out = await send(url, "direct", 2000); }   // 保険。 無応答で固まらないよう短く
     }
     this._emit("rpc", {
       dir: out.ok ? "in" : "err",
@@ -151,6 +182,8 @@ function proxied(target) {
   return `/proxy?url=${encodeURIComponent(target)}`;
 }
 function hostOf(u) { try { return new URL(u, location.href).host; } catch { return ""; } }
+function pathOf(u) { try { const x = new URL(u, location.href); return x.pathname + x.search; } catch { return u; } }
+function sameOrigin(u) { try { return new URL(u, location.href).origin === location.origin; } catch { return false; } }
 
 // ─── WSDL の解析 ────────────────────────────────────────
 // rest.js の parseSpec/extractOperations と同じ形にしてある (兄弟として読めるように)。
@@ -231,6 +264,27 @@ function indexBy(nodes, attr) {
   return out;
 }
 function localName(qname) { return String(qname || "").split(":").pop(); }
+
+// WSDL が宣言する endpoint (soap:address) は、 サービスが「自分はここにいる」と
+// 名乗っている URL。 relay や proxy 越しに WSDL を取ったときは、 その URL が
+// こちらから引けないことがある (実際 relay 経由で取ると soap.theorems.io を
+// 名乗り、 そこへは届かず 502 になった)。
+// 宣言された host が WSDL を取れた host と違うときは、 WSDL の URL から query を
+// 落としたものを endpoint にする。 "<service>?wsdl" 形式はこれで正しい endpoint に
+// なるし、 relay 経由なら relay のパスがそのまま残るので届く。
+// 元の値は declaredEndpoint に残し、 UI 側で差異を出せるようにしておく。
+function rebaseEndpoints(operations, wsdlUrl) {
+  let wsdl;
+  try { wsdl = new URL(wsdlUrl, location.href); } catch { return operations; }
+  const fromWsdl = wsdl.origin + wsdl.pathname;
+  return operations.map(op => {
+    const declared = op.endpoint || "";
+    let sameHost = false;
+    try { sameHost = !!declared && new URL(declared).host === wsdl.host; } catch { /* 相対等 */ }
+    if (declared && sameHost) return op;
+    return { ...op, declaredEndpoint: declared, endpoint: fromWsdl, rebased: !!declared };
+  });
+}
 
 // ─── Envelope 雛形 ─────────────────────────────────────
 export function buildEnvelope(op) {

@@ -6849,6 +6849,25 @@ async function testSoap(url, auth, authHeaders) {
   const headers = { Accept: "text/xml, application/xml, */*" };
   if (auth) headers["Authorization"] = `Bearer ${auth}`;
   if (authHeaders) Object.assign(headers, authHeaders);
+  // adapter と同じく ?wsdl を足して 1 回試す (エンドポイント直打ちが多いため)。
+  const candidates = [url];
+  try {
+    const u = new URL(url, location.href);
+    if (!u.search) candidates.push(u.origin + u.pathname.replace(/\/$/, "") + "?wsdl");
+  } catch { /* noop */ }
+  if (candidates.length > 1) {
+    let first = null;
+    for (const cu of candidates) {
+      const r = await testSoapOnce(cu, headers);
+      if (r.serviceName !== undefined) return r;   // 解析できたものを採用
+      first = first || r;
+    }
+    return first;
+  }
+  return await testSoapOnce(url, headers);
+}
+
+async function testSoapOnce(url, headers) {
   const read = async (res, via) => {
     const out = { ok: res.ok, status: res.status, statusText: res.statusText, via, proxyDenied: false };
     const body = await res.text().catch(() => "");
@@ -6862,13 +6881,12 @@ async function testSoap(url, auth, authHeaders) {
   };
   let sameOrigin = false;
   try { sameOrigin = new URL(url, location.href).origin === location.origin; } catch { /* noop */ }
-  if (!sameOrigin) {
-    // 直接 fetch は CORS が無いと弾かれるが、 ヘアピン NAT のように「応答も拒否も
-    // 返らない」相手だと延々待つ。 数秒で見切って /proxy へ倒す。
-    try { return await read(await fetch(url, { headers, signal: AbortSignal.timeout(4000) }), "direct"); }
-    catch { /* CORS / timeout → /proxy へ */ }
-  }
-  return await read(await fetch(proxifyForTest(url), { headers }), sameOrigin ? "same-origin" : "proxy");
+  if (sameOrigin) return await read(await fetch(url, { headers }), "same-origin");
+  // SOAP サーバは CORS を返さないので直接 fetch はほぼ必ず失敗する。 先に試すと
+  // 相手が無応答のとき待ち時間がまるごと無駄になるため、 /proxy を先に使う。
+  try { return await read(await fetch(proxifyForTest(url), { headers }), "proxy"); }
+  // 保険の直接 fetch。 相手が無応答だと返ってこないので短く切る。
+  catch { return await read(await fetch(url, { headers, signal: AbortSignal.timeout(2000) }), "direct"); }
 }
 
 async function testRest(url, auth, authHeaders) {

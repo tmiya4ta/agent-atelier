@@ -2497,8 +2497,12 @@ export class AgentWindow {
 
     const urlRow = document.createElement("label");
     urlRow.className = "tool-field";
+    // 宣言された endpoint と実際に使う endpoint が違うときは、 黙って差し替えず理由を出す
+    // (A2A の Discovery URL と Effective endpoint と同じ考え方)。
     urlRow.innerHTML = `<span class="tool-field-label">endpoint</span>` +
-                       `<span class="tool-field-desc">where the envelope is POSTed</span>`;
+                       `<span class="tool-field-desc">${op.rebased
+                         ? `the WSDL declares ${escapeHtml(op.declaredEndpoint)} — using the host the WSDL came from`
+                         : "where the envelope is POSTed"}</span>`;
     const urlIn = document.createElement("input");
     urlIn.className = "tool-field-input"; urlIn.type = "text"; urlIn.spellcheck = false;
     urlIn.value = req.url || "";
