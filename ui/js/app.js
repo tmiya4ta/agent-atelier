@@ -5,6 +5,7 @@
 import { PROTOCOLS, getProtocol }           from "./protocols/index.js";
 import { mockUrl }                          from "./protocols/mock.js";
 import { parseWsdl }                        from "./protocols/soap.js";
+import { normalizeToken }                   from "./token.js";
 import { AgentWindow, decodeJwt, formatJwt } from "./window.js";
 import { DbWindow }                         from "./dbwindow.js";
 import { ClouderbyClient }                  from "./protocols/db/clouderby.js";
@@ -3309,7 +3310,7 @@ function buildTempIdentityFromForm() {
   } else if (kind === "jwt_bearer") {
     idn.tokenUrl = $("#idnTokenUrlJwt").value.trim();
     const a = $("#idnAssertion").value.trim();
-    idn.assertion = isMask(a) ? existing?.assertion : a;
+    idn.assertion = isMask(a) ? existing?.assertion : normalizeToken(a);
   } else if (kind === "oauth2_password") {
     idn.tokenUrl = $("#idnTokenUrlPwd").value.trim();
     idn.username = $("#idnUsername").value.trim();
@@ -3406,7 +3407,7 @@ function submitIdentityDialog() {
   if (kind === "bearer") {
     const tokenInput = $("#idnToken").value;
     if (!tokenInput) { $("#idnToken").focus(); return; }
-    idn.token = isMask(tokenInput) ? secretSrc?.token : tokenInput;
+    idn.token = isMask(tokenInput) ? secretSrc?.token : normalizeToken(tokenInput);
     idn.scheme = $("#idnScheme").value || "Bearer";
     idn.headerName = $("#idnHeaderName").value.trim() || undefined;
   } else if (kind === "oauth2_cc") {
@@ -3441,7 +3442,7 @@ function submitIdentityDialog() {
     const tokenUrlInput  = $("#idnTokenUrlJwt").value.trim();
     if (!assertionInput) { $("#idnAssertion").focus(); return; }
     if (!tokenUrlInput)  { $("#idnTokenUrlJwt").focus(); return; }
-    idn.assertion = isMask(assertionInput) ? secretSrc?.assertion : assertionInput;
+    idn.assertion = isMask(assertionInput) ? secretSrc?.assertion : normalizeToken(assertionInput);
     idn.tokenUrl  = tokenUrlInput;
     idn.provider = state.selectedIdentityProvider || "custom";
     idn.scopes = scopes || undefined;

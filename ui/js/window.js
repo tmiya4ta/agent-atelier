@@ -2,6 +2,7 @@
 // 1接続=1ウインドウ。Chat / Agent Card / Debug / Settings の4タブ。
 import { t } from "./i18n.js";
 import { modalMcpAdd } from "./modal.js";
+import { normalizeToken } from "./token.js";
 import { buildUrl as buildRestUrl } from "./protocols/rest.js";
 
 let zCounter = 10;
@@ -2067,7 +2068,8 @@ export class AgentWindow {
     if (rawInput) {
       const commitRaw = () => {
         if (rawInput.readOnly) return;   // identity 由来の表示専用は変更しない
-        const tok = rawInput.value.trim();
+        // 貼り付けた JWT に改行が混じっていても通るようにする
+        const tok = normalizeToken(rawInput.value);
         const hadRaw = !this.adapter.config.authRef && !!this.adapter.config.auth;
         if (tok) {
           this.adapter.config.authRef = undefined;      // raw token モード (自動更新なし)

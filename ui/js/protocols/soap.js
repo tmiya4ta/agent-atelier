@@ -40,9 +40,19 @@ export class SoapAdapter extends ProtocolAdapter {
     this.wsdlError  = null;
   }
 
+  // identity / 生 token から Authorization を組み立てる。 WSDL 取得にも送信にも要る
+  // (ゲートウェイに JWT 検証が掛かっていると WSDL の GET から 400 で弾かれる)。
+  _authHeaders() {
+    const h = {};
+    if (this.config.auth) h["Authorization"] = `Bearer ${this.config.auth}`;
+    if (this.config.authHeaders) Object.assign(h, this.config.authHeaders);
+    return h;
+  }
+
   async connect() {
     this._setState("connecting");
     try {
+      await this._ensureFreshAuth();
       const { text, via, usedUrl } = await this._fetchWsdl(this.wsdlUrl);
       if (usedUrl !== this.wsdlUrl) this.wsdlUrl = usedUrl;   // ?wsdl を足して当たった
       this._emit("rpc", {
@@ -96,7 +106,7 @@ export class SoapAdapter extends ProtocolAdapter {
   // 直接を試す (CORS を返す珍しいサーバのため)。
   async _fetchText(url) {
     this._emit("rpc", { dir: "out", method: `GET ${url}`, raw: `GET ${url}` });
-    const headers = { Accept: "text/xml, application/xml, */*" };
+    const headers = { Accept: "text/xml, application/xml, */*", ...this._authHeaders() };
     const get = async (target, via, timeoutMs) => {
       const r = await fetch(target, { headers, ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}) });
       if (!r.ok) {
@@ -121,6 +131,9 @@ export class SoapAdapter extends ProtocolAdapter {
   // 経路の選び方は _fetchText と同じ (/proxy 優先)。
   async rawRequest({ method = "POST", url, headers = {}, body = "" } = {}) {
     const started = Date.now();
+    await this._ensureFreshAuth();
+    // 認証は既定として敷き、 headers 欄で明示された値があればそちらを優先する
+    headers = { ...this._authHeaders(), ...headers };
     const send = async (target, via, timeoutMs) => {
       const res = await fetch(target, { method, headers, body: body || undefined,
                                         ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}) });
