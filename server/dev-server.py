@@ -107,7 +107,9 @@ class Handler(SimpleHTTPRequestHandler):
         # セッション維持に必須 (initialize 後の tools/list 等で要求される)。
         for h in ("Content-Type", "Authorization", "Accept", "X-Atelier-Stream",
                   "Mcp-Session-Id", "MCP-Protocol-Version", "Last-Event-ID",
-                  "X-Clouderby-Session-Id"):
+                  "X-Clouderby-Session-Id",
+                  # AWS SigV4 (Atelier が署名して送る。 Bedrock AgentCore など)
+                  "X-Amz-Date", "X-Amz-Content-Sha256", "X-Amz-Security-Token"):
             v = self.headers.get(h)
             if v: req.add_header(h, v)
 

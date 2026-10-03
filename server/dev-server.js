@@ -39,10 +39,16 @@ const args = process.argv.slice(2);
 let port = 8000;
 let host = "127.0.0.1";
 let extraAllow = [];
+// /profiles (暗号化プロファイルの置き場) — mule-app の profiles.xml と同じ I/F。
+// 書き込みには --upload-token (または ATELIER_UPLOAD_TOKEN) が要る。 未設定なら読み取り専用。
+let profilesDir = process.env.ATELIER_PROFILES_DIR || "";
+let uploadToken = process.env.ATELIER_UPLOAD_TOKEN || "";
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--port") port = parseInt(args[++i], 10);
   else if (args[i] === "--host") host = args[++i];
   else if (args[i] === "--proxy-allow") extraAllow = String(args[++i] || "").split(",").map(s => s.trim()).filter(Boolean);
+  else if (args[i] === "--profiles-dir") profilesDir = args[++i];
+  else if (args[i] === "--upload-token") uploadToken = args[++i];
 }
 
 // 静的配信ルート = ../ui (UI アセット一式: index.html / styles.css / js / oauth / scenarios)
@@ -304,7 +310,9 @@ async function handleProxy(req, res) {
 
   // forward only the headers we care about
   const fwdHeaders = {};
-  for (const h of ["content-type", "authorization", "accept", "x-atelier-stream", "mcp-session-id", "mcp-protocol-version"]) {
+  for (const h of ["content-type", "authorization", "accept", "x-atelier-stream", "mcp-session-id", "mcp-protocol-version",
+                   // AWS SigV4 (Atelier が署名して送る。 Bedrock AgentCore など)
+                   "x-amz-date", "x-amz-content-sha256", "x-amz-security-token"]) {
     const v = req.headers[h];
     if (v) fwdHeaders[h.replace(/(^|-)([a-z])/g, (_, p, c) => p + c.toUpperCase())] = v;
   }
@@ -350,6 +358,55 @@ async function handleProxy(req, res) {
   }
 }
 
+// ─── /profiles ─────────────────────────────────────────
+// GET /profiles/index.json · GET|POST|DELETE /profiles/<id>.json。 受け付けるのは
+// Atelier の暗号化 export だけ (公開の置き場に平文の secret を置かせない)。
+function profilesPath() {
+  return path.resolve(profilesDir || path.join(__dirname, "../.profiles"));
+}
+async function handleProfiles(req, res) {
+  const dir = profilesPath();
+  const name = decodeURIComponent(url.parse(req.url).pathname.replace(/^\/profiles\/?/, ""));
+  const q = url.parse(req.url, true).query || {};
+  const json = (code, obj) => { res.statusCode = code; setNoCache(res); res.setHeader("Content-Type", "application/json; charset=utf-8"); res.end(JSON.stringify(obj)); log(req, code); };
+  if (req.method === "GET" && name === "index.json") {
+    let items = [];
+    try {
+      items = fs.readdirSync(dir).filter(f => f.endsWith(".json")).map(f => {
+        const r = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8"));
+        return { id: r.id, url: `/profiles/${r.id}.json`, name: r.meta?.name || r.id, description: r.meta?.description || "",
+                 encrypted: true, counts: { workspaces: 0, bookmarks: 0, scripts: 0, identities: 0 },
+                 exportedAt: r.exportedAt || "", uploadedAt: r.uploadedAt || "", order: r.meta?.order ?? 100 };
+      }).sort((a, b) => a.order - b.order);
+    } catch { /* dir 無し = 空 */ }
+    return json(200, { v: 1, items });
+  }
+  const id = name.replace(/\.json$/, "");
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) return json(400, { error: "id must be 1-64 chars of A-Z a-z 0-9 _ -" });
+  const file = path.join(dir, id + ".json");
+  if (req.method === "GET") {
+    if (!fs.existsSync(file)) return json(404, { error: "profile not found" });
+    return json(200, JSON.parse(fs.readFileSync(file, "utf8")));
+  }
+  if (!uploadToken || req.headers["x-atelier-upload-token"] !== uploadToken)
+    return json(403, { error: "upload token is missing or wrong (uploads are disabled when no token is configured)" });
+  if (req.method === "DELETE") {
+    const existed = fs.existsSync(file); if (existed) fs.unlinkSync(file);
+    return json(200, { deleted: id, existed });
+  }
+  if (req.method !== "POST") return json(405, { error: "method not allowed" });
+  const buf = await readBody(req);
+  if (buf.length > 524288) return json(413, { error: "profile is larger than 512 KB" });
+  let body; try { body = JSON.parse(buf.toString("utf8")); } catch { return json(400, { error: "invalid JSON" }); }
+  if (!(body && body.app === "atelier" && body.encrypted === true && typeof body.ct === "string" && typeof body.iv === "string" && typeof body.salt === "string"))
+    return json(400, { error: "only encrypted Atelier exports are accepted (Export with 'include secrets' and a passphrase)" });
+  const m = body.meta || {};
+  const rec = { ...body, id, meta: { ...m, name: q.name || m.name || id, description: q.description || m.description || "", order: Number(q.order ?? m.order ?? 100) || 100 }, uploadedAt: new Date().toISOString() };
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(rec, null, 2));
+  return json(200, { stored: id, url: `/profiles/${id}.json`, name: rec.meta.name });
+}
+
 // ─── server ────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
@@ -361,6 +418,9 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.url.startsWith("/proxy")) {
     return handleProxy(req, res);
+  }
+  if (req.url.startsWith("/profiles/")) {
+    return handleProfiles(req, res).catch(e => sendError(req, res, 500, String(e && e.message || e)));
   }
   if (req.method === "GET" || req.method === "HEAD") return serveStatic(req, res);
   sendError(req, res, 404, "not found");

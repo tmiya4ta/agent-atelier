@@ -172,7 +172,7 @@ export function modalChoice({ title, message, choices = [], extras, cancelLabel 
 // modalPrompt — 1 行入力モーダル
 //   await modalPrompt({ title, label?, placeholder?, defaultValue?, confirmLabel? })
 //     → 入力文字列 (Cancel/Esc は null)
-export function modalPrompt({ title, label, placeholder, defaultValue, confirmLabel, cancelLabel } = {}) {
+export function modalPrompt({ title, label, placeholder, defaultValue, confirmLabel, cancelLabel, secret } = {}) {
   return new Promise((resolve) => {
     const wrap = document.createElement("div");
     wrap.className = "modal-backdrop";
@@ -184,7 +184,7 @@ export function modalPrompt({ title, label, placeholder, defaultValue, confirmLa
         </header>
         <div class="modal-body">
           ${label ? `<label class="modal-label">${escapeHtml(label)}</label>` : ""}
-          <input class="modal-input" type="text" autocomplete="off"
+          <input class="modal-input" type="${secret ? "password" : "text"}" autocomplete="off"
                  placeholder="${escapeHtml(placeholder || "")}"
                  value="${escapeHtml(defaultValue || "")}" />
         </div>

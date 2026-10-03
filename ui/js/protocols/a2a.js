@@ -13,6 +13,7 @@
 
 import { ProtocolAdapter, headersToObj } from "./base.js";
 import { MCPAdapter }      from "./mcp.js";
+import { signAws }         from "../awssig.js";
 
 export class A2AAdapter extends ProtocolAdapter {
   static get id()    { return "a2a"; }
@@ -186,6 +187,20 @@ export class A2AAdapter extends ProtocolAdapter {
     return out;
   }
 
+  // 送信はすべてここを通す。 identity が AWS SigV4 のとき (config.aws) は、
+  // 宛先 URL・メソッド・本文に対して署名ヘッダを付けてから /proxy に流す。
+  // 署名は送るたびに作り直す (X-Amz-Date が 5 分でずれると AWS が拒否する)。
+  async _fetch(url, init = {}) {
+    let headers = init.headers || {};
+    if (this.config.aws) {
+      headers = await signAws({
+        method: init.method || "GET", url, headers,
+        body: typeof init.body === "string" ? init.body : "", aws: this.config.aws
+      });
+    }
+    return fetch(proxify(url), { ...init, headers });
+  }
+
   async _fetchCard({ emitOpen = false, throwOnFail = false } = {}) {
     const candidates = candidateCardUrls(this.endpoint);
     let card = null, cardUrl = null, lastErr = null, cardResHeaders = null;
@@ -195,7 +210,7 @@ export class A2AAdapter extends ProtocolAdapter {
       if (this.config.authHeaders) Object.assign(reqHeaders, this.config.authHeaders);
       this._emit("rpc", { dir: "out", method: `GET ${cu}`, headers: reqHeaders, raw: `GET ${cu}\nAccept: application/json` });
       try {
-        const res = await fetch(proxify(cu), { headers: reqHeaders });
+        const res = await this._fetch(cu, { headers: reqHeaders });
         if (res.status === 404) {
           this._emit("rpc", { dir: "err", method: "404 not found", raw: cu });
           continue;
@@ -362,7 +377,7 @@ export class A2AAdapter extends ProtocolAdapter {
     this._inflight = ac;
 
     try {
-      let res = await fetch(proxify(this.rpcUrl), { method: "POST", headers, body: JSON.stringify(body), signal: ac.signal });
+      let res = await this._fetch(this.rpcUrl, { method: "POST", headers, body: JSON.stringify(body), signal: ac.signal });
       // AgentCard の url を末尾スラッシュ無しで publish しているのに、 実際の
       // listener は "<path>/" にしか無い server がある (Flex Gateway 経由の
       // Mule アプリで実際に遭遇: スラッシュ無しは 404、 付ければ 200)。
@@ -371,7 +386,7 @@ export class A2AAdapter extends ProtocolAdapter {
       if (res.status === 404 && !this.rpcUrl.endsWith("/")) {
         const slashed = this.rpcUrl + "/";
         this._emit("rpc", { dir: "err", method: `404 · ${method}`, raw: `${this.rpcUrl}\nretrying with trailing slash: ${slashed}` });
-        const res2 = await fetch(proxify(slashed), { method: "POST", headers, body: JSON.stringify(body), signal: ac.signal });
+        const res2 = await this._fetch(slashed, { method: "POST", headers, body: JSON.stringify(body), signal: ac.signal });
         if (res2.ok) { this.rpcUrl = slashed; res = res2; }
       }
       if (!res.ok) throw await this._httpError(res, method);
@@ -404,7 +419,7 @@ export class A2AAdapter extends ProtocolAdapter {
         this._emit("rpc", {
           dir: "out", method: `${method} (auto-retry: proto schema)`, headers, payload: body, raw: JSON.stringify(body, null, 2)
         });
-        res = await fetch(proxify(this.rpcUrl), { method: "POST", headers, body: JSON.stringify(body), signal: ac.signal });
+        res = await this._fetch(this.rpcUrl, { method: "POST", headers, body: JSON.stringify(body), signal: ac.signal });
         if (!res.ok) throw await this._httpError(res, method);
         data = await res.json();
         this._emit("rpc", {
@@ -475,7 +490,14 @@ export class A2AAdapter extends ProtocolAdapter {
       raw: clipped || "(empty body)"
     });
     // chat 側にも 1 行で分かるだけの手掛かりを出す (詳細は debug タブ)。
-    const oneLine = (payload?.message || payload?.error?.message || bodyText || "")
+    // JSON-RPC の error.data に理由が入っていることがある (Flex Gateway の A2A PII
+    // ポリシーは message="Invalid params"、 data="Request contains PII data: [...]")。
+    // message だけだと何に引っかかったのか分からないので data の先頭も添える。
+    const ed = payload?.error?.data;
+    const edText = ed == null ? "" : (typeof ed === "string" ? ed : JSON.stringify(ed));
+    const oneLine = (payload?.message
+        || (payload?.error?.message ? payload.error.message + (edText ? ` — ${edText}` : "") : "")
+        || bodyText || "")
       .toString().replace(/\s+/g, " ").trim().slice(0, 200);
     const err = new Error(`HTTP ${res.status}${oneLine ? ` · ${oneLine}` : ""}`);
     // このエラーは既に上で 1 フレーム出している。 catch 側の汎用フレームまで出すと
@@ -553,7 +575,10 @@ export class A2AAdapter extends ProtocolAdapter {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        buf += decoder.decode(value, { stream: true });
+        // SSE の改行は \n / \r\n / \r のどれでもよい (仕様)。 Bedrock AgentCore は \r\n\r\n で
+        // 区切ってくるので、 \n だけを見ていると最後まで 1 フレームも取れず「Processing…」のまま
+        // 止まる。 \r\n をここで \n に寄せる (チャンク末尾の単独 \r は次のチャンクで \r\n になる)。
+        buf = (buf + decoder.decode(value, { stream: true })).replace(/\r\n/g, "\n");
         // SSE フレームは空行 (\n\n) 区切り
         let idx;
         while ((idx = buf.indexOf("\n\n")) >= 0) {

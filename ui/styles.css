@@ -3309,7 +3309,7 @@ body.is-dark .agent-tag { color: #5BB8E8; }
 /* system pill: 全幅バブルだと「のっぺり」見えるので、 中央寄せの細いタブ風に */
 .msg-system {
   align-self: center;
-  max-width: none;
+  max-width: 100%;
 }
 .msg-system .msg-body {
   display: inline-flex;
@@ -3318,12 +3318,16 @@ body.is-dark .agent-tag { color: #5BB8E8; }
   padding: 4px 12px;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 100px;
+  border-radius: 14px;
   color: var(--ink-3);
   font-family: var(--f-mono);
   font-size: calc(10.5px * var(--fs-mul, 1.1) * var(--fs, 1));
   letter-spacing: 0.04em;
-  white-space: nowrap;
+  /* 長いエラー (例: PII ポリシーの "Request contains PII data: [...]") は折り返す。
+     nowrap のままだと窓の外へはみ出し、 先頭の "HTTP 403" まで読めなくなる。 */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 100%;
   box-shadow: 0 1px 0 rgba(0,22,74, 0.04);
 }
 /* 左に小さな丸ドット */

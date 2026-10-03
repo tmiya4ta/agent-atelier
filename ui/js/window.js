@@ -455,7 +455,7 @@ export class AgentWindow {
       btn.textContent = "authenticating…";
       try {
         const a = await this.adapter.config.reauth(this.adapter.config.authRef);
-        if (a) { this.adapter.config.auth = a.auth; this.adapter.config.authHeaders = a.authHeaders; }
+        if (a) { this.adapter.config.auth = a.auth; this.adapter.config.authHeaders = a.authHeaders; this.adapter.config.aws = a.aws; }
         bar.classList.add("is-done");
         this._addSystemMessage("Re-authenticated. You can retry now.");
         setTimeout(() => bar.remove(), 900);
@@ -2049,17 +2049,25 @@ export class AgentWindow {
         if (!v) {
           this.adapter.config.auth = undefined;
           this.adapter.config.authHeaders = undefined;
+          this.adapter.config.aws = undefined;
         } else {
           try {
             const resolved = await this.authApi.resolve(v);
             this.adapter.config.auth = resolved.auth;
             this.adapter.config.authHeaders = resolved.authHeaders;
+            this.adapter.config.aws = resolved.aws;
           } catch (e) {
             console.warn("[settings] auth resolve failed:", e?.message || e);
           }
         }
         this.onChange?.();
         this._renderSettings();   // 表示を更新 (badge / custom token 表示の整理)
+        // 認証が足りずにつながっていなかった窓 (例: Gateway に JWT ポリシーを足した後) は、
+        // 新しい認証でつなぎ直す。 reload しなくてよい。
+        if (this.adapter.state !== "open" && typeof this.adapter.connect === "function") {
+          try { await this.adapter.connect(); this._setStatus("live"); }
+          catch (e) { this._setStatus("error"); console.warn("[settings] reconnect failed:", e?.message || e); }
+        }
       });
     }
 

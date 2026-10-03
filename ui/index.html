@@ -941,6 +941,38 @@
             <input id="idnTokenUrlJwt" type="text" placeholder="https://auth.example.com/oauth/token" autocomplete="off" />
           </div>
 
+          <!-- aws_sigv4 fields (AWS IAM access key で SigV4 署名。 例: Amazon Bedrock AgentCore) -->
+          <div class="field" data-only="aws_sigv4">
+            <label class="field-label" for="idnAwsKeyId">
+              <span>access key id</span>
+              <span class="field-hint">AKIA… / ASIA…</span>
+            </label>
+            <input id="idnAwsKeyId" type="text" placeholder="AKIA..." autocomplete="off" />
+          </div>
+          <div class="field" data-only="aws_sigv4">
+            <label class="field-label" for="idnAwsSecret">
+              <span>secret access key</span>
+            </label>
+            <input id="idnAwsSecret" type="password" placeholder="••••••••" autocomplete="off" />
+          </div>
+          <div class="field" data-only="aws_sigv4">
+            <label class="field-label" for="idnAwsSession">
+              <span>session token</span>
+              <span class="field-hint">optional (temporary credentials)</span>
+            </label>
+            <input id="idnAwsSession" type="password" placeholder="" autocomplete="off" />
+          </div>
+          <div class="field" data-only="aws_sigv4">
+            <label class="field-label" for="idnAwsRegion">
+              <span>region / service</span>
+              <span class="field-hint">blank = guessed from the URL (e.g. bedrock-agentcore.ap-northeast-1.amazonaws.com)</span>
+            </label>
+            <div style="display:flex;gap:6px">
+              <input id="idnAwsRegion" type="text" placeholder="ap-northeast-1" autocomplete="off" style="flex:1" />
+              <input id="idnAwsService" type="text" placeholder="bedrock-agentcore" autocomplete="off" style="flex:1" />
+            </div>
+          </div>
+
           <!-- oauth2_password fields (Anypoint /accounts/login or generic ROPC) -->
           <div class="field" data-only="oauth2_password">
             <label class="field-label" for="idnTokenUrlPwd">

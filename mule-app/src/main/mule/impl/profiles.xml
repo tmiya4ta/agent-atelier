@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+    <!--
+      /profiles — アプリに置く「暗号化プロファイル」の置き場。
+      ──────────────────────────────────────────────
+      ビルドと再デプロイをせずに、ハンズオン用の接続一式 (Export → "include secrets" で
+      passphrase 暗号化したファイル) を配れるようにする。 Import → Repository の
+      "This app" がこの一覧を読む。
+
+        GET    /profiles/index.json      一覧 (scenarios/index.json と同じ形)
+        GET    /profiles/<id>.json       中身 (暗号文のまま返す)
+        POST   /profiles/<id>.json       追加/上書き   要 X-Atelier-Upload-Token
+        DELETE /profiles/<id>.json       削除          要 X-Atelier-Upload-Token
+
+      このアプリには認証が無い (誰でも開ける) ので、 書き込みは次の 2 つで守る:
+        - profiles.uploadToken (secure property) と一致するトークンが必要。 空なら書き込み不可。
+        - 受け付けるのは Atelier の暗号化 export ({app:"atelier", encrypted:true, ct, iv, salt}) だけ。
+          平文の snapshot は置けない (公開の置き場に secret が平文で載るのを防ぐ)。
+      保存先は persistent Object Store (CloudHub 2.0 では Object Store v2)。
+    -->
+
+    <os:object-store name="profiles-store" persistent="true" entryTtl="30" entryTtlUnit="DAYS"/>
+
+    <flow name="profiles-flow">
+        <http:listener config-ref="http-listener-config" path="/profiles/*" allowedMethods="GET,POST,DELETE,OPTIONS">
+            <http:response statusCode="#[vars.status default 200]">
+                <http:headers><![CDATA[#[{ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }]]]></http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.status default 500]">
+                <http:body><![CDATA[#[output application/json --- { error: vars.errMsg default (error.description default "error") }]]]></http:body>
+                <http:headers><![CDATA[#[{ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }]]]></http:headers>
+            </http:error-response>
+        </http:listener>
+
+        <ee:transform>
+            <ee:variables>
+                <!-- /profiles/<id>.json → id (英数字・- _ だけ。 それ以外は 400) -->
+                <ee:set-variable variableName="name"><![CDATA[%dw 2.0
+output application/java
+var p = (attributes.requestPath default "") replace /^\/profiles\/?/ with ""
+---
+p]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <set-variable variableName="id" value="#[(vars.name replace /\.json$/ with '')]"/>
+
+        <choice>
+            <!-- ── 一覧 ── -->
+            <when expression="#[attributes.method == 'GET' and vars.name == 'index.json']">
+                <os:retrieve-all objectStore="profiles-store" target="all"/>
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+// 1 段目で文字列が返ったら (古い形式で二重に包まれていたら) もう 1 回読む
+fun parse(v) = do { var o = read(v as String, "application/json") --- if (o is String) read(o, "application/json") else o }
+var entries = (vars.all default {}) pluck ((v, k) -> parse(v))
+---
+{
+  v: 1,
+  items: (entries filter ($.meta?) map {
+    id:          $.id,
+    url:         "/profiles/" ++ $.id ++ ".json",
+    name:        $.meta.name default $.id,
+    description: $.meta.description default "",
+    encrypted:   true,
+    counts:      { workspaces: 0, bookmarks: 0, scripts: 0, identities: 0 },
+    exportedAt:  $.exportedAt default "",
+    uploadedAt:  $.uploadedAt default "",
+    order:       $.meta.order default 100
+  }) orderBy ($.order)
+}]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+            </when>
+
+            <when expression="#[not (vars.id matches /^[A-Za-z0-9_-]{1,64}$/)]">
+                <set-variable variableName="status" value="#[400]"/>
+                <set-variable variableName="errMsg" value="id must be 1-64 chars of A-Z a-z 0-9 _ -"/>
+                <raise-error type="APP:BAD_REQUEST"/>
+            </when>
+
+            <!-- ── 取得 ── -->
+            <when expression="#[attributes.method == 'GET']">
+                <os:contains objectStore="profiles-store" key="#[vars.id]" target="exists"/>
+                <choice>
+                    <when expression="#[not vars.exists]">
+                        <set-variable variableName="status" value="#[404]"/>
+                        <set-variable variableName="errMsg" value="profile not found"/>
+                        <raise-error type="APP:NOT_FOUND"/>
+                    </when>
+                </choice>
+                <os:retrieve objectStore="profiles-store" key="#[vars.id]" target="rec"/>
+                <ee:transform>
+                    <ee:message>
+                        <!-- 保存時に足した id/meta/uploadedAt はそのまま。 import 側は無視する -->
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var o = read(vars.rec as String, "application/json")
+---
+if (o is String) read(o, "application/json") else o]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+            </when>
+
+            <!-- ── 書き込み (POST / DELETE) ── -->
+            <otherwise>
+                <choice>
+                    <when expression="#[isEmpty(p('profiles.uploadToken')) or ((attributes.headers.'x-atelier-upload-token' default '') != p('profiles.uploadToken'))]">
+                        <set-variable variableName="status" value="#[403]"/>
+                        <set-variable variableName="errMsg" value="upload token is missing or wrong (uploads are disabled when profiles.uploadToken is not set)"/>
+                        <raise-error type="APP:FORBIDDEN"/>
+                    </when>
+                </choice>
+                <choice>
+                    <when expression="#[attributes.method == 'DELETE']">
+                        <os:contains objectStore="profiles-store" key="#[vars.id]" target="exists"/>
+                        <choice>
+                            <when expression="#[vars.exists]">
+                                <os:remove objectStore="profiles-store" key="#[vars.id]"/>
+                            </when>
+                        </choice>
+                        <set-payload value='#[output application/json --- { deleted: vars.id, existed: vars.exists }]'/>
+                    </when>
+                    <otherwise>
+                        <ee:transform>
+                            <ee:variables>
+                                <ee:set-variable variableName="body"><![CDATA[%dw 2.0
+output application/java
+---
+payload]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                        <choice>
+                            <when expression="#[sizeOf(write(vars.body, 'application/json')) > 524288]">
+                                <set-variable variableName="status" value="#[413]"/>
+                                <set-variable variableName="errMsg" value="profile is larger than 512 KB"/>
+                                <raise-error type="APP:TOO_LARGE"/>
+                            </when>
+                            <when expression="#[not ((vars.body.app default '') == 'atelier' and (vars.body.encrypted default false) == true and (vars.body.ct is String) and (vars.body.iv is String) and (vars.body.salt is String))]">
+                                <set-variable variableName="status" value="#[400]"/>
+                                <set-variable variableName="errMsg" value="only encrypted Atelier exports are accepted (Export with 'include secrets' and a passphrase)"/>
+                                <raise-error type="APP:BAD_REQUEST"/>
+                            </when>
+                        </choice>
+                        <ee:transform>
+                            <ee:variables>
+                                <ee:set-variable variableName="rec"><![CDATA[%dw 2.0
+output application/java
+var q = attributes.queryParams default {}
+var m = vars.body.meta default {}
+---
+(vars.body - "meta") ++ {
+  id: vars.id,
+  meta: (m - "name" - "description" - "order") ++ {
+    name:        q.name default (m.name default vars.id),
+    description: q.description default (m.description default ""),
+    order:       (q.order default (m.order default 100)) as Number default 100
+  },
+  uploadedAt: now() as String
+}]]></ee:set-variable>
+                            </ee:variables>
+                        </ee:transform>
+                        <os:store objectStore="profiles-store" key="#[vars.id]">
+                            <os:value><![CDATA[#[write(vars.rec, 'application/json') as String]]]></os:value>
+                        </os:store>
+                        <set-payload value='#[output application/json --- { stored: vars.id, url: "/profiles/" ++ vars.id ++ ".json", name: vars.rec.meta.name }]'/>
+                    </otherwise>
+                </choice>
+            </otherwise>
+        </choice>
+    </flow>
+</mule>

@@ -55,7 +55,7 @@ export class ProtocolAdapter extends EventTarget {
     if (!this.config.authRef || typeof this.config.refreshAuth !== "function") return;
     try {
       const a = await this.config.refreshAuth(this.config.authRef);
-      if (a) { this.config.auth = a.auth; this.config.authHeaders = a.authHeaders; }
+      if (a) { this.config.auth = a.auth; this.config.authHeaders = a.authHeaders; this.config.aws = a.aws; }
     } catch (e) {
       if (e && e.code === "REAUTH_REQUIRED") {
         this._emit("auth-required", { authRef: this.config.authRef, name: e.idnName, kind: e.kind, message: e.message });

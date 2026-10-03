@@ -35,3 +35,4 @@ credentials.env.txt
 # 内部ネットワーク構成 (public repo に載せない)
 edge/Caddyfile
 docs/infrastructure.md
+.profiles/

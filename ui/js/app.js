@@ -12,6 +12,7 @@ import { ClouderbyClient }                  from "./protocols/db/clouderby.js";
 import * as persist                         from "./persist.js";
 import { modalConfirm, modalAlert, modalPrompt, modalChoice, modalBusinessGroup, modalExport, modalImportScope, modalNewWindow } from "./modal.js";
 import { encryptText, decryptText }          from "./cryptobox.js";
+import { signAws }                          from "./awssig.js";
 import { runAuthCodeFlow, redirectUri }     from "./oauth.js";
 import { parseScript, parseMocks, ScriptRunner }        from "./script.js";
 import { AnypointClient }                    from "./anypoint/client.js";
@@ -1498,6 +1499,17 @@ function migrateAuthToIdentities() {
 
 function identityById(id) { return (state.identities || []).find(i => i.id === id); }
 
+// aws_sigv4 identity → adapter が署名に使う形。 secret 類は既存の機微フィールド名
+// (clientId / clientSecret / token) に載せてあるので、 persist の伏せ字・sessionStorage
+// 退避がそのまま効く。
+function awsFromIdentity(idn) {
+  return {
+    accessKeyId: idn.clientId, secretAccessKey: idn.clientSecret,
+    sessionToken: idn.token || undefined,
+    region: idn.region || undefined, service: idn.service || undefined
+  };
+}
+
 // identity の token を (必要なら取得して) 返す。oauth/jwt は期限切れなら再取得。
 // opts.rethrow=true: 失敗時に null を返さず例外をそのまま投げる。
 //   authenticate(test) UI で「本当のエラー理由」を表示するため (握り潰すと
@@ -1558,7 +1570,10 @@ async function fetchJwtBearerToken(idn) {
 //  - それ以外 (custom): RFC 6749 §4.3 ROPC (grant_type=password, form-encoded)。
 async function fetchPasswordGrantToken(idn) {
   const url = idn.tokenUrl || "";
-  const isLogin = idn.provider === "anypoint" || /\/(accounts\/)?login\b/i.test(url);
+  // パスだけで判定する。 URL 全体に掛けると login.microsoftonline.com の "//login." に当たり、
+  // Entra の token endpoint へ JSON を送ってしまう (AADSTS900144 grant_type missing)。
+  let pathname = url; try { pathname = new URL(url).pathname; } catch {}
+  const isLogin = idn.provider === "anypoint" || /^\/(accounts\/)?login\/?$/i.test(pathname);
   let res;
   if (isLogin) {
     res = await fetch(`/proxy?url=${encodeURIComponent(url)}`, {
@@ -1602,6 +1617,7 @@ async function resolveAuthForConnection(conn) {
   }
   const idn = identityById(conn.authRef);
   if (!idn) return {};
+  if (idn.kind === "aws_sigv4") return { aws: awsFromIdentity(idn) };   // 送信ごとに adapter が署名する
   if (idn.kind === "bearer") {
     const headerName = idn.headerName || "Authorization";
     if (headerName.toLowerCase() === "authorization" && (idn.scheme === "Bearer" || !idn.scheme)) {
@@ -1621,7 +1637,7 @@ async function resolveAuthForConnection(conn) {
 async function ensureFreshAuth(authRef) {
   const idn = identityById(authRef);
   if (!idn) return {};
-  if (idn.kind === "bearer") return resolveAuthForConnection({ authRef });   // 静的
+  if (idn.kind === "bearer" || idn.kind === "aws_sigv4") return resolveAuthForConnection({ authRef });   // 静的
   // まだ有効ならそのまま使う
   if (idn.accessToken && Date.now() < (idn.tokenExpiresAt || 0)) return { auth: idn.accessToken };
   // 期限切れ → kind 別に更新
@@ -2772,7 +2788,7 @@ async function runDetailTest(url) {
       const r = await testMcp(url, auth, authHeaders);
       foot.textContent = `✓ MCP initialize OK · ${r.serverName || "(no name)"} · ${Math.round(performance.now() - t0)}ms`;
     } else {
-      const r = await testA2a(url, auth, authHeaders);
+      const r = await testA2a(url, auth, authHeaders, resolved.aws);
       foot.textContent = `✓ AgentCard OK · ${r.card?.name || "(no name)"} · ${r.card?.skills?.length || 0} skills · ${Math.round(performance.now() - t0)}ms`;
     }
     foot.classList.add("is-ok");
@@ -2982,6 +2998,7 @@ const IDENTITY_KINDS = [
   { id:"oauth2_authcode", label:"OAuth2 AC",        sub:"browser login",      icon:"↳" },
   { id:"oauth2_password", label:"OAuth2 Password",  sub:"username/password",  icon:"⊙" },
   { id:"jwt_bearer",      label:"JWT Bearer",       sub:"signed assertion",   icon:"⚷" },
+  { id:"aws_sigv4",       label:"AWS SigV4",        sub:"IAM access key",     icon:"▲" },
 ];
 
 // OAuth/JWT 用の endpoint プリセット。 id=custom は手入力 (url 欄編集可)。
@@ -3009,7 +3026,7 @@ const IDENTITY_PROVIDERS = [
 function providerById(id) { return IDENTITY_PROVIDERS.find(p => p.id === id) || IDENTITY_PROVIDERS.find(p => p.id === "custom"); }
 
 function kindBadge(kind) {
-  const m = { bearer:"bearer", oauth2_cc:"cc", oauth2_authcode:"code", oauth2_password:"pwd", jwt_bearer:"jwt" };
+  const m = { bearer:"bearer", oauth2_cc:"cc", oauth2_authcode:"code", oauth2_password:"pwd", jwt_bearer:"jwt", aws_sigv4:"aws" };
   return m[kind] || kind;
 }
 
@@ -3194,7 +3211,7 @@ function refreshIdentityDialog() {
   // (authcode は実際にログインが走る)。bearer は静的なので "test"。
   const testBtn = $("#idnTest");
   if (testBtn) {
-    const doesAuth = (kind !== "bearer");
+    const doesAuth = (kind !== "bearer" && kind !== "aws_sigv4");
     testBtn.textContent = doesAuth ? "authenticate" : "test";
     testBtn.title = doesAuth
       ? "Actually attempt auth / token retrieval with the entered values (without saving)"
@@ -3253,6 +3270,13 @@ function openIdentityDialog(editing) {
   $("#idnPassword").value        = editing?.password ? "•".repeat(12) : "";
   $("#idnClientIdPwd").value     = editing?.clientId || "";
   $("#idnClientSecretPwd").value = editing?.clientSecret ? "•".repeat(12) : "";
+
+  // aws_sigv4
+  $("#idnAwsKeyId").value   = (editing?.kind === "aws_sigv4" && editing?.clientId) || "";
+  $("#idnAwsSecret").value  = (editing?.kind === "aws_sigv4" && editing?.clientSecret) ? "•".repeat(12) : "";
+  $("#idnAwsSession").value = (editing?.kind === "aws_sigv4" && editing?.token) ? "•".repeat(12) : "";
+  $("#idnAwsRegion").value  = editing?.region || "";
+  $("#idnAwsService").value = editing?.service || "";
 
   // tenant (Entra 等 needsTenant provider 用)
   $("#idnTenant").value = editing?.tenant || "";
@@ -3327,6 +3351,11 @@ async function testIdentityDialog() {
   const kind = state.selectedIdentityKind;
   if (kind === "bearer") {
     setIdentityTest("info", "Bearer / API Key are static tokens, so no retrieval test is needed.");
+    return;
+  }
+  if (kind === "aws_sigv4") {
+    // 署名は送信ごとに作るので、 ここでは取得するものが無い。 接続の test で確かめる。
+    setIdentityTest("info", "AWS SigV4 signs each request when it is sent. Use the connection's test to check it against the agent.");
     return;
   }
   const idn = buildTempIdentityFromForm();
@@ -3449,6 +3478,17 @@ function submitIdentityDialog() {
     idn.tokenUrl  = tokenUrlInput;
     idn.provider = state.selectedIdentityProvider || "custom";
     idn.scopes = scopes || undefined;
+  } else if (kind === "aws_sigv4") {
+    const keyId  = $("#idnAwsKeyId").value.trim();
+    const secret = $("#idnAwsSecret").value.trim();
+    const sess   = $("#idnAwsSession").value.trim();
+    if (!keyId)  { $("#idnAwsKeyId").focus(); return; }
+    if (!secret) { $("#idnAwsSecret").focus(); return; }
+    idn.clientId     = keyId;
+    idn.clientSecret = isMask(secret) ? secretSrc?.clientSecret : secret;
+    idn.token        = isMask(sess) ? secretSrc?.token : (sess || undefined);
+    idn.region  = $("#idnAwsRegion").value.trim()  || undefined;
+    idn.service = $("#idnAwsService").value.trim() || undefined;
   } else if (kind === "oauth2_password") {
     const tokenUrlInput = $("#idnTokenUrlPwd").value.trim();
     const usernameInput = $("#idnUsername").value.trim();
@@ -3467,7 +3507,7 @@ function submitIdentityDialog() {
   }
 
   // Entra 等 needsTenant provider: tenant を必須にし、token/auth url の {tenant} を差し込む。
-  if (kind !== "bearer") {
+  if (kind !== "bearer" && kind !== "aws_sigv4") {
     const prov = providerById(idn.provider || "custom");
     if (prov.needsTenant) {
       const tenantVal = $("#idnTenant").value.trim();
@@ -3481,7 +3521,7 @@ function submitIdentityDialog() {
   }
 
   // authenticate(test) で取得済みのトークンがあれば引き継ぐ (再認証を避ける)。bearer は対象外。
-  if (state._authTestResult && kind !== "bearer") {
+  if (state._authTestResult && kind !== "bearer" && kind !== "aws_sigv4") {
     idn.accessToken    = state._authTestResult.accessToken;
     idn.tokenExpiresAt = state._authTestResult.tokenExpiresAt;
     if (state._authTestResult.refreshToken) idn.refreshToken = state._authTestResult.refreshToken;
@@ -5825,14 +5865,16 @@ async function openImportPicker() {
     title: "Import",
     message: "Load a bundled scenario, or import a snapshot from a URL or file.",
     choices: [
-      { id: "repo", label: "Repository", description: "Pick from the bundled scenario list" },
-      { id: "url",  label: "Direct URL", description: "Fetch a JSON snapshot from an HTTP(S) URL" },
-      { id: "file", label: "From file…", description: "Pick a .json file from this device" }
+      { id: "repo",   label: "Repository", description: "Pick from this app's profiles or a GitHub repository" },
+      { id: "url",    label: "Direct URL", description: "Fetch a JSON snapshot from an HTTP(S) URL" },
+      { id: "file",   label: "From file…", description: "Pick a .json file from this device" },
+      { id: "upload", label: "Upload profile to this app…", description: "Publish an encrypted export here so others can load it from Repository → This app" }
     ]
   });
-  if (choice === "repo")      await importFromRepositoryFlow();
-  else if (choice === "url")  await importFromUrlFlow();
-  else if (choice === "file") $("#importFile").click();
+  if (choice === "repo")        await importFromRepositoryFlow();
+  else if (choice === "url")    await importFromUrlFlow();
+  else if (choice === "file")   $("#importFile").click();
+  else if (choice === "upload") await uploadProfileFlow();
 }
 
 // テキストを名前付きでローカルに保存する。
@@ -5988,11 +6030,30 @@ async function applyImport(text, sourceLabel, presetScope) {
     // presetScope だが暗号化 (まれ) → passphrase だけ単独で聞く
     const pass = await modalPrompt({
       title: "Passphrase", label: "This file is encrypted. Enter the passphrase used when it was exported.",
-      placeholder: "passphrase", confirmLabel: "Decrypt & import"
+      placeholder: "passphrase", confirmLabel: "Decrypt & import", secret: true
     });
     if (!pass) return false;
     try { text = await decryptText(pass, head); forceKeepSecrets = true; }
     catch { await modalAlert({ title: "Decryption failed", message: "Wrong passphrase or the file is corrupted." }); return false; }
+  }
+  // 取り込み時の差し込み値。 meta.vars = [{ name, label, default, pattern }] があれば 1 つずつ聞き、
+  // 中身の "{{name}}" を置き換える (例: ハンズオンで受講者ごとに違う Base path)。
+  // 値は pattern で絞るので JSON 文字列の中にそのまま入れてよい。
+  const vars = Array.isArray(head?.meta?.vars) ? head.meta.vars : [];
+  for (const v of vars) {
+    if (!v || !/^[A-Za-z0-9_]+$/.test(v.name || "")) continue;
+    const re = new RegExp(v.pattern || "^[A-Za-z0-9_./:-]+$");
+    let val = null;
+    for (;;) {
+      val = await modalPrompt({ title: v.title || "Import", label: v.label || v.name, placeholder: v.default || "", defaultValue: v.default || "", confirmLabel: "OK" });
+      if (val == null) return false;
+      val = val.trim();
+      if (v.prefix && val && !val.startsWith(v.prefix)) val = v.prefix + val;   // "ws00-export" → "/ws00-export"
+      if (v.stripTrailing) val = val.replace(new RegExp(`(${v.stripTrailing.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})+$`), "");
+      if (re.test(val)) break;
+      await modalAlert({ title: "Invalid value", message: `"${val}" does not match ${re.source}${v.hint ? "\n" + v.hint : ""}` });
+    }
+    text = text.split(`{{${v.name}}}`).join(val);
   }
   if (scope === "all") {
     // scope chooser (or repository の "Scenarios only" チェック) が既に確認を兼ねるので、
@@ -6125,18 +6186,75 @@ function resolveScenarioUrl(url, base) {
 }
 
 // ─── Repository (scenarios/index.json) から import ───
-async function importFromRepositoryFlow() {
-  // **GitHub raw を優先**: push 済みの最新シナリオを、 アプリを再デプロイせずに読む。
-  // raw が取れないとき (オフライン等) だけ同一オリジン (atelier-static / dev-server 同梱) に
-  // フォールバックする。
-  let items, repoBase = SCENARIO_REPO_RAW;
+// Repository の取り込み元。 "This app" (= このアプリの /profiles。 アップロードした
+// 暗号化プロファイル) と、 GitHub リポジトリ (owner/repo@branch の scenarios/)。
+// GitHub リポジトリは追加でき、 一覧は localStorage に覚える (このブラウザだけ)。
+const REPO_SOURCES_KEY = "atelier:repoSources";
+const DEFAULT_REPO = "tmiya4ta/agent-atelier@main";
+function loadRepoSources() {
   try {
-    const res = await fetch(`${SCENARIO_REPO_RAW}/scenarios/index.json`, { headers: { Accept: "application/json" }, cache: "no-store" });
+    const v = JSON.parse(localStorage.getItem(REPO_SOURCES_KEY) || "null");
+    if (Array.isArray(v) && v.length) return v.filter(x => typeof x === "string");
+  } catch {}
+  return [DEFAULT_REPO];
+}
+function saveRepoSources(list) {
+  try { localStorage.setItem(REPO_SOURCES_KEY, JSON.stringify([...new Set(list)].slice(0, 10))); } catch {}
+}
+// "owner/repo[@branch]" または github.com の URL → { owner, repo, branch, label, raw }
+function parseRepoSpec(spec) {
+  const t = String(spec || "").trim()
+    .replace(/^https?:\/\/(www\.)?github\.com\//, "").replace(/\.git$/, "").replace(/\/tree\//, "@").replace(/\/+$/, "");
+  const m = t.match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)(?:@([A-Za-z0-9_./-]+))?$/);
+  if (!m) return null;
+  const branch = m[3] || "main";
+  return { owner: m[1], repo: m[2], branch, label: `${m[1]}/${m[2]}@${branch}`,
+           raw: `https://raw.githubusercontent.com/${m[1]}/${m[2]}/${branch}` };
+}
+
+async function chooseRepositorySource() {
+  const repos = loadRepoSources();
+  const pick = await modalChoice({
+    title:   "Import from repository",
+    message: "Where should the list come from?",
+    choices: [
+      { id: "app", label: "This app", description: "Profiles uploaded to this Atelier (Import → Upload profile to this app…)" },
+      ...repos.map(r => ({ id: "gh:" + r, label: `GitHub — ${r.replace(/@main$/, "")}`, description: `${r} · scenarios/index.json` })),
+      { id: "gh-add", label: "Other GitHub repository…", description: "owner/repo or owner/repo@branch (public repositories)" }
+    ]
+  });
+  if (!pick) return null;
+  if (pick === "app") return { kind: "app", label: "this app" };
+  let spec = pick.startsWith("gh:") ? pick.slice(3) : null;
+  if (pick === "gh-add") {
+    spec = await modalPrompt({
+      title: "GitHub repository", label: "owner/repo or owner/repo@branch",
+      placeholder: "tmiya4ta/agent-atelier@main", confirmLabel: "Open"
+    });
+    if (!spec) return null;
+  }
+  const r = parseRepoSpec(spec);
+  if (!r) { await modalAlert({ title: "Invalid repository", message: `Could not read "${spec}". Use owner/repo or owner/repo@branch.` }); return null; }
+  saveRepoSources([r.label, ...repos.filter(x => x !== r.label)]);
+  return { kind: "github", label: r.label, raw: r.raw };
+}
+
+async function importFromRepositoryFlow() {
+  const src = await chooseRepositorySource();
+  if (!src) return;
+  // GitHub: raw を読む (push 済みの最新を、 アプリを再デプロイせずに読める)。 既定リポジトリで
+  // raw が取れないとき (オフライン等) だけ同一オリジンの scenarios/ にフォールバックする。
+  // This app: /profiles/index.json (アップロードされた暗号化プロファイル)。
+  let items, repoBase = src.kind === "github" ? src.raw : "";
+  const indexUrl = src.kind === "github" ? `${src.raw}/scenarios/index.json` : "/profiles/index.json";
+  try {
+    const res = await fetch(indexUrl, { headers: { Accept: "application/json" }, cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const idx = await res.json();
     items = Array.isArray(idx?.items) ? idx.items : [];
   } catch (errRaw) {
     try {
+      if (src.kind !== "github" || src.raw !== SCENARIO_REPO_RAW) throw new Error("no fallback for this source");
       const res = await fetch("/scenarios/index.json", { headers: { Accept: "application/json" } });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const idx = await res.json();
@@ -6145,13 +6263,15 @@ async function importFromRepositoryFlow() {
     } catch (errLocal) {
       await modalAlert({
         title:   "Repository not available",
-        message: `Could not fetch scenarios/index.json.\n- GitHub raw: ${errRaw?.message || errRaw}\n- same-origin: ${errLocal?.message || errLocal}`
+        message: `Could not fetch the list from ${src.label}.\n- ${indexUrl}: ${errRaw?.message || errRaw}\n- fallback: ${errLocal?.message || errLocal}`
       });
       return;
     }
   }
   if (!items.length) {
-    await modalAlert({ title: "Repository is empty", message: "No bundled snapshot is available." });
+    await modalAlert({ title: "Repository is empty", message: src.kind === "app"
+      ? "No profile has been uploaded to this app yet. Use Import → Upload profile to this app…"
+      : `No snapshot is listed in ${src.label}.` });
     return;
   }
   // snapshot 選択 + "Scenarios only" チェックボックスを 1 ダイアログにまとめる。
@@ -6165,7 +6285,7 @@ async function importFromRepositoryFlow() {
   const hasScenarios = (it) => !it.counts || it.counts.scripts > 0;
   const anyScenarios = items.some(hasScenarios);
   const result = await modalChoice({
-    title:   "Import from repository",
+    title:   `Import from ${src.kind === "app" ? "this app" : src.label}`,
     message: anyScenarios
       ? "Pick a snapshot to import."
       : "Pick a snapshot to import. These replace your current connections and workspaces.",
@@ -6208,9 +6328,62 @@ async function importFromRepositoryFlow() {
     JSON.parse(text);   // sanity
     const picked = items.find(it => it.url === pick);
     const label = picked?.name || picked?.id || pick;
-    await applyImport(text, `"${label}"${repoBase ? " (GitHub)" : ""}`, scope);
+    await applyImport(text, `"${label}"${src.kind === "github" ? ` (${src.label})` : " (this app)"}`, scope);
   } catch (err) {
     await modalAlert({ title: "Import failed", message: err?.message || String(err) });
+  }
+}
+
+// ─── このアプリに暗号化プロファイルを置く ───
+// Export で "include secrets" + passphrase にしたファイルを /profiles/<id>.json に POST する。
+// 書き込みには upload token が要る (サーバ側 profiles.uploadToken)。 token はこのタブにだけ覚える。
+const UPLOAD_TOKEN_KEY = "atelier:profileUploadToken";
+function pickJsonFile() {
+  return new Promise(resolve => {
+    const inp = document.createElement("input");
+    inp.type = "file"; inp.accept = "application/json,.json";
+    inp.addEventListener("change", () => resolve(inp.files && inp.files[0] || null), { once: true });
+    inp.click();
+  });
+}
+async function uploadProfileFlow() {
+  const file = await pickJsonFile();
+  if (!file) return;
+  let text, head;
+  try { text = await file.text(); head = JSON.parse(text); }
+  catch { await modalAlert({ title: "Not a JSON file", message: `${file.name} could not be read as JSON.` }); return; }
+  if (!(head && head.app === "atelier" && head.encrypted === true)) {
+    await modalAlert({ title: "Encrypted export required",
+      message: "Only encrypted exports can be uploaded, so secrets are never stored in plain text.\n\nUse EXPORT, turn on \"include secrets\" and set a passphrase, then upload that file." });
+    return;
+  }
+  const base = file.name.replace(/\.json$/i, "");
+  const name = await modalPrompt({
+    title: "Upload profile", label: "Name shown in Repository → This app",
+    defaultValue: head.meta?.name || base, confirmLabel: "Next"
+  });
+  if (!name) return;
+  const id = (base.normalize("NFKD").replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64)) || `profile-${Date.now()}`;
+  let token = "";
+  try { token = sessionStorage.getItem(UPLOAD_TOKEN_KEY) || ""; } catch {}
+  if (!token) {
+    token = await modalPrompt({ title: "Upload token", label: "Upload token for this app (ask the app owner)", placeholder: "token", confirmLabel: "Upload", secret: true });
+    if (!token) return;
+  }
+  try {
+    const res = await fetch(`/profiles/${encodeURIComponent(id)}.json?name=${encodeURIComponent(name)}`, {
+      method: "POST", headers: { "Content-Type": "application/json", "X-Atelier-Upload-Token": token }, body: text
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (res.status === 403) { try { sessionStorage.removeItem(UPLOAD_TOKEN_KEY); } catch {} }
+      throw new Error(out.error || `HTTP ${res.status}`);
+    }
+    try { sessionStorage.setItem(UPLOAD_TOKEN_KEY, token); } catch {}
+    await modalAlert({ title: "Uploaded",
+      message: `"${name}" is now listed in Import → Repository → This app.\nURL: ${location.origin}${out.url}\n\nPeople who load it need the passphrase you used when exporting.` });
+  } catch (err) {
+    await modalAlert({ title: "Upload failed", message: err?.message || String(err) });
   }
 }
 
@@ -6759,7 +6932,7 @@ async function testDialog() {
         (result.protocolVersion ? ` · proto <code>${escapeHtml(result.protocolVersion)}</code>` : "") +
         ` · ${ms}ms`);
     } else if (protoId === "a2a") {
-      const result = await testA2a(url, auth, authHeaders);
+      const result = await testA2a(url, auth, authHeaders, resolved.aws);
       const ms = Math.round(performance.now() - t0);
       const cardUrl = result.card?.url;
       const mismatch = cardUrl && !sameOrigin(cardUrl, url);
@@ -6971,7 +7144,7 @@ async function testMcp(endpoint, auth, authHeaders) {
   };
 }
 
-async function testA2a(baseUrl, auth, authHeaders) {
+async function testA2a(baseUrl, auth, authHeaders, aws) {
   const headers = { "Accept": "application/json" };
   if (auth) headers["Authorization"] = `Bearer ${auth}`;
   if (authHeaders) Object.assign(headers, authHeaders);
@@ -6986,7 +7159,8 @@ async function testA2a(baseUrl, auth, authHeaders) {
   let lastErr = null;
   for (const url of candidates) {
     try {
-      const res = await fetch(proxifyForTest(url), { headers });
+      const h = aws ? await signAws({ method: "GET", url, headers, aws }) : headers;
+      const res = await fetch(proxifyForTest(url), { headers: h });
       if (res.status === 404) { lastErr = new Error(`404 at ${url}`); continue; }
       if (!res.ok) { lastErr = new Error(`HTTP ${res.status} at ${url}`); continue; }
       const card = await res.json();
@@ -7129,6 +7303,7 @@ async function connect({ protoId, url, name, auth, authRef, persona, channel, em
     database, user, password,   // DB (clouderby) 用 — password は secret 扱い (sessionStorage)
     auth: resolved.auth,
     authHeaders: resolved.authHeaders,
+    aws: resolved.aws,
     authRef,
     // 送信前にトークン期限を見て自動更新するためのフック (authRef がある時のみ意味を持つ)。
     // authcode で対話的再認証が必要なら REAUTH_REQUIRED を投げ、 window が再認証 UI を出す。
