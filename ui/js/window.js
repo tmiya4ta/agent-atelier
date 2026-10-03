@@ -210,6 +210,7 @@ export class AgentWindow {
     });
     this._sendBtn = sendBtn;
     this._busy = false;
+    this._syncGhostExample();   // config.examples はカードを待たずに出せる
     // busy 中 (応答待ち) は停止ボタンとして動作。 それ以外は通常送信。
     sendBtn.addEventListener("click", () => {
       if (this._busy) this._stopInflight();
@@ -1420,9 +1421,11 @@ export class AgentWindow {
   // ── AgentCard の skill examples を入力欄のゴーストに出す ──────────────
   // AgentSkill.examples (任意 · string[]) を全 skill から集める。 宣言していない
   // カードの方が多いので、 空なら既定の placeholder のままにして何も足さない。
+  // 接続の config.examples (シナリオ/プロファイルで配るサンプル) があれば、 それを先に出す。
   _ghostExamples() {
+    const own = Array.isArray(this.adapter?.config?.examples) ? this.adapter.config.examples : [];
     const skills = this.adapter?.agentCard?.skills || [];
-    return skills.flatMap(sk => Array.isArray(sk.examples) ? sk.examples : [])
+    return [...own, ...skills.flatMap(sk => Array.isArray(sk.examples) ? sk.examples : [])]
                  .map(x => String(x).trim()).filter(Boolean);
   }
 

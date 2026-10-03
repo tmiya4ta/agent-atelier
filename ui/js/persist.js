@@ -88,7 +88,8 @@ function snapshotWindow(win) {
       mockTools: cfg.mockTools,  // mock(mcp) のツール定義
       mockReply: cfg.mockReply,  // mock 手入力時の定型応答 (担当範囲 + 振り先)
       database:  cfg.database,    // DB (clouderby) — 非 secret
-      user:      cfg.user         // DB user — 非 secret (password は上で sessionStorage 行き)
+      user:      cfg.user,        // DB user — 非 secret (password は上で sessionStorage 行き)
+      examples:  cfg.examples     // 入力欄のゴーストに出すサンプル (AgentCard の examples より先)
     },
     pos: {
       left:   win.el.style.left,

@@ -773,7 +773,8 @@ function restoreFromSaved(saved) {
         mockReply: hydrated.config?.mockReply,
         database:  hydrated.config?.database,
         user:      hydrated.config?.user,
-        password:  hydrated.config?.password
+        password:  hydrated.config?.password,
+        examples:  hydrated.config?.examples
       }, { restore: { pos: hydrated.pos, activeTab: hydrated.activeTab, pinned: hydrated.pinned, sql: hydrated.sql }, skipDirty: true });
     });
   });
@@ -7267,7 +7268,7 @@ async function submitDialog() {
 }
 
 // ─── Connect ────────────────────────────────────────
-async function connect({ protoId, url, name, auth, authRef, persona, channel, emulate, mockTools, mockReply, database, user, password }, opts = {}) {
+async function connect({ protoId, url, name, auth, authRef, persona, channel, emulate, mockTools, mockReply, database, user, password, examples }, opts = {}) {
   // Agent は url 不要 — window を先に開き、MCP は Settings タブで追加する。
   // window/bookmark は (protoId, url) でキー化するので synthetic url を振る
   // (url 空だと全 Agent window が 1 キーに衝突し dedup/reconnect が誤動作する)。
@@ -7299,7 +7300,7 @@ async function connect({ protoId, url, name, auth, authRef, persona, channel, em
   // authRef があれば identity から実トークン/ヘッダを解決 (無ければ旧 auth 文字列を後方互換で使用)
   const resolved = await resolveAuthForConnection({ authRef, auth });
   const adapter = new proto.AdapterClass({
-    url, name, persona, channel, emulate, mockTools, mockReply,
+    url, name, persona, channel, emulate, mockTools, mockReply, examples,
     database, user, password,   // DB (clouderby) 用 — password は secret 扱い (sessionStorage)
     auth: resolved.auth,
     authHeaders: resolved.authHeaders,
