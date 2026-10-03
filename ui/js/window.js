@@ -638,6 +638,7 @@ export class AgentWindow {
     this._pushInputHistory(text);
     ta.value = "";
     ta.style.height = "auto";
+    this._syncGhostExample();   // 空になったので次のサンプルを出す (input イベントは来ない)
     // 手入力はユーザーが既に打ち終えているので、 入力エリアへの自動タイプ演出はスキップ。
     this.sendProgrammatic(text, { typeIntoCompose: false });
   }
@@ -1051,6 +1052,7 @@ export class AgentWindow {
     const stream = this.el.querySelector(".chat-stream");
     const node = this._renderMsg("system", "status", text);
     node.classList.add("msg-status");
+    node.dataset.raw = String(text).trim();   // 最終回答と同じ文なら後で畳む (_dropEchoedStatus)
     // a2a の進捗ステップは Markdown (太字・表) を含むことがあるので HTML 化して読みやすく。
     // 複数行を許容するため msg-step クラスで pill の nowrap を解除する。
     if (this.protoMode === "a2a" && window.marked) {
@@ -1071,9 +1073,24 @@ export class AgentWindow {
     this._scrollChat(true);
   }
 
+  // エージェントによっては (Bedrock AgentCore など) 回答の全文を working の status-update で
+  // 送り、 同じ文を artifact-update でもう一度送ってくる。 そのままだと進捗行と最終回答が
+  // 同じ文で 2 重に並ぶので、 最終回答と同じ進捗行 (このターンのもの) は消す。
+  _dropEchoedStatus(stream, text) {
+    const t = String(text || "").trim();
+    if (!t) return;
+    const all = [...stream.children];
+    let i = all.length - 1;
+    while (i >= 0 && !all[i].classList.contains("msg-user")) i--;   // このターンの先頭
+    for (const n of all.slice(i + 1)) {
+      if (n.classList.contains("msg-status") && n.dataset.raw === t) n.remove();
+    }
+  }
+
   _handleAgentMessage(text, final) {
     this._showTyping(false);
     const stream = this.el.querySelector(".chat-stream");
+    if (final) this._dropEchoedStatus(stream, text);
     let last = stream.lastElementChild;
     let body;
     if (last?.classList.contains("msg-agent") && last?.dataset.streaming === "1") {
