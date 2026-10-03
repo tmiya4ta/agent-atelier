@@ -616,13 +616,17 @@ body.is-resizing-side .sidebar { transition: none !important; }
   border-right: 1px solid var(--line);
   background: var(--panel);
   overflow: hidden;
-  transition: width 0.18s cubic-bezier(.2,.8,.2,1), box-shadow 0.2s ease;
+  /* 畳むときはすぐ (ポインタが離れたら待たせない) */
+  transition: width 0.2s cubic-bezier(.2,.8,.2,1), box-shadow 0.2s ease;
 }
+/* 広げるときは、 少し止まってからゆっくり出す。 アイコンの上を通り過ぎただけでは開かない */
 .side-rail:hover {
   width: 190px;
   z-index: 90;
   box-shadow: 6px 0 24px -8px rgba(20,30,55,.28);
+  transition: width 0.32s cubic-bezier(.2,.8,.2,1) 0.35s, box-shadow 0.32s ease 0.35s;
 }
+.side-rail:hover .rail-label { transition: opacity 0.2s ease 0.5s; }
 /* パネル折り畳み時 (is-panel-collapsed) は右にパネルが無いので、 hover 展開すると
    flyout がワークスペース上に白い箱として浮いてバグに見える。 折り畳み中は展開しない。 */
 body.is-panel-collapsed .side-rail:hover {

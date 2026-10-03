@@ -369,6 +369,41 @@ function effectiveSidePanelW() {
 function applySidePanelW() {
   document.documentElement.style.setProperty("--side-panel-w", effectiveSidePanelW() + "px");
 }
+
+// CONNECTIONS / AUTHENTICATION の一覧は、 名前が全部見える幅まで自動で広げる。
+// 広げすぎてウインドウ領域を食わないよう、 画面幅の 30% (と SIDE_PANEL_W_MAX) で頭打ちにし、
+// それを超える名前は従来どおり … で切る。 右端をドラッグした後は手動の幅を優先し、
+// ダブルクリックで既定に戻すと自動に戻る。
+const SIDE_AUTO_KEY = "atelier:sidePanelAuto";
+function sidePanelAuto() {
+  try { return localStorage.getItem(SIDE_AUTO_KEY) !== "0"; } catch { return true; }
+}
+function setSidePanelAuto(on) {
+  try { localStorage.setItem(SIDE_AUTO_KEY, on ? "1" : "0"); } catch {}
+}
+function autoFitSidePanel() {
+  if (!sidePanelAuto()) return;
+  const cat = state.activeSideCat || "connections";
+  if (cat !== "connections" && cat !== "authentication") return;
+  const labels = $$(`.side-panel .side-cat[data-cat="${cat}"] .agent-name, .side-panel .side-cat[data-cat="${cat}"] .catalog-name`);
+  if (!labels.length) return;
+  const before = state.sidePanelW;
+  const cap = Math.max(SIDE_PANEL_W_DEF, Math.min(SIDE_PANEL_W_MAX, Math.round(window.innerWidth * 0.30)));
+  // 名前の欄以外 (バッジ・ボタン・余白) の幅 = パネルの実幅 - 名前欄の幅。 同じ瞬間に測るので、
+  // 幅がアニメーション中でもずれない。 必要な幅 = それ + 名前の全長 (scrollWidth)。
+  const panelW = $(".side-panel").getBoundingClientRect().width;
+  // 名前の全長は Range で文字そのものの幅を測る (scrollWidth は収まっているときに縮んだ幅を
+  // 返すので、 名前が短くなったときにパネルを狭められない)。
+  const textW = (el) => { const r = document.createRange(); r.selectNodeContents(el); return r.getBoundingClientRect().width; };
+  const need = Math.max(...labels.map(el => panelW - el.clientWidth + textW(el)));
+  state.sidePanelW = Math.min(cap, Math.max(SIDE_PANEL_W_DEF, Math.ceil(need) + 2));
+  applySidePanelW();
+  if (Math.abs(state.sidePanelW - before) > 4) snapAfterSideResize();
+}
+window.addEventListener("resize", () => {
+  clearTimeout(autoFitSidePanel._t);
+  autoFitSidePanel._t = setTimeout(autoFitSidePanel, 200);
+});
 function wireSideResize() {
   const handle = $("#sideResize");
   if (!handle) return;
@@ -381,6 +416,7 @@ function wireSideResize() {
     const onMove = (ev) => {
       const x = ev.touches ? ev.touches[0].clientX : ev.clientX;
       state.sidePanelW = Math.max(SIDE_PANEL_W_MIN, Math.min(SIDE_PANEL_W_MAX, startW + (x - startX)));
+      setSidePanelAuto(false);   // 手で決めた幅を優先する (ダブルクリックで自動に戻る)
       applySidePanelW();
     };
     const onUp = () => {
@@ -406,8 +442,10 @@ function wireSideResize() {
   handle.addEventListener("touchstart", (e) => { begin(e.touches[0].clientX); }, { passive: true });
   // ダブルクリックで既定幅にリセット
   handle.addEventListener("dblclick", () => {
+    setSidePanelAuto(true);
     state.sidePanelW = SIDE_PANEL_W_DEF;
     applySidePanelW();
+    autoFitSidePanel();
     dirty();
     snapAfterSideResize();
   });
@@ -443,6 +481,7 @@ function selectSideCat(cat) {
   $$(".side-panel .side-cat").forEach(p => {
     p.hidden = p.dataset.cat !== cat;
   });
+  autoFitSidePanel();
   if (cat === "platform" && _apConsole) _apConsole.onShow();
   dirty();
 }
@@ -1328,6 +1367,7 @@ function renderBookmarks() {
       toggleAllBtn.title = allExpanded ? "Collapse all" : "Expand all";
     }
   }
+  autoFitSidePanel();
 }
 
 function wireConnToggleAll() {
@@ -3104,6 +3144,7 @@ function renderIdentities() {
   });
 
   empty.classList.toggle("is-hidden", state.identities.length > 0);
+  autoFitSidePanel();
 }
 
 function renderIdentityKindSeg() {
