@@ -134,4 +134,4 @@ SSRF ガード (`src/main/resources/dw/SsrfGuard.dwl`) を組み込んである:
   **API Manager の client-id enforcement + rate limiting** ポリシーを併用すること。
 - 可能なら `/proxy` を静的配信アプリと分離し、 認証必須の別 listener に置く。
 - 同梱されるアセット: 親 (`../`) の `index.html`, `styles.css`, `js/**`, `oauth/**`, `assets/**`
-- `server/*.py` (mock-agent / dev-server) は同梱されない (CH2 では Python 動かないので)
+- `server/*` (dev-server) は同梱されない (CH2 では Python 動かないので)

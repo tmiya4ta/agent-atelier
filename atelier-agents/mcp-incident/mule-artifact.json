@@ -1,6 +1,0 @@
-{
-  "minMuleVersion": "4.9.8",
-  "name": "atelier-mcp-incident",
-  "requiredProduct": "MULE_EE",
-  "javaSpecificationVersions": ["17"]
-}

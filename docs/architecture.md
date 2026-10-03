@@ -244,6 +244,4 @@ proxy の主な責務:
 | [`../README.md`](../README.md) | 概要・クイックスタート・機能一覧 |
 | [`../ONBOARDING.md`](../ONBOARDING.md) | ローカル開発・CH2 デプロイ・ハマりどころ・キーバインド |
 | [`scenario-mock-mode.md`](scenario-mock-mode.md) | mock モードの仕組み |
-| [`agent-capability-expansion.md`](agent-capability-expansion.md) | エージェント能力拡張の検討メモ |
-| [`incident-agent-intent-redesign.md`](incident-agent-intent-redesign.md) | incident-agent の intent 抽出設計 |
 | [`../mule-app/README.md`](../mule-app/README.md) | フロントエンドの CH2 配信アプリ |

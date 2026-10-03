@@ -119,13 +119,6 @@ A2A メッセージの data part に載せて相手エージェントへ渡し�
 
 登録済みのサーバは `+ mcp` のポップオーバーで一覧・削除でき、capabilities オーバーレイにも表示されます。
 
-参照実装として `server/` に 2 つのエージェントを同梱しています（いずれも A2A サーバ）:
-
-| ファイル | 判断方法 |
-|---|---|
-| `server/gemini-agent.js` | Gemini の function calling でツールを選択・実行。会話履歴を contextId 単位で保持 |
-| `server/mcp-agent.js` | ルールベース（LLM 不要）。動作確認用 |
-
 ### AgentCard の skill examples
 
 AgentCard の `skills[].examples`（A2A の任意フィールド）を宣言していれば、capabilities に例文が並び、
@@ -264,9 +257,8 @@ agent-atelier/
 │   └── scenarios/          同一オリジン配信のシナリオ (GitHub raw が読めないときの fallback)
 ├── scenarios/              配布シナリオ (Import → Repository が GitHub raw から読む) + 自動生成 index.json
 ├── tools/                  gen-scenarios-index.mjs (index.json 生成)
-├── server/                 dev サーバ (Node/Python) + 参照エージェント (gemini-agent / mcp-agent) + テストヘルパ
+├── server/                 dev サーバ (Node/Python)
 ├── docs/                   設計ドキュメント (architecture.md ほか) + 画像 / 動画
-├── atelier-agents/         デモ用 Mule エージェント群 (A2A worker / MCP server) ※別途デプロイ
 └── mule-app/               フロントエンドを CloudHub 2.0 で配信するための Mule アプリ
 ```
 
@@ -298,7 +290,6 @@ agent-atelier/
 | [`docs/architecture.md`](docs/architecture.md) | アーキテクチャ・状態管理・データフロー・adapter 拡張・永続化の詳細 |
 | [`ONBOARDING.md`](ONBOARDING.md) | ローカル開発・CH2 デプロイ・ハマりどころ・キーバインド早見表 |
 | [`docs/scenario-mock-mode.md`](docs/scenario-mock-mode.md) | mock モード（オフラインデモ）の仕組み |
-| [`docs/incident-agent-intent-redesign.md`](docs/incident-agent-intent-redesign.md) | incident-agent の intent 抽出設計（参考） |
 | [`mule-app/README.md`](mule-app/README.md) | フロントエンドの CloudHub 2.0 配信アプリ |
 
 ---

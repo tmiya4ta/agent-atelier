@@ -4,7 +4,6 @@ A2A 中核のマルチプロトコルエージェントクライアント。 ブ
 
 - **Repo**: https://github.com/tmiya4ta/agent-atelier
 - **CH2 Deploy**: https://ai-workshop-23fgzd.pnwfdv.jpn-e1.cloudhub.io  (T1 / Sandbox / rootps · deployment 名 `ai-workshop`)
-- **RTF Deploy**: `atelier-static-k0` (T1 / Sandbox / k0)。 relay 経由で https://atelier-relay-23fgzd.pnwfdv.jpn-e1.cloudhub.io/
 - **Local dev**: `node server/dev-server.js --port 8000` → http://127.0.0.1:8000/ (Python 不要版。 後述「ローカル開発」参照)
 - **言語**: 英語 default、 `ui/js/i18n.js` の `setLang("ja")` で日本語に切替可能 (現状 ja 部分翻訳)
 
@@ -42,10 +41,9 @@ agent-atelier/
 │   │       └── index.js    ← PROTOCOLS registry
 │   ├── oauth/callback.html ← PKCE redirect target (postMessage to opener)
 │   └── scenarios/          ← デモシナリオ (JSON) — /scenarios/ で同一オリジン配信
-├── server/                 ← dev-server (Node/Python) + mock A2A + CDP test helpers
+├── server/                 ← dev-server (Node/Python)
 │   ├── dev-server.js       ← HTTP static + /proxy (CORS bypass), no-store, SSRF guard ★推奨
-│   ├── dev-server.py       ← 同等の Python 版 (Python3 環境向け)
-│   └── mock-agent.py       ← Mock A2A server (port 5180)
+│   └── dev-server.py       ← 同等の Python 版 (Python3 環境向け)
 └── mule-app/               ← CH2 hosting for the same frontend
     ├── pom.xml             ← maven copies ../ui/{index.html,styles.css,js,oauth,scenarios} into static/
     ├── src/main/mule/
@@ -119,10 +117,6 @@ python3 server/dev-server.py --port 8000
 
 # 確認 (200 が返れば OK)
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/
-
-# Mock A2A サーバ (動作確認用、 Python のみ)
-python3 server/mock-agent.py
-# → http://127.0.0.1:5180/.well-known/agent-card.json
 ```
 
 > ⚠️ ES module を多用しているので、 `file://` 直開きでは動かない (CORS / module 解決で失敗)。
@@ -139,7 +133,7 @@ JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 mvn clean package -DskipTests
 ```
 
 > **ソースアタッチは pom.xml に `<attachMuleSources>true</attachMuleSources>` を埋め込み済み**
-> (`mule-app` および `atelier-agents/*` 全アプリ)。 そのため CLI で `-DattachMuleSources` を
+> (`mule-app`)。 そのため CLI で `-DattachMuleSources` を
 > 付けなくても、 ビルド成果物 jar に `META-INF/mule-src/<artifactId>/` として flow XML・pom が
 > 同梱される。 Exchange から jar を取得した Studio / 他開発者がフローを開いて中身を確認できる。
 > (明示的に無効化したい場合のみ `-DattachMuleSources=false`。)
