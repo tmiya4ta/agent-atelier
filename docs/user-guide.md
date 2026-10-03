@@ -3,7 +3,7 @@
 Atelier はブラウザだけで動く REST / A2A / MCP マルチエージェント用のワークベンチです。複数のエージェント窓を並べ、
 シナリオ（会話 DSL）で会話を再生できます。本書は **画面の使い方** をまとめた操作手順書です。
 
-- 概要・機能一覧 → [`README.md`](../README.md)
+- 概要・機能一覧 → [`overview.ja.md`](overview.ja.md)
 - 設計・データフロー → [`docs/architecture.md`](architecture.md)
 - ローカル開発・CH2 デプロイ・ハマりどころ → [`ONBOARDING.md`](../ONBOARDING.md)
 

@@ -241,7 +241,8 @@ proxy の主な責務:
 
 | ドキュメント | 内容 |
 |---|---|
-| [`../README.md`](../README.md) | 概要・クイックスタート・機能一覧 |
+| [`../README.md`](../README.md) | 概要・クイックスタート（英語） |
+| [`overview.ja.md`](overview.ja.md) | 機能一覧・会話 DSL・ショートカットの詳細（日本語） |
 | [`../ONBOARDING.md`](../ONBOARDING.md) | ローカル開発・CH2 デプロイ・ハマりどころ・キーバインド |
 | [`scenario-mock-mode.md`](scenario-mock-mode.md) | mock モードの仕組み |
 | [`../mule-app/README.md`](../mule-app/README.md) | フロントエンドの CH2 配信アプリ |
