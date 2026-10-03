@@ -203,7 +203,7 @@ function init() {
     state.catalogs         = (saved.catalogs || []).map(migrateCatalog);
     state.identities       = saved.identities || [];
     state.bookmarks        = saved.bookmarks || [];
-    state.closedWindows    = saved.closedWindows || [];
+    state.closedWindows    = [];   // 閉じた窓のスロットはもう使わない (古い保存分も捨てる)
     // sessionStorage から secrets を引き戻す (持続中のタブのみ)
     persist.hydrateSecrets(state.catalogs, state.bookmarks, state.identities);
     idnCounter    = state.identities.reduce((m, i) => Math.max(m, parseInt(i.id?.split("-")[1] || 0)), 0);
@@ -223,7 +223,7 @@ function init() {
     state.catalogs  = (saved?.catalogs || []).map(migrateCatalog);
     state.identities = saved?.identities || [];
     state.bookmarks = saved?.bookmarks || [];
-    state.closedWindows = saved?.closedWindows || [];
+    state.closedWindows = [];
     persist.hydrateSecrets(state.catalogs, state.bookmarks, state.identities);
     idnCounter    = state.identities.reduce((m, i) => Math.max(m, parseInt(i.id?.split("-")[1] || 0)), 0);
     state.scripts   = saved?.scripts   || [];
@@ -7408,9 +7408,8 @@ function removeWindow(win) {
   const ws = state.workspaces.find(w => w.id === win._wsId);
   if (!ws) return;
   ws.windows = ws.windows.filter(w => w !== win);
-  // window を閉じても設定 (名前+AUTH 等) は「閉じた窓」スロットとして残す。
-  // (=表示/非表示と設定の有無を分離。再オープン時に名前/AUTH を入れ直さずに済む)
-  if (!win._deleteSlot) saveClosedWindow(win);
+  // 閉じた窓はサイドバーにも残さない (「閉じた窓」スロットは分かりにくかった)。
+  // 同じ接続をまた開くときは、 接続の + で新しい窓を開く。
   recomputeInstanceSuffixes();   // 窓を閉じたら残りの連番を詰め直す
   renderTabs();
   renderBookmarks();   // bookmark tree からも除外

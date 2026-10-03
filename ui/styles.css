@@ -3193,6 +3193,18 @@ body.is-dark .agent-tag { color: #5BB8E8; }
 }
 .msg.msg-status .msg-body strong { color: var(--ink-2); font-weight: 600; }
 .msg.msg-status { margin: 1px 0; }
+/* 処理中 (回答がまだ確定していない) の進捗行: 薄く・斜体で、 ゆっくり明滅させる */
+.msg.msg-status.is-live .msg-body {
+  font-style: italic;
+  color: var(--ink-4);
+  border-left-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  animation: msg-status-pulse 1.6s ease-in-out infinite;
+}
+.msg.msg-status.is-live .msg-body strong { color: var(--ink-3); }
+@keyframes msg-status-pulse { 0%, 100% { opacity: .45; } 50% { opacity: .85; } }
+@media (prefers-reduced-motion: reduce) {
+  .msg.msg-status.is-live .msg-body { animation: none; opacity: .6; }
+}
 /* mrkdwn (Slack) — chat bubble 内の安全な HTML サブセット */
 .msg-body code {
   font-family: var(--f-mono);
@@ -6944,3 +6956,13 @@ body.is-dark .auth-gate-btn2 { background: var(--panel); color: var(--ink-2); }
   display: block; width: 100%; box-sizing: border-box;
   margin-top: 4px; resize: vertical; font-family: var(--f-mono);
 }
+
+/* 待ち表示の経過秒 (Processing, please wait… 12s) */
+.msg-thinking-elapsed {
+  margin-left: 8px;
+  font-family: var(--f-mono, ui-monospace, monospace);
+  font-size: .85em;
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
+}
+

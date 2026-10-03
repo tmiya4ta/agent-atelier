@@ -398,7 +398,9 @@ export class AgentWindow {
       t.textContent = String(this.debugFrames.length);
     });
 
+    this.adapter.addEventListener("aborted", () => this._settleStatus());   // 停止ボタン
     this.adapter.addEventListener("error", (e) => {
+      this._settleStatus();
       this._setStatus("error");
       // 初回接続の失敗 (まだ一度も open していない) はメッセージを出さず status ドットのみ赤に。
       // 接続不可の window を MOCK シナリオ用に静かに開けるようにするため。
@@ -634,7 +636,24 @@ export class AgentWindow {
   _sendFromCompose() {
     const ta = this.el.querySelector(".compose-input");
     const text = ta.value.trim();
-    if (!text || this.adapter.state !== "open") return;
+    if (!text) return;
+    // 接続中 (AgentCard の取得待ち。 Bedrock AgentCore は初回 10 秒ほどかかる) に Enter を
+    // 押すと、 これまでは何も起きず送れたのか分からなかった。 つながったら送る。
+    if (this.adapter.state === "connecting" || this.adapter.state === "idle") {
+      if (this._pendingSend) return;
+      this._pendingSend = text;
+      this._addSystemMessage("Connecting… the message will be sent once connected.");
+      const go = () => {
+        const t = this._pendingSend; this._pendingSend = null;
+        this.adapter.removeEventListener("error", drop);
+        if (t && ta.value.trim() === t) this._sendFromCompose();
+      };
+      const drop = () => { this._pendingSend = null; this.adapter.removeEventListener("open", go); };
+      this.adapter.addEventListener("open", go, { once: true });
+      this.adapter.addEventListener("error", drop, { once: true });
+      return;
+    }
+    if (this.adapter.state !== "open") return;
     this._pushInputHistory(text);
     ta.value = "";
     ta.style.height = "auto";
@@ -1053,6 +1072,9 @@ export class AgentWindow {
     const node = this._renderMsg("system", "status", text);
     node.classList.add("msg-status");
     node.dataset.raw = String(text).trim();   // 最終回答と同じ文なら後で畳む (_dropEchoedStatus)
+    // 回答が確定するまでは「処理中」として薄く点滅させる (_settleStatus で外す)
+    stream.querySelectorAll(".msg-status.is-live").forEach(n => n.classList.remove("is-live"));
+    node.classList.add("is-live");
     // a2a の進捗ステップは Markdown (太字・表) を含むことがあるので HTML 化して読みやすく。
     // 複数行を許容するため msg-step クラスで pill の nowrap を解除する。
     if (this.protoMode === "a2a" && window.marked) {
@@ -1087,10 +1109,15 @@ export class AgentWindow {
     }
   }
 
+  // 処理中の表示を外す (回答が確定した / エラーで終わった)。 残る進捗行は控えめな表示に戻す。
+  _settleStatus() {
+    this.el.querySelectorAll(".chat-stream .msg-status.is-live").forEach(n => n.classList.remove("is-live"));
+  }
+
   _handleAgentMessage(text, final) {
     this._showTyping(false);
     const stream = this.el.querySelector(".chat-stream");
-    if (final) this._dropEchoedStatus(stream, text);
+    if (final) { this._dropEchoedStatus(stream, text); this._settleStatus(); }
     let last = stream.lastElementChild;
     let body;
     if (last?.classList.contains("msg-agent") && last?.dataset.streaming === "1") {
@@ -1363,11 +1390,23 @@ export class AgentWindow {
         </div>
         <div class="msg-body">
           <span class="msg-thinking">${escapeHtml(t("chat.thinking"))}</span>
+          <span class="msg-thinking-elapsed"></span>
         </div>
       `;
       stream.appendChild(node);
+      // 応答を途中で流さないエージェント (Bedrock AgentCore など) は 10〜30 秒何も来ないので、
+      // 経過秒を出して「止まっていない」ことが分かるようにする。
+      const t0 = Date.now();
+      const el = node.querySelector(".msg-thinking-elapsed");
+      clearInterval(this._typingTimer);
+      this._typingTimer = setInterval(() => {
+        const sec = Math.floor((Date.now() - t0) / 1000);
+        if (sec >= 3) el.textContent = `${sec}s`;
+      }, 1000);
       this._scrollChat();
     } else if (!on && typingEl) {
+      clearInterval(this._typingTimer);
+      this._typingTimer = null;
       typingEl.remove();
     }
   }
