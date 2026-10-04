@@ -2516,6 +2516,7 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
 .proto-pill[data-proto="a2a"]    .proto-dot { background: var(--accent); }
 .proto-pill[data-proto="mcp"]    .proto-dot { background: var(--warn); }
 .proto-pill[data-proto="openai"] .proto-dot { background: var(--ok); }
+.proto-pill[data-proto="anthropic"] .proto-dot { background: #C15F3C; }
 .proto-pill[data-proto="mock"]   .proto-dot { background: var(--ink-3); }
 .proto-pill .proto-name { color: var(--ink); text-transform: lowercase; letter-spacing: 0; font-family: var(--f-ui); font-size: calc(12px * var(--fs-mul, 1.1) * var(--fs, 1)); font-weight: 500; }
 .proto-pill .proto-status { font-family: var(--f-mono); font-size: calc(9.5px * var(--fs-mul, 1.1) * var(--fs, 1)); color: var(--ink-4); }
@@ -2861,6 +2862,7 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
 .aw-proto-badge[data-proto="mcp"]    { color: var(--warn); background: var(--warn-soft); border-color: #F4D5C6; }
 .aw-proto-badge[data-proto="slack"]  { color: #8B5300; background: #FFF1D6; border-color: #F4D89A; }
 .aw-proto-badge[data-proto="openai"] { color: var(--ok); background: var(--ok-soft); border-color: #CFE5D9; }
+.aw-proto-badge[data-proto="anthropic"] { color: #A04A2A; background: #FBEDE6; border-color: #F0CDBD; }
 
 /* sidebar Connections の各行に protocol を示すミニラベル。
    背景・枠は持たず、 行頭に小さく色文字を置くだけ。 名前を圧迫しない。 */
@@ -2879,6 +2881,7 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
 .conn-proto-badge[data-proto="mcp"]    { color: var(--warn); }
 .conn-proto-badge[data-proto="slack"]  { color: #B07A1A; }
 .conn-proto-badge[data-proto="openai"] { color: var(--ok); }
+.conn-proto-badge[data-proto="anthropic"] { color: #C15F3C; }
 
 /* identity 行: 種別バッジを先頭に色分け表示 (Connections の proto バッジと同様) */
 .catalog-item.idn-item { grid-template-columns: auto 1fr auto auto; }
@@ -3250,6 +3253,8 @@ body.is-dark .agent-tag { color: #5BB8E8; }
   padding-left: 16px;
 }
 .msg-agent .msg-body strong { color: var(--accent-ink); }
+/* 自分の吹き出しは地が濃いので、 太字も吹き出しの文字色に合わせる (--ink だと地と同化して消える) */
+.msg-user .msg-body strong { color: inherit; }
 .msg-agent .msg-body ul li::marker { color: var(--accent); }
 /* "key: value" 形式の bullet (- key: value) で : の左側を強調 */
 .msg-agent .msg-body p:first-of-type { font-size: calc(13.5px * var(--fs-mul, 1.1) * var(--fs, 1)); font-weight: 600; }

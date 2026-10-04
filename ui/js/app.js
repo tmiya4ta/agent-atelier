@@ -5,6 +5,7 @@
 import { PROTOCOLS, getProtocol }           from "./protocols/index.js";
 import { mockUrl }                          from "./protocols/mock.js";
 import { parseWsdl }                        from "./protocols/soap.js";
+import { OpenAIAdapter, AnthropicAdapter, splitUrl, pickChatModel } from "./protocols/llm.js";
 import { normalizeToken, parseTokenInput }  from "./token.js";
 import { AgentWindow, decodeJwt, formatJwt } from "./window.js";
 import { DbWindow }                         from "./dbwindow.js";
@@ -4535,6 +4536,14 @@ function applyProtoSpecificFields() {
             hint:  "base URL — Atelier fetches /.well-known/agent-card.json",
             ph:    "https://api.example.com",
             title: "Base URL is fine — Atelier appends /.well-known/agent-card.json automatically (falls back to /.well-known/agent.json for the legacy spec)." },
+    openai: { label: "endpoint url",
+            hint:  "base URL or …/chat/completions · add #model=<name> (and &system=…) to pick the model",
+            ph:    "https://api.openai.com/v1#model=gpt-5-mini",
+            title: "OpenAI-style LLM: OpenAI, an Azure OpenAI-compatible proxy, or an Omni Gateway Model Proxy. /chat/completions is appended to a base URL. The #fragment is not sent — it sets model / system / max_tokens. Without #model, Atelier picks the first entry of /models." },
+    anthropic: { label: "endpoint url",
+            hint:  "base URL or …/v1/messages · add #model=<name> (and &system=…) to pick the model",
+            ph:    "https://api.anthropic.com#model=claude-sonnet-5-5",
+            title: "Anthropic-style LLM: the Anthropic API or an Omni Gateway Model Proxy. /v1/messages is appended to a base URL. The #fragment is not sent — it sets model / system / max_tokens. For api.anthropic.com, a Bearer identity is sent as x-api-key." },
     mcp:  { label: "discovery url",
             hint:  "the URL that accepts POST /mcp directly",
             ph:    "https://example.com/mcp   (MCP JSON-RPC endpoint)",
@@ -4548,8 +4557,9 @@ function applyProtoSpecificFields() {
   const dlgTitleEl = $("#dlgTitle");
   if (dlgTitleEl && !state._editingBookmarkKey) {
     const noun = { soap: "SOAP service", rest: "REST API", db: "database",
+                   openai: "LLM (OpenAI)", anthropic: "LLM (Anthropic)",
                    mcp: "MCP server", mock: "mock agent" }[proto] || "agent";
-    dlgTitleEl.innerHTML = `Connect to ${/^([aeiou]|MCP)/i.test(noun) ? "an" : "a"} <em>${escapeHtml(noun)}</em>`;
+    dlgTitleEl.innerHTML = `Connect to ${/^([aeiou]|MCP|LLM)/i.test(noun) ? "an" : "a"} <em>${escapeHtml(noun)}</em>`;
   }
   if (urlPrefix) urlPrefix.textContent = isMock ? "name" : "url";
   // mock では display name 行・auth 行・test ボタン・advanced を畳む。
@@ -7024,6 +7034,30 @@ async function testDialog() {
         ` · via <code>${escapeHtml(result.via)}</code>` +
         (result.contentType ? ` · <code>${escapeHtml(result.contentType.split(";")[0])}</code>` : "") +
         ` · ${ms}ms` + note);
+    } else if (protoId === "openai" || protoId === "anthropic") {
+      // /models を引けるか (= 届くか + 認証が通るか) を見る。 Model Proxy のように
+      // /models が無い先もあるので、 その場合は「届いた」ことと #model の指定を促す。
+      const Cls = protoId === "openai" ? OpenAIAdapter : AnthropicAdapter;
+      const ad = new Cls({ url, auth, authHeaders });
+      const model = splitUrl(url).opts.model;
+      try {
+        const ids = await ad._listModels();
+        const ms = Math.round(performance.now() - t0);
+        const has = model ? ids.includes(model) : null;
+        setDialogTestStatus(has === false ? "warn" : "ok",
+          `<span class='dts-dot'></span> /models OK · ${ids.length} model${ids.length === 1 ? "" : "s"}` +
+          ` · will use <code>${escapeHtml(model || pickChatModel(ids) || "(none)")}</code> · ${ms}ms` +
+          (has === false ? `<br/><span class='dts-warn'>⚠ <code>${escapeHtml(model)}</code> is not in the /models list. It may still work behind a gateway.</span>` : ""));
+      } catch (e) {
+        const ms = Math.round(performance.now() - t0);
+        const st = /HTTP (\d+)/.exec(e?.message || "")?.[1];
+        const authFail = st === "401" || st === "403";
+        setDialogTestStatus(authFail ? "err" : "warn",
+          `<span class='dts-dot'></span> ${escapeHtml(e?.message || String(e))} on <code>${escapeHtml(ad._modelsUrl())}</code> · ${ms}ms` +
+          `<br/><span class='dts-warn'>${authFail ? "Authentication failed — check the identity." :
+            model ? `No model list here (common for a Model Proxy). Chat will use <code>${escapeHtml(model)}</code>.` :
+            "No model list here (common for a Model Proxy). Add <code>#model=&lt;name&gt;</code> to the URL."}</span>`);
+      }
     } else if (protoId === "soap") {
       // WSDL を取れるか + 解析できるかまで見る。 到達しただけでは、 その URL が
       // 本当に WSDL かどうか分からない (HTML のエラーページでも 200 が返る)。

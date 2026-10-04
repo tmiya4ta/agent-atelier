@@ -312,7 +312,9 @@ async function handleProxy(req, res) {
   const fwdHeaders = {};
   for (const h of ["content-type", "authorization", "accept", "x-atelier-stream", "mcp-session-id", "mcp-protocol-version",
                    // AWS SigV4 (Atelier が署名して送る。 Bedrock AgentCore など)
-                   "x-amz-date", "x-amz-content-sha256", "x-amz-security-token"]) {
+                   "x-amz-date", "x-amz-content-sha256", "x-amz-security-token",
+                   // LLM 直結 (llm.js)。 Anthropic の版指定と、 ヘッダ名で渡す API キー
+                   "anthropic-version", "anthropic-beta", "x-api-key", "api-key"]) {
     const v = req.headers[h];
     if (v) fwdHeaders[h.replace(/(^|-)([a-z])/g, (_, p, c) => p + c.toUpperCase())] = v;
   }

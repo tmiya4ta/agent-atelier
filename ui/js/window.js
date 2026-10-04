@@ -43,6 +43,9 @@ export class AgentWindow {
     // mock は本物の A2A / MCP を「装う」ので、adapter.emulates を採用する。
     // (protoId は "mock" のまま — bookmark のキー化と一覧の色分けに使う)
     this.protoMode = (this.protoId === "mock" && adapter.emulates) ? adapter.emulates : this.protoId;
+    // LLM 直結 (OpenAI / Anthropic 形式)。 チャットは A2A と同じく Markdown で描く。
+    this._isLlm  = this.protoMode === "openai" || this.protoMode === "anthropic";
+    this._mdMode = this.protoMode === "a2a" || this._isLlm;
     // バッジ表示は装っているプロトコル名 (mock であることは出さない)
     this.protoLabel = (this.protoId === "mock")
       ? (this.protoMode === "mcp" ? "MCP" : "A2A")
@@ -319,7 +322,7 @@ export class AgentWindow {
       this._setStatus("live");
       this._renderCard(this.adapter.agentCard);
       this._renderSettings();
-      this._addSystemMessage(`Connected · agent card loaded`);
+      this._addSystemMessage(this.adapter.connectedText || `Connected · agent card loaded`);
       const cardName = this.adapter.agentCard.name;
       if (cardName && !this._nameLocked) {
         this.name = cardName;
@@ -345,7 +348,7 @@ export class AgentWindow {
     this.adapter.addEventListener("open", (e) => {
       this._everOpened = true;
       this._setStatus("live");
-      this._addSystemMessage(`Connected · agent card loaded`);
+      this._addSystemMessage(this.adapter.connectedText || `Connected · agent card loaded`);
       this._renderCard(e.detail.card);
       // agentCard で取れた effective endpoint を Settings にも反映
       this._renderSettings();
@@ -1046,7 +1049,7 @@ export class AgentWindow {
     if (this.protoMode === "slack") {
       body.innerHTML = safeHtml(mrkdwnToHtml(normalized));
       body.dataset.md = "1";
-    } else if (this.protoMode === "a2a" && window.marked) {
+    } else if (this._mdMode && window.marked) {
       try {
         window.marked.setOptions({ gfm: true, breaks: true });
         body.innerHTML = safeHtml(window.marked.parse(normalized));
@@ -1077,7 +1080,7 @@ export class AgentWindow {
     node.classList.add("is-live");
     // a2a の進捗ステップは Markdown (太字・表) を含むことがあるので HTML 化して読みやすく。
     // 複数行を許容するため msg-step クラスで pill の nowrap を解除する。
-    if (this.protoMode === "a2a" && window.marked) {
+    if (this._mdMode && window.marked) {
       const body = node.querySelector(".msg-body");
       if (body) {
         try {
@@ -1156,7 +1159,7 @@ export class AgentWindow {
       // 【○○エージェント】を単一改行で区切るので、 breaks:false だと 1 段落に潰れて
       // 非常に読みづらい (実機応答で確認)。 table 構文は breaks 設定の影響を受けず
       // 壊れないことを検証済み (marked 11.2.0)。
-      else if (final && this.protoMode === "a2a" && window.marked) {
+      else if (final && this._mdMode && window.marked) {
         try {
           window.marked.setOptions({ gfm: true, breaks: true });
           // broker 統合レポートは整形してから Markdown 化 (それ以外はそのまま)
@@ -1261,7 +1264,7 @@ export class AgentWindow {
         if (this.protoMode === "slack") {
           body.innerHTML = safeHtml(mrkdwnToHtml(normalized));
           body.dataset.md = "1";
-        } else if (this.protoMode === "a2a" && window.marked) {
+        } else if (this._mdMode && window.marked) {
           try {
             window.marked.setOptions({ gfm: true, breaks: true });
             body.innerHTML = safeHtml(window.marked.parse(normalized));
@@ -1970,7 +1973,22 @@ export class AgentWindow {
 
       <div class="set-section">
         <h4>Connection</h4>
-        ${this.protoMode === "rest" ? `
+        ${this._isLlm ? `
+        <div class="set-row" title="Requests are POSTed to this endpoint. Model, system prompt and max_tokens come from the URL fragment (#model=…&system=…), or from /model and /system in the chat.">
+          <div class="set-row-text">
+            <div class="set-row-title">Endpoint <span class="set-row-help" aria-hidden="true">?</span></div>
+            <div class="set-row-sub">Messages are POSTed here (the URL fragment is not sent).</div>
+          </div>
+          ${copyFieldHtml(this.adapter.endpoint || "")}
+        </div>
+        <div class="set-row" title="Change it with /model <name> in the chat. /reset clears the conversation history, /info shows the current settings.">
+          <div class="set-row-text">
+            <div class="set-row-title">Model <span class="set-row-help" aria-hidden="true">?</span></div>
+            <div class="set-row-sub">/model &lt;name&gt; · /system &lt;text&gt; · /reset · /info</div>
+          </div>
+          ${copyFieldHtml(this.adapter.model || "", { placeholder: "(not set)" })}
+        </div>
+        ` : this.protoMode === "rest" ? `
         <div class="set-row" title="The base URL you entered in the connect dialog (optional). It only seeds the URL field on the raw tab; you set the actual target there.">
           <div class="set-row-text">
             <div class="set-row-title">Base URL</div>

@@ -7,6 +7,7 @@ import { MockAdapter }  from "./mock.js";
 import { DbAdapter }    from "./db.js";
 import { RestAdapter }  from "./rest.js";
 import { SoapAdapter }  from "./soap.js";
+import { OpenAIAdapter, AnthropicAdapter } from "./llm.js";
 
 // 表示順 = この配列の順 (connect ダイアログの grid は 4 列)。
 export const PROTOCOLS = [
@@ -40,6 +41,22 @@ export const PROTOCOLS = [
     sub: "model context",
     description: "Model Context Protocol · JSON-RPC 2.0 over HTTP",
     AdapterClass: MCPAdapter,
+    status: "ready"
+  },
+  {
+    id: "openai",
+    label: "OpenAI",
+    sub: "chat/completions",
+    description: "LLM (OpenAI 形式) · /chat/completions — OpenAI、Azure OpenAI 互換、Model Proxy",
+    AdapterClass: OpenAIAdapter,
+    status: "ready"
+  },
+  {
+    id: "anthropic",
+    label: "Anthropic",
+    sub: "messages",
+    description: "LLM (Anthropic 形式) · /v1/messages — Anthropic API、Model Proxy",
+    AdapterClass: AnthropicAdapter,
     status: "ready"
   },
   {

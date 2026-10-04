@@ -1,7 +1,7 @@
 # Atelier — Agent Workbench
 
 **Atelier** は、複数のエージェントを 1 つの画面でまとめて扱うためのワークベンチです。
-ブラウザ上にフローティングウィンドウを並べ、**REST / A2A / MCP** の各サーバへ同時に接続できます。
+ブラウザ上にフローティングウィンドウを並べ、**REST / A2A / MCP** の各サーバと、**LLM (OpenAI 形式 / Anthropic 形式)** へ同時に接続できます。
 さらに **SQL データベース（clouderby = JDBC over HTTP）** にも接続でき、SQL エディタ + 結果グリッド +
 スキーマツリーの **DB ワークベンチ**として使えます。
 接続 1 つにつき、ウィンドウ 1 つ。エージェントウィンドウではチャット・Agent Card・デバッグ（生の RPC
@@ -39,6 +39,23 @@ python3 server/dev-server.py --port 8000
 
 ブラウザで http://127.0.0.1:8000/ を開き、左サイドバーの **+ new connection** → プロトコルと URL を
 入力 → 接続。
+
+### LLM に直接つなぐ (OpenAI 形式 / Anthropic 形式)
+
+エージェントではなく LLM そのものと会話する窓です。Omni Gateway の Model Proxy の前で、
+エージェント役として LLM を呼び、ポリシー (トークン数、Kill Switch など) の効き方を見るのに使います。
+
+| プロトコル | URL の例 | 送り先 |
+|---|---|---|
+| **OpenAI** | `https://api.openai.com/v1#model=gpt-5-mini` | base URL に `/chat/completions` を足す |
+| **Anthropic** | `https://api.anthropic.com#model=claude-sonnet-5-5` | base URL に `/v1/messages` を足す |
+
+- モデル・システムプロンプト・max_tokens は URL のフラグメントで指定します (`#model=…&system=…&max_tokens=…`)。
+  フラグメントはサーバへ送られません。`#model` が無ければ `/models` から選びます。
+- チャットでは `/model <name>`、`/system <text>`、`/reset` (会話履歴を消す)、`/info` が使えます。
+- 認証は identity で選びます。Bearer の identity は、Anthropic 形式で宛先が `api.anthropic.com` のときだけ
+  `x-api-key` に入れ替えて送ります。ヘッダ名を指定した identity (`api-key`、`x-api-key` など) はそのまま付きます。
+- 応答ごとに、モデル名と入力/出力トークン数の行が出ます。会話履歴は窓の中だけに持ち、再読み込みで消えます。
 
 > dev サーバは「静的配信 + CORS バイパス proxy（`/proxy?url=...`）+ `Cache-Control: no-store`
 > + SSRF ガード」を提供します。詳細は [ONBOARDING.md](ONBOARDING.md#ローカル開発) 参照。
@@ -256,6 +273,7 @@ agent-atelier/
 │   │       ├── rest.js         REST adapter (raw リクエスト)
 │   │       ├── a2a.js          A2A adapter (card discovery, message/send, SSE, MCP 受け渡し)
 │   │       ├── mcp.js          MCP adapter (initialize, tools/list, tools/call)
+│   │       ├── llm.js          LLM 直結 (OpenAI /chat/completions, Anthropic /v1/messages)
 │   │       ├── mock.js         オフラインのデモ用 persona adapter
 │   │       ├── db.js           DbAdapter (DB コネクション。connect=session 確立 / query)
 │   │       ├── db/clouderby.js clouderby (JDBC over HTTP) クライアント
