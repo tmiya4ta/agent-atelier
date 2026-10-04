@@ -37,7 +37,10 @@ var ALLOW_SUFFIX = [
   "fonts.googleapis.com",
   "fonts.gstatic.com",
   "cdn.jsdelivr.net",
-  "theorems.io"              // 自ドメイン配下の A2A/MCP デモエージェント (mcp-agent, customers 等)
+  "theorems.io",             // 自ドメイン配下の A2A/MCP デモエージェント (mcp-agent, customers 等)
+  "api.openai.com",          // LLM 直結 (OpenAI 形式)
+  "openai.azure.com",        // LLM 直結 (Azure OpenAI)
+  "api.anthropic.com"        // LLM 直結 (Anthropic 形式)
 ]
 
 // "10" 等の各オクテットを Number 化 (非数なら -1)
