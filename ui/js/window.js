@@ -62,6 +62,10 @@ export class AgentWindow {
     this.startedAt = Date.now();
     this.lastLatency = null;
     this.lastSendAt = null;
+    // 送信した文のタイプライター表示が終わる Promise と、 応答側の表示の待ち行列
+    // (_afterUserTyped)。 リクエストはすぐ送るが、 応答の表示はパラパラが終わってから出す。
+    this._userTyped = Promise.resolve();
+    this._uiQueue = Promise.resolve();
     // 一度でも接続が open したか。 初回接続失敗 (未 open) のエラーは静かに扱い、
     // 接続中/失敗のシステムメッセージを出さず status ドットだけで示す
     // (接続不可の window を MOCK シナリオ用に静かに開けるようにするため)。
@@ -374,21 +378,25 @@ export class AgentWindow {
 
     this.adapter.addEventListener("message", (e) => {
       const { role, text, final } = e.detail;
-      // 応答が届いた = つながっている。 一度エラーで赤にしたドットを緑に戻す
-      // (戻さないと、 認証を足して答えが返るようになっても赤のままだった)。
-      this._setStatus("live");
-      this._handleAgentMessage(text, final);
+      // 応答時間は届いた時点で測る (表示は送信文のパラパラが終わってから)。
+      let latency = null;
       if (this.lastSendAt && final) {
-        this.lastLatency = Date.now() - this.lastSendAt;
-        this._stampLatency(this.lastLatency);
+        latency = this.lastLatency = Date.now() - this.lastSendAt;
         this.lastSendAt = null;
       }
+      this._afterUserTyped(() => {
+        // 応答が届いた = つながっている。 一度エラーで赤にしたドットを緑に戻す
+        // (戻さないと、 認証を足して答えが返るようになっても赤のままだった)。
+        this._setStatus("live");
+        this._handleAgentMessage(text, final);
+        if (latency != null) this._stampLatency(latency);
+      });
     });
 
     // streaming (SSE) の中間進捗。 status-update の working 等を逐次 system 行で表示。
     this.adapter.addEventListener("status", (e) => {
       const { text } = e.detail || {};
-      if (text) this._handleStatusUpdate(text);
+      if (text) this._afterUserTyped(() => this._handleStatusUpdate(text));
     });
 
     this.adapter.addEventListener("rpc", (e) => {
@@ -404,19 +412,21 @@ export class AgentWindow {
       t.textContent = String(this.debugFrames.length);
     });
 
-    this.adapter.addEventListener("aborted", () => this._settleStatus());   // 停止ボタン
+    this.adapter.addEventListener("aborted", () => this._afterUserTyped(() => this._settleStatus()));   // 停止ボタン
     this.adapter.addEventListener("error", (e) => {
-      this._settleStatus();
-      this._setStatus("error");
       // 初回接続の失敗 (まだ一度も open していない) はメッセージを出さず status ドットのみ赤に。
       // 接続不可の window を MOCK シナリオ用に静かに開けるようにするため。
       // 一度でも接続できた後のセッション中エラーは従来どおり表示する。
-      if (this._everOpened) {
-        this._addSystemMessage(`Error: ${e.detail?.message || e.detail}`);
-        // adapter は error を emit したあと同じ Error を throw し直すので、 送信側の catch
-        // (sendProgrammatic) でも "send failed: …" が出て 2 行になっていた。 表示済みの印を付ける。
-        if (e.detail && typeof e.detail === "object") e.detail.shownInChat = true;
-      }
+      const show = this._everOpened;
+      // adapter は error を emit したあと同じ Error を throw し直すので、 送信側の catch
+      // (sendProgrammatic) でも "send failed: …" が出て 2 行になっていた。 表示済みの印を付ける。
+      // 印は catch より先に付いている必要があるので、 表示を待たずにここで付ける。
+      if (show && e.detail && typeof e.detail === "object") e.detail.shownInChat = true;
+      this._afterUserTyped(() => {
+        this._settleStatus();
+        this._setStatus("error");
+        if (show) this._addSystemMessage(`Error: ${e.detail?.message || e.detail}`);
+      });
     });
 
     this.adapter.addEventListener("close", () => {
@@ -970,14 +980,18 @@ export class AgentWindow {
     if (!text || this.adapter.state !== "open") return Promise.reject(new Error("not connected"));
     const typeInto = opts.typeIntoCompose !== false;
     const doSend = () => {
-      this._showTyping(true);
+      // 送信中の状態 (停止ボタン) はすぐ切り替える。 考え中の表示は送信文のパラパラの後。
+      this._setBusy(true);
+      this._afterUserTyped(() => this._showTyping(true));
       this.lastSendAt = Date.now();
       return this.adapter.send(text, { stream: true }).catch(err => {
         // 停止ボタンによる中断は _stopInflight 側で表示済みなので、 ここでは何も出さない
-        if (err?.name === "AbortError") { this._showTyping(false); throw err; }
-        this._showTyping(false);
-        // adapter の error イベントで "Error: …" を出し済みなら重ねない
-        if (!err?.shownInChat) this._addSystemMessage(`send failed: ${err.message}`);
+        if (err?.name === "AbortError") { this._afterUserTyped(() => this._showTyping(false)); throw err; }
+        this._afterUserTyped(() => {
+          this._showTyping(false);
+          // adapter の error イベントで "Error: …" を出し済みなら重ねない
+          if (!err?.shownInChat) this._addSystemMessage(`send failed: ${err.message}`);
+        });
         throw err;
       });
     };
@@ -987,12 +1001,14 @@ export class AgentWindow {
       return this._typeIntoCompose(text).then(() => {
         const ta = this.el.querySelector(".compose-input");
         if (ta) { ta.value = ""; ta.style.height = "auto"; }
-        this._addUserMessage(text, { instant: true });
+        this._userTyped = this._addUserMessage(text, { instant: true });
         return doSend();
       });
     }
-    // 手入力時: 従来どおりストリームにユーザーバブルをタイプライター表示してから送信。
+    // 手入力時: ストリームにユーザーバブルをタイプライター表示しつつ、 リクエストはすぐ送る。
+    // 応答が速いとパラパラの途中に割り込んでいたので、 応答側の表示は _userTyped を待つ。
     const userDone = this._addUserMessage(text);
+    this._userTyped = userDone;
     if (this.adapter._mockActive) return userDone.then(doSend);
     return doSend();
   }
@@ -1259,6 +1275,10 @@ export class AgentWindow {
         clearTimeout(this._userTypeTimer);
         this._userTypeTimer = null;
       }
+      // 前のパラパラを途中で打ち切るときは、 その Promise も完了にする。 しないと、 それを
+      // 待っている応答側の表示 (_afterUserTyped) が止まったままになる。
+      if (this._userTypeResolve) { const prev = this._userTypeResolve; this._userTypeResolve = null; prev(); }
+      this._userTypeResolve = resolve;
       // literal "\n" sequence (script DSL から渡る "\\n") を実改行に正規化
       const normalized = String(fullText).replace(/\\n/g, "\n");
       const msg = body.closest(".msg") || body.parentElement;
@@ -1270,6 +1290,7 @@ export class AgentWindow {
       const finalize = () => {
         msg.dataset.typing = "0";
         this._userTypeTimer = null;
+        if (this._userTypeResolve === resolve) this._userTypeResolve = null;
         // protocol に応じた整形
         if (this.protoMode === "slack") {
           body.innerHTML = safeHtml(mrkdwnToHtml(normalized));
@@ -1386,6 +1407,19 @@ export class AgentWindow {
     this._showTyping(false);
     this._setBusy(false);
     this._addSystemMessage("⏹ stopped");
+    // 送信文のパラパラ中に止めた場合、 待ち行列に残っている「考え中」を後から出さない。
+    this._afterUserTyped(() => { this._showTyping(false); this._setBusy(false); });
+  }
+
+  // 送信した文のタイプライター表示 (_userTyped) が終わってから fn を実行する。 呼んだ順に実行。
+  // リクエストはすぐ送るので、 速い応答がパラパラの途中に割り込まないよう、 応答・進捗・
+  // エラー・考え中の表示はここを通す。 パラパラ中でなければ (次のマイクロタスクで) すぐ動く。
+  _afterUserTyped(fn) {
+    this._uiQueue = this._uiQueue
+      .then(() => this._userTyped)
+      .then(fn)
+      .catch(e => console.warn("[window] deferred chat render failed:", e));
+    return this._uiQueue;
   }
 
   _showTyping(on) {
