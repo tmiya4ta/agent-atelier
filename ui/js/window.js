@@ -374,6 +374,9 @@ export class AgentWindow {
 
     this.adapter.addEventListener("message", (e) => {
       const { role, text, final } = e.detail;
+      // 応答が届いた = つながっている。 一度エラーで赤にしたドットを緑に戻す
+      // (戻さないと、 認証を足して答えが返るようになっても赤のままだった)。
+      this._setStatus("live");
       this._handleAgentMessage(text, final);
       if (this.lastSendAt && final) {
         this.lastLatency = Date.now() - this.lastSendAt;
@@ -408,7 +411,12 @@ export class AgentWindow {
       // 初回接続の失敗 (まだ一度も open していない) はメッセージを出さず status ドットのみ赤に。
       // 接続不可の window を MOCK シナリオ用に静かに開けるようにするため。
       // 一度でも接続できた後のセッション中エラーは従来どおり表示する。
-      if (this._everOpened) this._addSystemMessage(`Error: ${e.detail?.message || e.detail}`);
+      if (this._everOpened) {
+        this._addSystemMessage(`Error: ${e.detail?.message || e.detail}`);
+        // adapter は error を emit したあと同じ Error を throw し直すので、 送信側の catch
+        // (sendProgrammatic) でも "send failed: …" が出て 2 行になっていた。 表示済みの印を付ける。
+        if (e.detail && typeof e.detail === "object") e.detail.shownInChat = true;
+      }
     });
 
     this.adapter.addEventListener("close", () => {
@@ -662,7 +670,8 @@ export class AgentWindow {
     ta.style.height = "auto";
     this._syncGhostExample();   // 空になったので次のサンプルを出す (input イベントは来ない)
     // 手入力はユーザーが既に打ち終えているので、 入力エリアへの自動タイプ演出はスキップ。
-    this.sendProgrammatic(text, { typeIntoCompose: false });
+    // 失敗はチャットに表示済み。 ここで受けないと Uncaught (in promise) がコンソールに出る。
+    this.sendProgrammatic(text, { typeIntoCompose: false }).catch(() => {});
   }
 
   // ───────────────────────────────────────────
@@ -967,7 +976,8 @@ export class AgentWindow {
         // 停止ボタンによる中断は _stopInflight 側で表示済みなので、 ここでは何も出さない
         if (err?.name === "AbortError") { this._showTyping(false); throw err; }
         this._showTyping(false);
-        this._addSystemMessage(`send failed: ${err.message}`);
+        // adapter の error イベントで "Error: …" を出し済みなら重ねない
+        if (!err?.shownInChat) this._addSystemMessage(`send failed: ${err.message}`);
         throw err;
       });
     };
