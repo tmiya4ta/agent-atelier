@@ -149,6 +149,20 @@ export function modalChoice({ title, message, choices = [], extras, cancelLabel,
       </div>
     `;
     document.body.appendChild(wrap);
+    // タブを切り替えてもダイアログの高さが変わらないよう、 一覧の高さを全タブで最も高いものに揃える
+    // (上限は CSS の max-height。 超えるタブは一覧の中でスクロールする)
+    if (useTabs) {
+      const box = wrap.querySelector(".modal-choices");
+      const cap = parseFloat(getComputedStyle(box).maxHeight) || Infinity;
+      let tallest = 0;
+      for (const t of tabs) {
+        box.innerHTML = renderButtons(t.choices || [], t.empty);
+        tallest = Math.max(tallest, box.scrollHeight);
+      }
+      const t = tabs.find(x => x.id === activeTab);
+      box.innerHTML = renderButtons(t?.choices || [], t?.empty);
+      box.style.height = `${Math.min(tallest, cap)}px`;
+    }
     requestAnimationFrame(() => wrap.classList.add("is-open"));
 
     const readExtras = () => {
