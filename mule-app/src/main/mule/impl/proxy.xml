@@ -73,7 +73,6 @@ output application/java
 SsrfGuard::check(attributes.queryParams.url default "", (p('proxy.allowHosts') default "") splitBy ",")]]></ee:set-variable>
                         <ee:set-variable variableName="fwdHeaders"><![CDATA[%dw 2.0
 output application/java
-import lower from dw::core::Strings
 var h = attributes.headers default {}
 /*
  * client のヘッダは原則そのまま転送する。 以前は allowlist 方式で、
