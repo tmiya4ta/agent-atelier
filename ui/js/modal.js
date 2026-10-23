@@ -87,11 +87,15 @@ export function modalAlert(opts) {
 //     → 戻り値:
 //        - extras 指定なし: 選択した choice.id (Cancel/Esc は null) ← 後方互換
 //        - extras 指定あり: { id, extras: { <extraId>: boolean, ... } } (Cancel/Esc は null)
-export function modalChoice({ title, message, choices = [], extras, cancelLabel } = {}) {
+// tabs: [{ id, label, sub?, choices, empty? }] — 指定すると choices の代わりにタブで一覧を切り替える
+// (例: Import → Repository の Local / Central)。 initialTab で最初のタブを選ぶ。
+export function modalChoice({ title, message, choices = [], extras, cancelLabel, tabs, initialTab } = {}) {
   return new Promise((resolve) => {
     const wrap = document.createElement("div");
     wrap.className = "modal-backdrop";
-    const buttons = choices.map((c, i) => `
+    const useTabs = Array.isArray(tabs) && tabs.length > 0;
+    let activeTab = useTabs ? (tabs.find(t => t.id === initialTab) || tabs[0]).id : null;
+    const renderButtons = (list, empty) => list.length ? list.map((c, i) => `
       <button type="button" class="primary-btn modal-choice${c.danger ? " is-danger" : ""}" data-choice-id="${escapeHtml(c.id)}" data-choice-idx="${i}">
         <span class="modal-choice-main">
           <span class="modal-choice-label">${escapeHtml(c.label)}</span>
@@ -99,7 +103,21 @@ export function modalChoice({ title, message, choices = [], extras, cancelLabel 
         </span>
         <span class="arrow">→</span>
       </button>
-    `).join("");
+    `).join("") : `<p class="modal-msg modal-tab-empty">${escapeHtml(empty || "Nothing here.")}</p>`;
+    const currentChoices = () => useTabs ? (tabs.find(t => t.id === activeTab)?.choices || []) : choices;
+    const buttons = useTabs
+      ? renderButtons(currentChoices(), tabs.find(t => t.id === activeTab)?.empty)
+      : renderButtons(choices);
+    const tabsHtml = useTabs ? `
+      <div class="seg-toggle modal-tabs" role="tablist">
+        ${tabs.map(t => `
+          <button type="button" role="tab" class="seg-opt${t.id === activeTab ? " is-active" : ""}" data-tab-id="${escapeHtml(t.id)}">
+            <span>${escapeHtml(t.label)} <span class="seg-sub">${(t.choices || []).length}</span></span>
+            ${t.sub ? `<span class="seg-sub">${escapeHtml(t.sub)}</span>` : ""}
+          </button>
+        `).join("")}
+      </div>
+    ` : "";
     const extrasHtml = Array.isArray(extras) && extras.length ? `
       <div class="modal-extras">
         ${extras.map(x => `
@@ -122,6 +140,7 @@ export function modalChoice({ title, message, choices = [], extras, cancelLabel 
         ${message ? `<div class="modal-body"><p class="modal-msg">${escapeHtml(message)}</p></div>` : ""}
         <footer class="modal-foot modal-foot-stack">
           ${extrasHtml}
+          ${tabsHtml}
           <div class="modal-choices">${buttons}</div>
           <div class="modal-foot-actions">
             <button type="button" class="ghost-btn modal-cancel">${escapeHtml(cancelLabel || "Cancel")}</button>
@@ -152,10 +171,20 @@ export function modalChoice({ title, message, choices = [], extras, cancelLabel 
       }
       resolve(result);
     };
-    wrap.querySelectorAll(".modal-choice").forEach(btn => {
+    const bindChoices = () => wrap.querySelectorAll(".modal-choice").forEach(btn => {
       btn.addEventListener("click", () => {
         const id = btn.dataset.choiceId;
         close(wantExtras ? { id, extras: readExtras() } : id);
+      });
+    });
+    bindChoices();
+    wrap.querySelectorAll(".modal-tabs .seg-opt").forEach(tb => {
+      tb.addEventListener("click", () => {
+        activeTab = tb.dataset.tabId;
+        wrap.querySelectorAll(".modal-tabs .seg-opt").forEach(b => b.classList.toggle("is-active", b === tb));
+        const t = tabs.find(x => x.id === activeTab);
+        wrap.querySelector(".modal-choices").innerHTML = renderButtons(t?.choices || [], t?.empty);
+        bindChoices();
       });
     });
     wrap.querySelector(".modal-cancel").addEventListener("click", () => close(null));

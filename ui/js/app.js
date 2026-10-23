@@ -6125,35 +6125,33 @@ function resolveScenarioUrl(url, base) {
 }
 
 // ─── Repository (scenarios/index.json) から import ───
+// 2 つの一覧をタブで出す:
+//   Local   — このアプリに同梱の /scenarios/index.json。 配備した環境専用の snapshot
+//             (ハンズオンの受講者ごとの接続先など、 GitHub に出せない URL を含むもの) を置く
+//   Central — GitHub raw の scenarios/index.json。 push 済みの最新を再デプロイなしで読む
+// item の id は "<source>::<url>" にして、 同じ相対 URL が両方にあっても取り違えない。
 async function importFromRepositoryFlow() {
-  // **GitHub raw を優先**: push 済みの最新シナリオを、 アプリを再デプロイせずに読む。
-  // raw が取れないとき (オフライン等) だけ同一オリジン (atelier-static / dev-server 同梱) に
-  // フォールバックする。
-  let items, repoBase = SCENARIO_REPO_RAW;
-  try {
-    const res = await fetch(`${SCENARIO_REPO_RAW}/scenarios/index.json`, { headers: { Accept: "application/json" }, cache: "no-store" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const idx = await res.json();
-    items = Array.isArray(idx?.items) ? idx.items : [];
-  } catch (errRaw) {
+  const SOURCES = [
+    { id: "local",   label: "Local",   sub: "this app",  base: "",                index: "/scenarios/index.json" },
+    { id: "central", label: "Central", sub: "GitHub",    base: SCENARIO_REPO_RAW, index: `${SCENARIO_REPO_RAW}/scenarios/index.json` }
+  ];
+  const loaded = await Promise.all(SOURCES.map(async (src) => {
     try {
-      const res = await fetch("/scenarios/index.json", { headers: { Accept: "application/json" } });
+      const res = await fetch(src.index, { headers: { Accept: "application/json" }, cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const idx = await res.json();
-      items = Array.isArray(idx?.items) ? idx.items : [];
-      repoBase = "";   // 同一オリジン: item.url をそのまま使う
-    } catch (errLocal) {
-      await modalAlert({
-        title:   "Repository not available",
-        message: `Could not fetch scenarios/index.json.\n- GitHub raw: ${errRaw?.message || errRaw}\n- same-origin: ${errLocal?.message || errLocal}`
-      });
-      return;
+      return { ...src, items: Array.isArray(idx?.items) ? idx.items : [] };
+    } catch (err) {
+      return { ...src, items: [], error: err?.message || String(err) };
     }
-  }
+  }));
+  const items = loaded.flatMap(src => src.items.map(it => ({ ...it, _source: src.id, _base: src.base })));
   if (!items.length) {
-    await modalAlert({ title: "Repository is empty", message: "No bundled snapshot is available." });
+    const why = loaded.map(src => `- ${src.label}: ${src.error || "empty"}`).join("\n");
+    await modalAlert({ title: "Repository not available", message: `Could not find any snapshot.\n${why}` });
     return;
   }
+  const keyOf = (it) => `${it._source}::${it.url}`;
   // snapshot 選択 + "Scenarios only" チェックボックスを 1 ダイアログにまとめる。
   // チェック ON → scenarios のみ merge / OFF → everything 置換。
   // これで scope を聞く 2 つ目のダイアログ (chooseImportScope) を省略でき、 クリック数が減る。
@@ -6164,16 +6162,25 @@ async function importFromRepositoryFlow() {
   // 操作だ」とダイアログに正直に書く。
   const hasScenarios = (it) => !it.counts || it.counts.scripts > 0;
   const anyScenarios = items.some(hasScenarios);
+  const local = loaded.find(src => src.id === "local");
   const result = await modalChoice({
     title:   "Import from repository",
     message: anyScenarios
       ? "Pick a snapshot to import."
       : "Pick a snapshot to import. These replace your current connections and workspaces.",
-    choices: items.map(it => ({
-      id:          it.url,
-      label:       it.name || it.id || it.url,
-      description: it.description || it.url
+    tabs: loaded.map(src => ({
+      id:      src.id,
+      label:   src.label,
+      sub:     src.sub,
+      empty:   src.error ? `Not available (${src.error})` : "No snapshot in this repository.",
+      choices: items.filter(it => it._source === src.id).map(it => ({
+        id:          keyOf(it),
+        label:       it.name || it.id || it.url,
+        description: it.description || it.url
+      }))
     })),
+    // 環境専用の snapshot があれば Local から、 無ければ Central から開く
+    initialTab: local?.items.length ? "local" : "central",
     extras: anyScenarios
       // 既定は OFF (= everything)。 配布シナリオは接続とワークスペースごと再現するのが
       // 通常の使い方で、 ON のままだと会話 DSL だけ入って「何も起きない」ように見える。
@@ -6188,7 +6195,7 @@ async function importFromRepositoryFlow() {
   // 混在インデックスで「Scenarios only」を選んだのに、 選ばれた item に scenario が
   // 無いケース。 黙って "all" に格上げすると現在の接続を消してしまうので確認する。
   if (scope === "scripts") {
-    const picked = items.find(it => it.url === pick);
+    const picked = items.find(it => keyOf(it) === pick);
     if (picked && !hasScenarios(picked)) {
       const proceed = await modalConfirm({
         title:        "No scenarios in this snapshot",
@@ -6201,14 +6208,15 @@ async function importFromRepositoryFlow() {
     }
   }
   try {
-    const fetchUrl = resolveScenarioUrl(pick, repoBase);
+    const picked = items.find(it => keyOf(it) === pick);
+    if (!picked) return;
+    const fetchUrl = resolveScenarioUrl(picked.url, picked._base);
     const res = await fetch(fetchUrl, { headers: { Accept: "application/json" }, cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const text = await res.text();
     JSON.parse(text);   // sanity
-    const picked = items.find(it => it.url === pick);
-    const label = picked?.name || picked?.id || pick;
-    await applyImport(text, `"${label}"${repoBase ? " (GitHub)" : ""}`, scope);
+    const label = picked.name || picked.id || picked.url;
+    await applyImport(text, `"${label}"${picked._base ? " (GitHub)" : ""}`, scope);
   } catch (err) {
     await modalAlert({ title: "Import failed", message: err?.message || String(err) });
   }

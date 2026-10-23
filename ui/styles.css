@@ -5562,6 +5562,11 @@ body.is-dark .tk-mock-text { color: #C8A85A; }
 .seg-opt:hover { border-color: var(--ink-3); }
 .seg-opt.is-active { border-color: var(--ink); background: var(--paper); }
 .seg-toggle.is-disabled { opacity: 0.55; pointer-events: none; }
+/* Import → Repository の Local / Central (modalChoice tabs[]) */
+.modal-tabs .seg-opt { flex-direction: row; align-items: baseline; justify-content: space-between; }
+.modal-tab-empty { padding: 12px 2px; color: var(--ink-4); }
+/* a long Local list (one snapshot per participant) scrolls inside the dialog */
+.modal-tabs + .modal-choices { max-height: min(56vh, 520px); overflow-y: auto; padding-right: 2px; }
 .seg-opt .seg-sub {
   font-family: var(--f-mono);
   font-size: calc(9px * var(--fs-mul, 1.1) * var(--fs, 1));
