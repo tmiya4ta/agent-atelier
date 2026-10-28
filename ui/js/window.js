@@ -118,6 +118,14 @@ export class AgentWindow {
     node.querySelector('.aw-traffic-dot[data-act="close"]').addEventListener("click", () => this.close());
     node.querySelector(".aw-btn-max")?.addEventListener("click", () => this.toggleMaximize());
     node.querySelector(".aw-btn-pin")?.addEventListener("click", () => this.togglePin());
+    // reload: A2A は agent card、 MCP は initialize + tools/list を取り直す。
+    // 相手を配備し直したあと (Gateway の反映待ちで 404 だった等) にウインドウを閉じずに繋ぎ直す。
+    const headReload = node.querySelector(".aw-btn-reload");
+    if (headReload && typeof this.adapter?.reload === "function") {
+      headReload.hidden = false;
+      headReload.title = this._reloadTitle();
+      headReload.addEventListener("click", () => this._reloadAgentCard());
+    }
     // ヘッダーをダブルクリックで最大化トグル (icon-btn 等のボタン上は除外)
     node.querySelector(".aw-head").addEventListener("dblclick", (e) => {
       if (e.target.closest("button") || e.target.closest(".aw-traffic-dot")) return;
@@ -225,12 +233,15 @@ export class AgentWindow {
       e.stopPropagation();   // overlay 外クリック扱いで閉じられないように
       this._reloadAgentCard();
     });
-    // reloadCard を実装しない adapter (MCP は同じペインを "server info" に流用する)
-    // では押しても何もできないので出さない。
+    // reload を実装しない adapter では押しても何もできないので出さない。
+    // MCP は同じペインを "server info" に流用し、 ここからも initialize + tools/list を取り直す。
     const cardReload = node.querySelector(".card-reload");
     if (cardReload) {
-      if (typeof this.adapter?.reloadCard !== "function") cardReload.hidden = true;
-      else cardReload.addEventListener("click", () => this._reloadAgentCard());
+      if (typeof this.adapter?.reload !== "function") cardReload.hidden = true;
+      else {
+        cardReload.title = this._reloadTitle();
+        cardReload.addEventListener("click", () => this._reloadAgentCard());
+      }
     }
     capsClose.addEventListener("click", () => this._closeCapsOverlay());
     // MCP 追加は A2A window でだけ意味がある (adapter に addServer がある場合)。
@@ -757,20 +768,25 @@ export class AgentWindow {
   //               「有る物だけ並べる」より on/off を明示した方が情報量が多い)
   //   skills    … 名前 + 説明 + tag
   //   wiring    … この window に登録済みの MCP サーバと tool 数
-  // AgentCard の再取得。 capabilities と agent card タブの両方から呼ぶ。
-  // 相手のカードを編集したときに、 ウインドウを閉じて繋ぎ直さなくても反映できる。
-  // 成功時の描画は adapter の "card" イベント側。
+  _reloadTitle() {
+    return this.protoMode === "mcp" ? "Re-run initialize and tools/list" : "Re-fetch the agent card";
+  }
+
+  // 取り直し。 A2A は AgentCard (未接続なら接続から)、 MCP は initialize + tools/list。
+  // ヘッダー・capabilities・agent card (MCP は server) タブの 3 か所から呼ぶ。
+  // 相手のカードや tool を変えたときに、 ウインドウを閉じて繋ぎ直さなくても反映できる。
+  // 成功時の描画は adapter の "card" / "open" イベント側。
   async _reloadAgentCard() {
-    if (typeof this.adapter?.reloadCard !== "function") return;
-    // 入口が 2 つあるので、 どちらから押しても両方 busy にする
+    if (typeof this.adapter?.reload !== "function") return;
+    // 入口が 3 つあるので、 どれから押しても全部 busy にする
     // (別タブに切り替えたときに片方だけ回り続けて見えないように)。
-    const btns = [...this.el.querySelectorAll(".caps-overlay-reload, .card-reload")];
+    const btns = [...this.el.querySelectorAll(".aw-btn-reload, .caps-overlay-reload, .card-reload")];
     if (!btns.length) return;
     if (btns.some(b => b.classList.contains("is-busy"))) return;   // 連打で多重 fetch しない
     btns.forEach(b => b.classList.add("is-busy"));
     this._capsReloadError = null;
     try {
-      await this.adapter.reloadCard();
+      await this.adapter.reload();
     } catch (err) {
       // 黙って失敗すると「押したのに何も変わらない」と区別が付かないので理由を出す
       this._capsReloadError = err?.message || String(err);
@@ -790,6 +806,12 @@ export class AgentWindow {
     if (!el) return;
     el.textContent = this._capsReloadError ? `reload failed · ${this._capsReloadError}` : "";
     el.hidden = !this._capsReloadError;
+    // ヘッダーのボタンはどのタブにいても見えるので、 失敗したら色と tooltip で知らせる
+    const head = this.el.querySelector(".aw-btn-reload");
+    if (head) {
+      head.classList.toggle("is-error", !!this._capsReloadError);
+      head.title = this._capsReloadError ? `reload failed · ${this._capsReloadError}` : this._reloadTitle();
+    }
   }
 
   _renderCapsOverlay() {

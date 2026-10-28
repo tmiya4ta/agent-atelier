@@ -2800,6 +2800,14 @@ body.is-dark .tool-jwt-out .b { color: #F45D4C; }
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 .aw-btn-pin.is-active .aw-pin-icon { fill: color-mix(in srgb, var(--accent) 22%, transparent); }
+/* reload: 取得中は回す (card-reload と同じ)。 失敗したら赤で残し、 理由は tooltip */
+.aw-btn-reload[hidden] { display: none; }
+.aw-btn-reload.is-busy { color: var(--accent); cursor: default; }
+.aw-btn-reload.is-busy svg { animation: caps-reload-spin 0.7s linear infinite; }
+.aw-btn-reload.is-error { color: var(--warn); }
+@media (prefers-reduced-motion: reduce) {
+  .aw-btn-reload.is-busy svg { animation: none; }
+}
 /* ピン留め中は header の grab カーソルを止め、 移動不可を示す */
 .agent-window.is-pinned .aw-head { cursor: default; }
 .agent-window.is-pinned .aw-head:active { cursor: default; }

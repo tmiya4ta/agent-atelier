@@ -253,10 +253,20 @@ export class A2AAdapter extends ProtocolAdapter {
   // capabilities の reload ボタンから呼ぶ。 相手のカードを編集して差し替えたときに、
   // ウインドウを繋ぎ直さずに反映させるための入口。 _revalidateCard と違って
   // 失敗を握り潰さない (押した本人には結果を返す必要がある)。
+  // 最初の接続で card が取れずに error のままなら、 card だけ取り直しても
+  // state が open にならず送信できないので、 接続からやり直す。
   async reloadCard() {
+    if (this.state === "connecting") return this.agentCard;   // 連打で接続を重ねない
+    if (this.state !== "open") {
+      await this.connect();
+      return this.agentCard;
+    }
     await this._fetchCard({ emitOpen: false, throwOnFail: true });
     return this.agentCard;
   }
+
+  // window のヘッダーの reload ボタンの入口 (MCPAdapter.reload と同じ名前)
+  async reload() { return this.reloadCard(); }
 
   // legacy (A2A 0.3 系, kind 判別子) / proto (A2A 1.0 正規スキーマ) いずれかの
   // message/send リクエスト body を組み立てる。

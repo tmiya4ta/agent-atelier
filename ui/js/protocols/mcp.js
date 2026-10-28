@@ -64,6 +64,15 @@ export class MCPAdapter extends ProtocolAdapter {
     }
   }
 
+  // window の reload ボタンの入口。 initialize → tools/list を打ち直す
+  // (server を再配備して session や tool が変わったときに、 繋ぎ直さずに反映する)。
+  // 接続に失敗していた window もこれで open に戻る。 描画は "open" イベント側。
+  async reload() {
+    if (this.state === "connecting") return this.tools;   // 連打で initialize を重ねない
+    await this.connect();
+    return this.tools;
+  }
+
   async send() {
     // MCP は会話 protocol ではない。 chat 入力からの送信は無効化。
     throw new Error("MCP adapter does not support chat send(). Use callTool(name, args) instead.");

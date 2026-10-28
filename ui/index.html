@@ -1134,6 +1134,12 @@ clear
           <h3 class="aw-title"></h3>
         </div>
         <div class="aw-head-rh">
+          <!-- A2A は agent card、 MCP は initialize + tools/list の取り直し。 reload() の無い protocol では隠す -->
+          <button class="icon-btn aw-btn-reload" hidden aria-label="reload">
+            <svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
+              <path d="M10 6a4 4 0 1 1-1.2-2.85"/><path d="M10.2 1.4v2.5H7.7"/>
+            </svg>
+          </button>
           <button class="icon-btn aw-btn-pin" title="Pin window in place (lock position/size)" aria-label="pin">
             <svg class="aw-pin-icon" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
               <path d="M9.5 2.2 13.8 6.5 11.9 8.4 11.4 7.9 8.2 11.1 8 13.6 6.6 12.2 3.8 9.4 2.4 8 4.9 7.8 8.1 4.6 7.6 4.1 Z"/>
